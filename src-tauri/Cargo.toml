@@ -1,0 +1,16 @@
+[package]
+name = "helia"
+version = "0.0.1"
+description = "Helia desktop application"
+edition = "2024"
+rust-version = "1.90"
+
+[lib]
+name = "helia_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.7", features = [] }
+
+[dependencies]
+tauri = { version = "2.12", features = [] }
