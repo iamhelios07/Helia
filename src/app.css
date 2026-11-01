@@ -1,0 +1,94 @@
+:root {
+	color-scheme: dark;
+	--palette-white: #ffffff;
+	--palette-silver: #d4d4d4;
+	--palette-gray: #b3b3b3;
+	--palette-pepper: #2b2b2b;
+	--background: var(--palette-pepper);
+	--surface: color-mix(in srgb, var(--palette-white) 3%, var(--background));
+	--surface-hover: color-mix(in srgb, var(--palette-white) 7%, var(--background));
+	--surface-active: color-mix(in srgb, var(--palette-white) 11%, var(--background));
+	--text-strong: var(--palette-white);
+	--text: var(--palette-silver);
+	--text-muted: var(--palette-gray);
+	--border: color-mix(in srgb, var(--palette-gray) 19%, transparent);
+	--border-strong: color-mix(in srgb, var(--palette-gray) 35%, transparent);
+	--accent: var(--palette-white);
+	--on-accent: var(--palette-pepper);
+	--rail-width: 72px;
+	font-family:
+		Inter,
+		'Pretendard Variable',
+		Pretendard,
+		-apple-system,
+		BlinkMacSystemFont,
+		'Segoe UI',
+		'Noto Sans KR',
+		'Malgun Gothic',
+		sans-serif;
+	font-synthesis: none;
+	text-rendering: optimizeLegibility;
+	-webkit-font-smoothing: antialiased;
+	background: var(--background);
+	color: var(--text);
+}
+
+* {
+	box-sizing: border-box;
+}
+body {
+	min-width: 320px;
+	margin: 0;
+}
+button,
+input,
+select {
+	font: inherit;
+}
+button,
+a,
+input,
+select {
+	-webkit-tap-highlight-color: transparent;
+	outline-offset: 4px;
+}
+button {
+	color: inherit;
+	cursor: pointer;
+}
+button:disabled {
+	cursor: not-allowed;
+}
+:focus-visible {
+	outline: 2px solid var(--accent);
+}
+button,
+a {
+	touch-action: manipulation;
+}
+::selection {
+	background: var(--palette-silver);
+	color: var(--palette-pepper);
+}
+.sr-only {
+	position: absolute;
+	width: 1px;
+	height: 1px;
+	overflow: hidden;
+	clip-path: inset(50%);
+	white-space: nowrap;
+}
+@media (max-width: 600px) {
+	:root {
+		--rail-width: 60px;
+	}
+}
+@media (prefers-reduced-motion: reduce) {
+	*,
+	*::before,
+	*::after {
+		animation: none !important;
+		transition: none !important;
+		scroll-behavior: auto !important;
+	}
+}
