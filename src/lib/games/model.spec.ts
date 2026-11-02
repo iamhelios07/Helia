@@ -65,6 +65,11 @@ describe('game metadata validation', () => {
 			description: '',
 			createdAt: '2026-11-02T00:00:00.000Z',
 			updatedAt: '2026-11-02T00:00:00.000Z',
+			schema: {
+				type: 'object',
+				properties: { gold: { type: 'integer' } },
+				additionalProperties: false
+			},
 			initialState: { gold: 100 },
 			scripts: { buy: { language: 'javascript', source: 'buy();' } },
 			settings: { description: '', firstMessage: '', authorNote: '' }
@@ -75,7 +80,17 @@ describe('game metadata validation', () => {
 		expect(() => parseGame({ ...input, schemaVersion: 1 })).toThrow();
 		expect(game).not.toHaveProperty('definition');
 		expect(parseGame(JSON.parse(JSON.stringify(game)))).toEqual(game);
-		expect(() => parseGame({ ...game, initialState: undefined })).toThrow();
+		expect(() =>
+			parseGame({
+				...game,
+				schema: {
+					type: 'object',
+					properties: { gold: { type: 'integer' } },
+					additionalProperties: false
+				},
+				initialState: undefined
+			})
+		).toThrow();
 		expect(() => parseGame({ ...game, scripts: { bad: { language: '', source: '' } } })).toThrow();
 	});
 	it('normalizes input without inventing optional game content', () => {
@@ -113,6 +128,11 @@ describe('game metadata validation', () => {
 			description: '',
 			createdAt: '2026-11-02T00:00:00.000Z',
 			updatedAt: '2026-11-02T00:00:00.000Z',
+			schema: {
+				type: 'object',
+				properties: { gold: { type: 'integer' } },
+				additionalProperties: false
+			},
 			initialState: {},
 			scripts: {},
 			settings: { description: '', firstMessage: '', authorNote: '' }
@@ -120,6 +140,11 @@ describe('game metadata validation', () => {
 		expect(parseGame(game)).toEqual({
 			...game,
 			schemaVersion: 2,
+			schema: {
+				type: 'object',
+				properties: { gold: { type: 'integer' } },
+				additionalProperties: false
+			},
 			initialState: {},
 			scripts: {},
 			settings: { description: '', firstMessage: '', authorNote: '' }

@@ -170,18 +170,23 @@ fn read_rows(
         .map_err(db_error)?;
     rows.map(|row| {
         let (id, game_id, session_id, value) = row.map_err(db_error)?;
-        Ok(StoredRecord {
+        let record = StoredRecord {
             table,
             id,
             game_id,
             session_id,
             value: serde_json::from_str(&value).map_err(|_| "저장된 데이터가 올바르지 않아요.")?,
-        })
+        };
+        validate(&record, &record.game_id)?;
+        Ok(record)
     })
     .collect()
 }
 
 fn validate(row: &StoredRecord, game_id: &str) -> Result<(), String> {
+    if matches!(row.table, Table::Games | Table::Snapshots) {
+        crate::state_schema::validate_document(&row.value)?;
+    }
     let expected = match row.table {
         Table::Games | Table::Progress | Table::Transactions => 2,
         _ => 1,
@@ -479,6 +484,7 @@ pub(crate) fn execute_request(path: &Path, input: Value) -> Result<Value, String
                     None,
                 )?);
                 if let Some(session) = session_id {
+                    validate_history(&transaction, &game_id, &session)?;
                     for table in [
                         Table::Messages,
                         Table::Snapshots,
@@ -518,6 +524,115 @@ pub(crate) fn execute_request(path: &Path, input: Value) -> Result<Value, String
 }
 
 use rusqlite::OptionalExtension;
+
+fn apply_recorded_change(state: &mut Value, change: &Value) -> Result<(), String> {
+    let invalid = || "저장된 상태 변경을 복원할 수 없어요.".to_string();
+    let path = change["path"].as_array().ok_or_else(invalid)?;
+    let mut parent = state;
+    for key in &path[..path.len() - 1] {
+        parent = parent
+            .as_object_mut()
+            .and_then(|object| object.get_mut(key.as_str()?))
+            .ok_or_else(invalid)?;
+    }
+    let object = parent.as_object_mut().ok_or_else(invalid)?;
+    let key = path.last().and_then(Value::as_str).ok_or_else(invalid)?;
+    let previous = object.get(key);
+    if previous.is_some() != (change["before"]["exists"] == true)
+        || previous.is_some_and(|old| !crate::state_schema::equal(old, &change["before"]["value"]))
+    {
+        return Err(invalid());
+    }
+    if change["after"]["exists"] == true {
+        object.insert(key.into(), change["after"]["value"].clone());
+    } else {
+        object.remove(key);
+    }
+    Ok(())
+}
+fn restored_state<'a>(
+    snapshot: &Value,
+    nodes: &'a std::collections::HashMap<String, Value>,
+    mut head: Option<&'a str>,
+) -> Result<Value, String> {
+    let mut visited = std::collections::HashSet::new();
+    let mut path = vec![];
+    while let Some(id) = head {
+        if !visited.insert(id) {
+            return Err("진행 기록이 순환하고 있어요.".into());
+        }
+        let node = nodes.get(id).ok_or("진행 기록을 찾을 수 없어요.")?;
+        path.push(node);
+        head = node["parentId"].as_str();
+    }
+    let mut state = snapshot["initialState"].clone();
+    let mut revision = 0;
+    for node in path.into_iter().rev() {
+        let next = node["createdRevision"].as_u64().unwrap();
+        if next <= revision {
+            return Err("게임 진행 리비전이 올바르지 않아요.".into());
+        }
+        revision = next;
+        for change in node["changes"].as_array().unwrap() {
+            apply_recorded_change(&mut state, change)?;
+        }
+        crate::state_schema::validate_value(&snapshot["schema"], &state, "load")?;
+    }
+    Ok(state)
+}
+fn validate_history(
+    connection: &Connection,
+    game_id: &str,
+    session_id: &str,
+) -> Result<(), String> {
+    let snapshots = read_rows(
+        connection,
+        Table::Snapshots,
+        Some(game_id),
+        Some(session_id),
+    )?;
+    let progress = read_rows(connection, Table::Progress, Some(game_id), Some(session_id))?;
+    let transactions = read_rows(
+        connection,
+        Table::Transactions,
+        Some(game_id),
+        Some(session_id),
+    )?;
+    let Some(progress) = progress.first() else {
+        return if snapshots.is_empty() && transactions.is_empty() {
+            Ok(())
+        } else {
+            Err("세션의 진행 기록이 없어요.".into())
+        };
+    };
+    let snapshot = &snapshots
+        .iter()
+        .find(|row| Some(row.id.as_str()) == progress.value["snapshotId"].as_str())
+        .ok_or("세션의 게임 정의가 일치하지 않아요.")?
+        .value;
+    crate::state_schema::validate_value(&snapshot["schema"], &progress.value["state"], "load")?;
+    let mut nodes = std::collections::HashMap::new();
+    let mut revisions = std::collections::HashSet::new();
+    for row in &transactions {
+        let revision = row.value["createdRevision"].as_u64().unwrap();
+        if revision == 0
+            || revision > progress.value["revision"].as_u64().unwrap()
+            || !revisions.insert(revision)
+        {
+            return Err("게임 진행 리비전이 올바르지 않아요.".into());
+        }
+        nodes.insert(row.id.clone(), row.value.clone());
+    }
+    for id in nodes.keys() {
+        restored_state(snapshot, &nodes, Some(id))?;
+    }
+    let state = restored_state(snapshot, &nodes, progress.value["headId"].as_str())?;
+    if !crate::state_schema::equal(&state, &progress.value["state"]) {
+        return Err("저장된 상태가 진행 기록과 일치하지 않아요.".into());
+    }
+    Ok(())
+}
+
 fn write(
     connection: &Connection,
     game_id: &str,
@@ -577,8 +692,16 @@ fn write(
             }
         })
     });
+    let affected_sessions: std::collections::HashSet<_> = records
+        .iter()
+        .filter(|row| !matches!(row.table, Table::Games | Table::Sessions))
+        .filter_map(|row| row.session_id.clone())
+        .collect();
     for row in records {
         write_row(connection, &row, version.is_none())?;
+    }
+    for session_id in affected_sessions {
+        validate_history(connection, game_id, &session_id)?;
     }
     let valid: u32 = connection.query_row("SELECT count(*) FROM games g JOIN sessions s ON s.id=json_extract(g.value,'$.activeSessionId') AND s.game_id=g.id WHERE g.id=?1", [game_id], |row| row.get(0)).map_err(db_error)?;
     if valid != 1 {
@@ -639,7 +762,7 @@ mod tests {
         }
     }
     fn game(title: &str) -> Value {
-        json!({ "schemaVersion": 2, "id": "game", "activeSessionId": "session", "title": title, "genre": "", "description": "", "settings": { "description": "", "firstMessage": "", "authorNote": "" }, "initialState": {}, "scripts": {}, "createdAt": "2026-11-02T00:00:00.000Z", "updatedAt": "2026-11-02T00:00:00.000Z" })
+        json!({ "schemaVersion": 2, "id": "game", "activeSessionId": "session", "title": title, "genre": "", "description": "", "settings": { "description": "", "firstMessage": "", "authorNote": "" }, "schema":{"type":"object","properties":{},"additionalProperties":false}, "initialState": {}, "scripts": {}, "createdAt": "2026-11-02T00:00:00.000Z", "updatedAt": "2026-11-02T00:00:00.000Z" })
     }
     fn row(table: &str, id: &str, session_id: Option<&str>, value: Value) -> Value {
         json!({ "table": table, "id": id, "gameId": "game", "sessionId": session_id, "value": value })
@@ -663,11 +786,65 @@ mod tests {
         assert_eq!(fixture.read(), saved);
     }
     #[test]
+    fn schema_and_history_guards_roll_back_metadata_progress_and_version() {
+        let fixture = Fixture::new();
+        fixture.create();
+        let now = "2026-11-02T00:00:00.000Z";
+        let schema = json!({"type":"object","properties":{"hp":{"type":"integer"}},"required":["hp"],"additionalProperties":false});
+        let snapshot = json!({"schemaVersion":1,"id":"snapshot","gameId":"game","createdAt":now,"settings":game("")["settings"],"schema":schema,"initialState":{"hp":100},"scripts":{}});
+        let progress = json!({"schemaVersion":2,"sessionId":"session","gameId":"game","snapshotId":"snapshot","headId":null,"revision":0,"state":{"hp":100}});
+        fixture
+            .request(commit(
+                0,
+                vec![
+                    row("snapshots", "snapshot", Some("session"), snapshot),
+                    row("progress", "session", Some("session"), progress.clone()),
+                ],
+            ))
+            .unwrap();
+        let before = fixture.read();
+        for state in [
+            json!({"hp":"bad"}),
+            json!({"hp":100,"extra":true}),
+            json!({"hp":50}),
+        ] {
+            let mut bad = progress.clone();
+            bad["state"] = state;
+            assert!(
+                fixture
+                    .request(commit(
+                        1,
+                        vec![
+                            row("games", "game", None, game("changed")),
+                            row("progress", "session", Some("session"), bad)
+                        ]
+                    ))
+                    .is_err()
+            );
+            assert_eq!(fixture.read(), before);
+        }
+        let event = json!({"schemaVersion":2,"id":"inactive","gameId":"game","sessionId":"session","parentId":null,"createdAt":now,"createdRevision":1,"action":{"name":"invalid","args":{}},"changes":[{"path":["hp"],"before":{"exists":true,"value":100},"after":{"exists":true,"value":"bad"}}]});
+        let mut unchanged = progress.clone();
+        unchanged["revision"] = json!(1);
+        assert!(
+            fixture
+                .request(commit(
+                    1,
+                    vec![
+                        row("progress", "session", Some("session"), unchanged),
+                        row("transactions", "inactive", Some("session"), event)
+                    ]
+                ))
+                .is_err()
+        );
+        assert_eq!(fixture.read(), before);
+    }
+    #[test]
     fn commits_full_session_and_cascades_its_deletion() {
         let fixture = Fixture::new();
         fixture.create();
         let now = "2026-11-02T00:00:00.000Z";
-        let snapshot = json!({"schemaVersion":1,"id":"snapshot","gameId":"game","createdAt":now,"settings":game("")["settings"],"initialState":{},"scripts":{}});
+        let snapshot = json!({"schemaVersion":1,"id":"snapshot","gameId":"game","createdAt":now,"settings":game("")["settings"],"schema":{"type":"object","properties":{"gold":{"type":"integer"}},"additionalProperties":false},"initialState":{},"scripts":{}});
         let message = json!({"schemaVersion":1,"id":"message","gameId":"game","sessionId":"session","sequence":1,"role":"assistant","kind":"dialogue","content":"물약 🧪","createdAt":now});
         let progress = json!({"schemaVersion":2,"sessionId":"session","gameId":"game","snapshotId":"snapshot","headId":"event","revision":1,"state":{"gold":80}});
         let event = json!({"schemaVersion":2,"id":"event","gameId":"game","sessionId":"session","parentId":null,"createdAt":now,"createdRevision":1,"action":{"name":"buy","args":{}},"changes":[{"path":["gold"],"before":{"exists":false},"after":{"exists":true,"value":80}}],"messageId":"message"});

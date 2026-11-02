@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { openStorage } from '#lib/server/sqlite.js';
 import { createGameRepository } from './repository-core.js';
+import { createWorkspace, TransactionFailure } from '#lib/game-runtime/workspace.js';
 import {
 	CONFLICT,
 	parseReply,
@@ -28,7 +29,15 @@ afterEach(() => {
 
 async function start() {
 	const game = await repository.createGame();
-	await repository.updateGameRules(game.id, { initialState: { gold: 100 }, scripts: {} });
+	await repository.updateGameRules(game.id, {
+		schema: {
+			type: 'object',
+			properties: { gold: { type: 'integer' } },
+			additionalProperties: false
+		},
+		initialState: { gold: 100 },
+		scripts: {}
+	});
 	return {
 		gameId: game.id,
 		sessionId: game.activeSessionId,
@@ -37,6 +46,110 @@ async function start() {
 }
 
 describe('SQLite game repository', () => {
+	it('rejects invalid schemas and initial states before writing game rules', async () => {
+		const game = await repository.createGame();
+		const before = await transport({ kind: 'read', gameId: game.id });
+		for (const input of [
+			{ schema: { type: 'object', properties: {}, additionalProperties: true }, initialState: {} },
+			{
+				schema: {
+					type: 'object',
+					properties: { hp: { type: 'integer' } },
+					required: ['hp'],
+					additionalProperties: false
+				},
+				initialState: { hp: '100' }
+			}
+		])
+			expect(() =>
+				repository.updateGameRules(game.id, { ...input, scripts: {} } as unknown as Parameters<
+					typeof repository.updateGameRules
+				>[1])
+			).toThrow();
+		expect(await transport({ kind: 'read', gameId: game.id })).toEqual(before);
+	});
+	it('commits accumulated workspace steps once and rolls back schema or rule failures with messages', async () => {
+		const { gameId, sessionId, history } = await start();
+		const work = createWorkspace(history.snapshot.schema, history.progress.state);
+		work.replace({ gold: 90 });
+		work.replace({ gold: 80 });
+		const input = {
+			expectedRevision: 0,
+			parentId: null,
+			nextState: work.finish({ name: 'buy', args: {} }).state,
+			action: { name: 'buy', args: {} },
+			message: { role: 'assistant' as const, content: 'done' }
+		};
+		const before = await transport({ kind: 'read', gameId, sessionId });
+		await expect(
+			repository.commitSessionTransaction(gameId, sessionId, {
+				...input,
+				nextState: { gold: 'invalid' }
+			})
+		).rejects.toThrow(/commit/);
+		for (const phase of ['filter', 'hook'] as const) {
+			const guarded = createGameRepository(transport, {
+				validateTransaction() {
+					throw new TransactionFailure(phase, 'test', 'rejected');
+				}
+			});
+			await expect(guarded.commitSessionTransaction(gameId, sessionId, input)).rejects.toThrow(
+				TransactionFailure
+			);
+			expect(await transport({ kind: 'read', gameId, sessionId })).toEqual(before);
+		}
+		const saved = await repository.commitSessionTransaction(gameId, sessionId, input);
+		expect(saved.transactions).toHaveLength(1);
+		expect(saved.progress.state).toEqual({ gold: 80 });
+	});
+	it('rejects raw storage proposals that bypass state schema or history validation and rolls back metadata', async () => {
+		const { gameId, sessionId, history } = await start();
+		const before = await transport({ kind: 'read', gameId, sessionId });
+		const game = (await repository.getGameWorkspace(gameId))!.game;
+		for (const state of [{ gold: 'invalid' }, { gold: 100, extra: true }, { gold: 50 }]) {
+			expect(() =>
+				storage.request({
+					kind: 'commit',
+					gameId,
+					version: before.version,
+					deleteSessions: [],
+					records: [
+						storedRecord('games', { ...game, title: 'must roll back' }),
+						storedRecord('progress', { ...history.progress, state })
+					]
+				})
+			).toThrow();
+			expect(await transport({ kind: 'read', gameId, sessionId })).toEqual(before);
+		}
+	});
+	it('validates loaded state without silently repairing corrupt data', async () => {
+		const { gameId, sessionId } = await start();
+		storage.connection
+			.prepare("UPDATE progress SET value=json_set(value,'$.state.gold','bad') WHERE id=?")
+			.run(sessionId);
+		await expect(repository.getSessionHistory(gameId, sessionId)).rejects.toThrow();
+		expect(
+			storage.connection
+				.prepare("SELECT json_extract(value,'$.state.gold') as gold FROM progress WHERE id=?")
+				.get(sessionId)
+		).toEqual({ gold: 'bad' });
+	});
+	it('rejects a corrupted inactive branch even when current progress still matches its own history', async () => {
+		const { gameId, sessionId } = await start();
+		const history = await repository.commitSessionTransaction(gameId, sessionId, {
+			expectedRevision: 0,
+			parentId: null,
+			nextState: { gold: 80 },
+			action: { name: 'buy', args: {} }
+		});
+		await repository.selectSessionBranch(gameId, sessionId, null, history.progress.revision);
+		storage.connection
+			.prepare(
+				"UPDATE transactions SET value=json_set(value,'$.changes[0].after.value','bad') WHERE id=?"
+			)
+			.run(history.progress.headId);
+		await expect(repository.getSessionHistory(gameId, sessionId)).rejects.toThrow(/load/);
+	});
 	it('creates independent games and initial sessions in a fresh DB', async () => {
 		const first = await repository.createGame();
 		const second = await repository.createGame();
@@ -255,7 +368,15 @@ describe('SQLite game repository', () => {
 	});
 	it('keeps state and script snapshots independent between sessions', async () => {
 		const { gameId, sessionId, history } = await start();
-		await repository.updateGameRules(gameId, { initialState: { gold: 500 }, scripts: {} });
+		await repository.updateGameRules(gameId, {
+			schema: {
+				type: 'object',
+				properties: { gold: { type: 'integer' } },
+				additionalProperties: false
+			},
+			initialState: { gold: 500 },
+			scripts: {}
+		});
 		const other = await repository.createSession(gameId);
 		expect((await repository.getSessionHistory(gameId, other.id)).progress.state).toEqual({
 			gold: 500

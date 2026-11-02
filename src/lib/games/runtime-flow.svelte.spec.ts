@@ -31,7 +31,19 @@ it('keeps real chat, state and memories on the selected response branch across r
 	const game = await createGame();
 	const gameId = game.id;
 	const sessionId = game.activeSessionId;
-	await updateGameRules(gameId, { initialState: { gold: 100, iron: 3 }, scripts: {} });
+	await updateGameRules(gameId, {
+		schema: {
+			type: 'object',
+			properties: {
+				gold: { type: 'integer' },
+				iron: { type: 'integer' },
+				reputation: { type: 'integer' }
+			},
+			additionalProperties: false
+		},
+		initialState: { gold: 100, iron: 3 },
+		scripts: {}
+	});
 	await updateGameSettings(gameId, {
 		title: '대장간',
 		description: '',

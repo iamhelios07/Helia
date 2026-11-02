@@ -1,5 +1,23 @@
 export type { GameState, StateValue } from './value.js';
 export { parseGameState } from './value.js';
+export {
+	parseSchema,
+	parseObjectSchema,
+	parseStateDocument,
+	validateValue,
+	validateState,
+	generateStateTypes,
+	StateValidationError
+} from './schema.js';
+export type { ValueSchema, ObjectSchema, StateDocument, ValidationPhase } from './schema.js';
+export { createWorkspace, TransactionFailure } from './workspace.js';
+export type {
+	RuleContext,
+	TransactionValidator,
+	FilterDecision,
+	FilterExecutor,
+	IncludedHookExecutor
+} from './workspace.js';
 export type {
 	GameSnapshot,
 	Transaction,

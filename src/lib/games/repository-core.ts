@@ -37,6 +37,8 @@ import {
 	type SessionHistory
 } from '#lib/game-runtime/model.js';
 import { parseGameState, sameValue } from '#lib/game-runtime/value.js';
+import { emptyStateDocument, parseStateDocument } from '#lib/game-runtime/schema.js';
+import type { TransactionValidator } from '#lib/game-runtime/workspace.js';
 
 function makeSession(gameId: string): Session {
 	const now = new Date().toISOString();
@@ -126,6 +128,7 @@ function initialize(unit: StorageUnit, gameId: string, sessionId: string) {
 			createdAt: new Date().toISOString(),
 			settings: game.settings,
 			initialState: game.initialState,
+			schema: game.schema,
 			scripts: game.scripts
 		});
 		const progress = createSessionState(snapshot, session.id);
@@ -168,7 +171,10 @@ function visibleMessages(context: Context): Message[] {
 }
 
 /** Shared application operations; the host owns the short SQL transactions. */
-export function createGameRepository(transport: StorageTransport) {
+export function createGameRepository(
+	transport: StorageTransport,
+	options: { validateTransaction?: TransactionValidator } = {}
+) {
 	function withGame<T>(gameId: string, operation: (unit: StorageUnit) => T) {
 		return useStorage(transport, gameId, undefined, operation);
 	}
@@ -195,11 +201,16 @@ export function createGameRepository(transport: StorageTransport) {
 					'dialogue'
 				)
 			: undefined;
-		const prepared = prepareTransaction(context.history, input, {
-			id: crypto.randomUUID(),
-			createdAt: new Date().toISOString(),
-			...(message ? { messageId: message.id } : {})
-		});
+		const prepared = prepareTransaction(
+			context.history,
+			input,
+			{
+				id: crypto.randomUUID(),
+				createdAt: new Date().toISOString(),
+				...(message ? { messageId: message.id } : {})
+			},
+			options.validateTransaction
+		);
 		unit.put('transactions', prepared.transaction);
 		unit.put('progress', prepared.progress);
 		if (message) unit.put('messages', message);
@@ -241,7 +252,7 @@ export function createGameRepository(transport: StorageTransport) {
 				createdAt: now,
 				updatedAt: now,
 				settings: { description: '', firstMessage: '', authorNote: '' },
-				initialState: {},
+				...emptyStateDocument(),
 				scripts: {}
 			};
 			await transport({
@@ -285,13 +296,17 @@ export function createGameRepository(transport: StorageTransport) {
 				return game;
 			});
 		},
-		updateGameRules(gameId: string, input: Pick<Game, 'initialState' | 'scripts'>) {
-			const initialState = parseGameState(input.initialState);
+		updateGameRules(gameId: string, input: Pick<Game, 'schema' | 'initialState' | 'scripts'>) {
+			const { schema, initialState } = parseStateDocument({
+				schema: input.schema,
+				initialState: input.initialState
+			});
 			const scripts = parseScripts(input.scripts);
 			return withGame(gameId, (unit) => {
 				const game = {
 					...gameIn(unit, gameId),
 					initialState,
+					schema,
 					scripts,
 					updatedAt: new Date().toISOString()
 				};

@@ -90,8 +90,16 @@ An original game identifier, an installation identifier and a content version MU
 ## State Schema and Initial State
 
 - Each game MUST define its state schema and initial state as separate fields in the same authoring document.
+- The game-state document MUST use an object as its root state; primitive, array and nullable schemas MAY be nested within its fields.
 - The canonical schema MUST be JSON-based and use a documented subset of JSON Schema.
-- The supported subset MUST cover primitive types, arrays and objects with explicitly typed fields. Required fields and enumerated values SHOULD be supported; the exact keyword set remains open.
+- The supported subset MUST include `string`, `number`, `integer`, `boolean`, `null`, objects with explicitly typed fields and arrays whose items share one schema.
+- Supported structural keywords MUST include `type`, `properties`, `required`, `additionalProperties: false` and `items`. `enum` MUST be supported, and `title` and `description` MUST be supported as authoring annotations.
+- `type` MUST accept a single supported type or a two-type array containing one non-null type and `null`. Other type unions are outside the supported subset.
+- Optional field presence and nullable values MUST remain distinct: `required` controls presence; nullable types control whether a present value may be `null`.
+- Every object schema MUST declare `properties` and `additionalProperties: false`. A field not listed in `required` MAY be omitted. Each array schema MUST declare one `items` schema, which MUST apply to every item, including nested objects and arrays.
+- `enum` MUST be nonempty and contain distinct values satisfying its declared type and structure.
+- Initial values MUST be defined in `initialState`, not a schema `default` keyword. Normal validation MUST NOT coerce values or insert missing values; game-content migration follows its separate transformation rules.
+- References (`$ref`), recursive schemas, schema combinations (`oneOf`, `anyOf`, `allOf`, `not`), conditional schemas, tuples and schema keywords for numeric ranges or string patterns are outside the supported subset. Such constraints MAY be expressed through Filters where applicable.
 - Undefined fields MUST be rejected by default, including fields in nested objects.
 - Unsupported schema syntax MUST produce an explicit diagnostic rather than being silently ignored.
 - Initial state MUST satisfy its schema before it can initialize a playable session.
@@ -471,7 +479,6 @@ The following items require product decisions. They are not permissions to bypas
 | Area                    | Unresolved behavior                                                                                                                      |
 | ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
 | Installation management | Repeated imports while a matching active installation exists; Trash retention and restoration behavior.                                  |
-| Schema contract         | Exact JSON Schema keywords, required-field and enum support, and diagnostics for each supported constraint.                              |
 | Content changes         | Timing of an explicit apply request while an AI response or other game operation is in progress; preservation or reset of test sessions. |
 | State evolution         | Whether existing event records are transformed or preserved with a compatibility mechanism.                                              |
 | Hooks                   | Execution order, independent transactions, error propagation, re-entry and visible execution limits.                                     |

@@ -13,6 +13,8 @@ pub fn run() {
         .expect("error while running Helia");
 }
 #[cfg(any(feature = "desktop", test))]
+mod state_schema;
+#[cfg(any(feature = "desktop", test))]
 mod storage;
 
 #[cfg(feature = "desktop")]

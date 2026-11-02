@@ -50,7 +50,15 @@ The [runtime model](../game-runtime/model.ts) and [state engine](../game-runtime
 
 The first session access creates a `GameSnapshot` containing game rules and content. Existing sessions retain that copy until the later Apply/version stage. This is different from the periodic game-state checkpoints proposed in the product specification.
 
-The engine accepts finite JSON data and rejects cycles, class instances, accessors, sparse arrays and prototype-related keys. Arrays are recorded as complete values; object paths use string arrays. State, transaction, optional message and activity metadata commit together. Schema/Filter validation and creator script execution are later implementation stages.
+The engine accepts finite JSON data and rejects cycles, class instances, accessors, sparse arrays and prototype-related keys. Arrays are recorded as complete values; object paths use string arrays. State, transaction, optional message and activity metadata commit together.
+
+Games and game-content snapshots require a `schema` beside `initialState`. The [state schema validator](../game-runtime/schema.ts) implements the subset defined in the [product specification](../../../docs/SPEC.md): closed typed objects, homogeneous arrays, primitive types, nullable types, required fields, enums and title/description annotations. Objects explicitly declare `additionalProperties: false`. Validation never coerces values or inserts defaults. Existing development records without this schema are not converted.
+
+Initial state is validated when parsing game rules and snapshots. Loaded state and restored transaction outcomes are validated against the session's content snapshot. Both storage hosts validate the resulting progress and all recorded branch outcomes inside each affected session's write transaction; a schema failure or mismatch with history rolls back metadata, messages, state and the storage version together.
+
+The [transaction workspace](../game-runtime/workspace.ts) accumulates detached changes without keeping a database transaction open. `step` validates declared argument schemas before running a synchronous host operation, then validates its proposed state. `replace` validates a complete state proposal. `finish` returns the net state and change set; failed or aborted workspaces cannot finish. The repository still checks the session revision and revalidates final state at commit time.
+
+`generateStateTypes` produces a standalone `GameState` TypeScript declaration with optional fields, nullable values, arrays and literal enums. It does not replace runtime validation. The trusted `TransactionValidator` seam receives frozen detached before/after state, changes and action information, and can reject finalization with a structured Filter/Hook failure. Actual sandboxed creator-code execution and Filter/Hook scheduling belong to a later implementation stage.
 
 Branch selection restores recorded results without rerunning AI, scripts or randomness. New transactions from an earlier parent preserve existing continuations. `deleteSessionResponse` currently selects the response's parent and retains its records; subtree deletion belongs to stage 3.
 

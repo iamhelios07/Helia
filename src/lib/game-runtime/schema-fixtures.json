@@ -1,0 +1,154 @@
+[
+	{
+		"name": "required integer",
+		"schema": {
+			"type": "object",
+			"properties": { "hp": { "type": "integer" } },
+			"required": ["hp"],
+			"additionalProperties": false
+		},
+		"valid": [{ "hp": 100 }, { "hp": -5 }],
+		"invalid": [{}, { "hp": "100" }, { "hp": 1.5 }, { "hp": true }, { "hp": 100, "extra": 1 }]
+	},
+	{
+		"name": "nullable and optional",
+		"schema": {
+			"type": "object",
+			"properties": { "target": { "type": ["string", "null"] }, "optional": { "type": "boolean" } },
+			"required": ["target"],
+			"additionalProperties": false
+		},
+		"valid": [{ "target": null }, { "target": "enemy", "optional": false }],
+		"invalid": [{}, { "target": 5 }, { "target": null, "optional": null }]
+	},
+	{
+		"name": "nested array",
+		"schema": {
+			"type": "array",
+			"items": {
+				"type": "object",
+				"properties": { "id": { "type": "string" }, "amount": { "type": "integer" } },
+				"required": ["id", "amount"],
+				"additionalProperties": false
+			}
+		},
+		"valid": [[], [{ "id": "sword", "amount": 2 }]],
+		"invalid": [[{ "id": "sword" }], [{ "id": "sword", "amount": 1, "extra": true }], {}]
+	},
+	{
+		"name": "enum",
+		"schema": {
+			"type": ["null", "string"],
+			"enum": [null, "idle", "combat"],
+			"title": "Mode",
+			"description": "Current activity"
+		},
+		"valid": [null, "idle", "combat"],
+		"invalid": ["other", 1, false]
+	},
+	{
+		"name": "nullable objects",
+		"schema": {
+			"type": ["object", "null"],
+			"properties": { "flag": { "type": "boolean" } },
+			"additionalProperties": false
+		},
+		"valid": [null, {}, { "flag": true }],
+		"invalid": [[], { "flag": 1 }, { "extra": null }]
+	},
+	{
+		"name": "nullable arrays",
+		"schema": { "type": ["null", "array"], "items": { "type": "number" } },
+		"valid": [null, [], [1, 1.5]],
+		"invalid": [{}, [true], ["1"]]
+	},
+	{ "name": "only null", "schema": { "type": "null" }, "valid": [null], "invalid": [false, 0, ""] },
+	{
+		"name": "structured enum equality",
+		"schema": {
+			"type": "object",
+			"properties": { "a": { "type": "integer" }, "b": { "type": "string" } },
+			"required": ["a", "b"],
+			"additionalProperties": false,
+			"enum": [{ "a": 1, "b": "x" }]
+		},
+		"valid": [{ "b": "x", "a": 1.0 }],
+		"invalid": [{ "a": 2, "b": "x" }]
+	},
+	{
+		"name": "unknown keyword",
+		"schema": { "type": "integer", "minimum": 0 },
+		"schemaValid": false
+	},
+	{ "name": "reference", "schema": { "$ref": "#/definitions/player" }, "schemaValid": false },
+	{ "name": "combination", "schema": { "type": "string", "oneOf": [] }, "schemaValid": false },
+	{ "name": "conditional", "schema": { "type": "string", "if": {} }, "schemaValid": false },
+	{
+		"name": "tuple",
+		"schema": { "type": "array", "items": [{ "type": "string" }] },
+		"schemaValid": false
+	},
+	{
+		"name": "implicit open object",
+		"schema": { "type": "object", "properties": {} },
+		"schemaValid": false
+	},
+	{
+		"name": "open object",
+		"schema": { "type": "object", "properties": {}, "additionalProperties": true },
+		"schemaValid": false
+	},
+	{
+		"name": "required unknown field",
+		"schema": {
+			"type": "object",
+			"properties": {},
+			"required": ["hp"],
+			"additionalProperties": false
+		},
+		"schemaValid": false
+	},
+	{
+		"name": "duplicate required",
+		"schema": {
+			"type": "object",
+			"properties": { "hp": { "type": "integer" } },
+			"required": ["hp", "hp"],
+			"additionalProperties": false
+		},
+		"schemaValid": false
+	},
+	{ "name": "empty enum", "schema": { "type": "integer", "enum": [] }, "schemaValid": false },
+	{
+		"name": "duplicate enum",
+		"schema": { "type": "number", "enum": [1, 1.0] },
+		"schemaValid": false
+	},
+	{
+		"name": "wrong enum type",
+		"schema": { "type": "integer", "enum": ["1"] },
+		"schemaValid": false
+	},
+	{
+		"name": "invalid annotation",
+		"schema": { "type": "string", "title": 3 },
+		"schemaValid": false
+	},
+	{
+		"name": "default keyword",
+		"schema": { "type": "integer", "default": 0 },
+		"schemaValid": false
+	},
+	{ "name": "arbitrary union", "schema": { "type": ["string", "number"] }, "schemaValid": false },
+	{ "name": "single element union", "schema": { "type": ["string"] }, "schemaValid": false },
+	{ "name": "duplicate nullable", "schema": { "type": ["null", "null"] }, "schemaValid": false },
+	{
+		"name": "prototype key",
+		"schema": {
+			"type": "object",
+			"properties": { "__proto__": { "type": "string" } },
+			"additionalProperties": false
+		},
+		"schemaValid": false
+	}
+]

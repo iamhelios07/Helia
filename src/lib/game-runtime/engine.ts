@@ -1,11 +1,8 @@
-import {
-	parseGameState,
-	parseStateValue,
-	isStateObject,
-	sameValue,
-	validateStateKey,
-	type GameState
-} from './value.js';
+import { sameValue, type GameState } from './value.js';
+import { applyChanges } from './changes.js';
+export { diffState, applyChanges } from './changes.js';
+import { validateState } from './schema.js';
+import { createWorkspace, type TransactionValidator } from './workspace.js';
 import {
 	counter,
 	parseAction,
@@ -15,8 +12,6 @@ import {
 	type SessionState,
 	type Memory,
 	type SessionHistory,
-	type StateChange,
-	type StateSlot,
 	type Action
 } from './model.js';
 
@@ -26,55 +21,6 @@ export interface CommitTransaction {
 	parentId: string | null;
 	nextState: GameState;
 	action: Action;
-}
-
-function slot(state: GameState, key: string): StateSlot {
-	return Object.hasOwn(state, key) ? { exists: true, value: state[key] } : { exists: false };
-}
-function sameSlot(first: StateSlot, second: StateSlot): boolean {
-	return (
-		first.exists === second.exists &&
-		(!first.exists || (second.exists && sameValue(first.value, second.value)))
-	);
-}
-
-/** Arrays are recorded as values; insertion/removal cannot invalidate later index paths. */
-export function diffState(
-	before: GameState,
-	after: GameState,
-	prefix: string[] = []
-): StateChange[] {
-	const result: StateChange[] = [];
-	for (const key of new Set([...Object.keys(before), ...Object.keys(after)])) {
-		const old = slot(before, key);
-		const next = slot(after, key);
-		if (sameSlot(old, next)) continue;
-		const path = [...prefix, key];
-		if (old.exists && next.exists && isStateObject(old.value) && isStateObject(next.value))
-			result.push(...diffState(old.value, next.value, path));
-		else result.push({ path, before: old, after: next });
-	}
-	return result;
-}
-
-export function applyChanges(state: GameState, changes: readonly StateChange[]): GameState {
-	const next = parseGameState(state);
-	for (const change of changes) {
-		if (!change.path.length) throw new Error('상태 변경 경로가 올바르지 않아요.');
-		change.path.forEach(validateStateKey);
-		let parent = next;
-		for (const key of change.path.slice(0, -1)) {
-			if (!Object.hasOwn(parent, key) || !isStateObject(parent[key]))
-				throw new Error('상태 변경 경로를 복원할 수 없어요.');
-			parent = parent[key] as GameState;
-		}
-		const key = change.path.at(-1)!;
-		if (!sameSlot(slot(parent, key), change.before))
-			throw new Error('상태 변경 전 값이 기록과 일치하지 않아요.');
-		if (change.after.exists) parent[key] = parseStateValue(change.after.value);
-		else delete parent[key];
-	}
-	return next;
 }
 
 export function activeTransactions(
@@ -110,9 +56,21 @@ export function stateAt(history: SessionHistory, headId = history.progress.headI
 		history.snapshot.gameId !== history.progress.gameId
 	)
 		throw new Error('세션의 게임 정의가 일치하지 않아요.');
-	let state = parseGameState(history.snapshot.initialState);
-	for (const transaction of activeTransactions(history, headId))
-		state = applyChanges(state, transaction.changes);
+	let state = validateState(history.snapshot.schema, history.snapshot.initialState, 'load');
+	let revision = 0;
+	for (const transaction of activeTransactions(history, headId)) {
+		if (
+			transaction.createdRevision <= revision ||
+			transaction.createdRevision > history.progress.revision
+		)
+			throw new Error('게임 진행 리비전이 올바르지 않아요.');
+		revision = transaction.createdRevision;
+		state = validateState(
+			history.snapshot.schema,
+			applyChanges(state, transaction.changes),
+			'load'
+		);
+	}
 	return state;
 }
 
@@ -124,7 +82,7 @@ export function createSessionState(snapshot: GameSnapshot, sessionId: string): S
 		snapshotId: snapshot.id,
 		headId: null,
 		revision: 0,
-		state: parseGameState(snapshot.initialState)
+		state: validateState(snapshot.schema, snapshot.initialState, 'initial')
 	};
 }
 
@@ -140,11 +98,17 @@ function nextRevision(progress: SessionState): number {
 export function prepareTransaction(
 	history: SessionHistory,
 	input: CommitTransaction,
-	metadata: { id: string; createdAt: string; messageId?: string }
+	metadata: { id: string; createdAt: string; messageId?: string },
+	validate?: TransactionValidator
 ): { progress: SessionState; transaction: Transaction } {
 	assertRevision(history.progress, input.expectedRevision);
 	const before = stateAt(history, input.parentId);
-	const after = parseGameState(input.nextState);
+	const restored = stateAt(history);
+	if (!sameValue(restored, validateState(history.snapshot.schema, history.progress.state, 'load')))
+		throw new Error('Stored progress does not match history.');
+	const workspace = createWorkspace(history.snapshot.schema, before);
+	workspace.replace(input.nextState);
+	const { state: after, changes } = workspace.finish(input.action, validate);
 	const revision = nextRevision(history.progress);
 	const transaction = parseTransaction({
 		schemaVersion: 2,
@@ -155,7 +119,7 @@ export function prepareTransaction(
 		createdAt: metadata.createdAt,
 		createdRevision: revision,
 		action: parseAction(input.action),
-		changes: diffState(before, after),
+		changes,
 		...(metadata.messageId === undefined ? {} : { messageId: metadata.messageId })
 	});
 	if (history.transactions.some((node) => node.id === transaction.id))

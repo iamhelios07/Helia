@@ -41,6 +41,11 @@ vi.mock('../games/repository.js', () => ({
 
 const game: Game = {
 	schemaVersion: 2,
+	schema: {
+		type: 'object',
+		properties: { gold: { type: 'integer' } },
+		additionalProperties: false
+	},
 	initialState: {},
 	scripts: {},
 	id: 'game-one',

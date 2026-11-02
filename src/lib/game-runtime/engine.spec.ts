@@ -27,6 +27,28 @@ function start(): SessionHistory {
 		gameId: 'game',
 		createdAt: now,
 		settings: { description: '', firstMessage: '', authorNote: '' },
+		schema: {
+			type: 'object',
+			properties: {
+				gold: { type: ['integer', 'null'] },
+				inventory: {
+					type: 'object',
+					properties: { iron: { type: 'integer' } },
+					additionalProperties: false
+				},
+				orders: {
+					type: 'array',
+					items: {
+						type: 'object',
+						properties: { id: { type: 'string' } },
+						additionalProperties: false
+					}
+				},
+				reputation: { type: 'integer' },
+				'a.b': { type: 'boolean' }
+			},
+			additionalProperties: false
+		},
 		initialState: { gold: 100, inventory: { iron: 3 }, orders: [] },
 		scripts: {}
 	});

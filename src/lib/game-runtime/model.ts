@@ -6,8 +6,12 @@ import {
 	type StateValue
 } from './value.js';
 import { parseGameSettings, parseScripts, type Game } from '#lib/games/model.js';
+import { parseStateDocument } from './schema.js';
 
-export interface GameSnapshot extends Pick<Game, 'initialState' | 'scripts' | 'settings'> {
+export interface GameSnapshot extends Pick<
+	Game,
+	'schema' | 'initialState' | 'scripts' | 'settings'
+> {
 	schemaVersion: 1;
 	id: string;
 	gameId: string;
@@ -100,7 +104,7 @@ export function parseGameSnapshot(value: unknown): GameSnapshot {
 		id: identifier(input.id),
 		gameId: identifier(input.gameId),
 		createdAt: timestamp(input.createdAt),
-		initialState: parseGameState(input.initialState),
+		...parseStateDocument({ schema: input.schema, initialState: input.initialState }),
 		scripts: parseScripts(input.scripts),
 		settings: parseGameSettings(input.settings)
 	};

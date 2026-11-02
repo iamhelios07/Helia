@@ -1,4 +1,5 @@
-import { parseGameState, validateStateKey, type GameState } from '#lib/game-runtime/value.js';
+import { validateStateKey, type GameState } from '#lib/game-runtime/value.js';
+import { parseStateDocument, type ObjectSchema } from '#lib/game-runtime/schema.js';
 
 export const GAME_TITLE_MAX_LENGTH = 120;
 export const GAME_GENRE_MAX_LENGTH = 80;
@@ -31,6 +32,7 @@ export interface Game extends GameMetadata {
 	updatedAt: string;
 	settings: GameSettings;
 	initialState: GameState;
+	schema: ObjectSchema;
 	/** Source declarations; execution is handled separately. */
 	scripts: Record<string, { language: string; source: string }>;
 }
@@ -164,7 +166,7 @@ export function parseGame(value: unknown): Game {
 		activeSessionId: value.activeSessionId,
 		createdAt: value.createdAt,
 		updatedAt: value.updatedAt,
-		initialState: parseGameState(value.initialState),
+		...parseStateDocument({ schema: value.schema, initialState: value.initialState }),
 		scripts: parseScripts(value.scripts),
 		settings: parseGameSettings(value.settings)
 	};

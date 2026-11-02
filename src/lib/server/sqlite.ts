@@ -4,6 +4,7 @@ import { sql } from 'drizzle-orm';
 import { mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import migration from '#lib/storage/migrations/0000_initial.sql?raw';
+import { validateStoredHistory } from '#lib/storage/validate-history.js';
 import {
 	CONFLICT,
 	parseRequest,
@@ -126,6 +127,7 @@ export function openStorage(filename: string) {
 						] as const)
 							records.push(...readRows(table, command.gameId, command.sessionId));
 					}
+					validateStoredHistory(records);
 					return { version: game.version, records };
 				}
 				if (command.kind === 'commit') {
@@ -162,6 +164,17 @@ export function openStorage(filename: string) {
 							: 0)
 				);
 				for (const row of records) writeRow(row, command.kind === 'create');
+				for (const sessionId of new Set(
+					records
+						.filter((row) => row.table !== 'games' && row.table !== 'sessions')
+						.map((row) => row.sessionId!)
+				)) {
+					validateStoredHistory(
+						(['snapshots', 'progress', 'transactions'] as const).flatMap((table) =>
+							readRows(table, command.gameId, sessionId)
+						)
+					);
+				}
 				const game = db.get<{ value: string }>(
 					sql`select value from games where id = ${command.gameId}`
 				);
