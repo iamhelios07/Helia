@@ -5,6 +5,7 @@ import { mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import migration from '#lib/storage/migrations/0000_initial.sql?raw';
 import { validateStoredHistory } from '#lib/storage/validate-history.js';
+import { pruneRecords } from '#lib/storage/prune.js';
 import {
 	CONFLICT,
 	parseRequest,
@@ -107,6 +108,41 @@ export function openStorage(filename: string) {
 		const command = parseRequest(input);
 		return db.transaction(
 			() => {
+				if (command.kind === 'prune') {
+					const game = db.get<{ version: number }>(
+						sql`select version from games where id=${command.gameId}`
+					);
+					if (!game || game.version >= Number.MAX_SAFE_INTEGER)
+						throw new Error('게임을 찾을 수 없어요.');
+					const read = () => [
+						...readRows('games', command.gameId),
+						...readRows('sessions', command.gameId),
+						...(['messages', 'snapshots', 'progress', 'transactions', 'memories'] as const).flatMap(
+							(table) => readRows(table, command.gameId, command.sessionId)
+						)
+					];
+					const plan = pruneRecords(
+						read(),
+						command.gameId,
+						command.sessionId,
+						command.eventId,
+						command.expectedRevision
+					);
+					for (const row of plan.deleted) {
+						if (
+							db.run(
+								sql`delete from ${sql.identifier(row.table)} where id=${row.id} and game_id=${command.gameId} and session_id=${command.sessionId}`
+							).changes !== 1
+						)
+							throw new Error('삭제할 기록을 찾을 수 없어요.');
+					}
+					// Deletion shifts surviving sequence numbers down, so update messages forwards.
+					for (const row of plan.updates) writeRow(row, false);
+					db.run(sql`update games set version=version+1 where id=${command.gameId}`);
+					const records = read();
+					validateStoredHistory(records);
+					return { version: game.version + 1, records };
+				}
 				if (command.kind === 'list') return { version: 0, records: readRows('games') };
 				if (command.kind === 'read') {
 					const game = db.get<{ version: number }>(
@@ -170,9 +206,9 @@ export function openStorage(filename: string) {
 						.map((row) => row.sessionId!)
 				)) {
 					validateStoredHistory(
-						(['snapshots', 'progress', 'transactions'] as const).flatMap((table) =>
-							readRows(table, command.gameId, sessionId)
-						)
+						(
+							['sessions', 'messages', 'snapshots', 'progress', 'transactions', 'memories'] as const
+						).flatMap((table) => readRows(table, command.gameId, sessionId))
 					);
 				}
 				const game = db.get<{ value: string }>(

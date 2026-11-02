@@ -80,6 +80,12 @@ enum Request {
         records: Vec<StoredRecord>,
         delete_sessions: Vec<String>,
     },
+    Prune {
+        game_id: String,
+        session_id: String,
+        event_id: String,
+        expected_revision: u64,
+    },
 }
 
 fn open(path: &Path) -> Result<Connection, String> {
@@ -338,6 +344,7 @@ fn valid_value(table: Table, value: &Value) -> bool {
                 && id(&value["action"]["name"])
                 && object_state(&value["action"]["args"])
                 && (value.get("messageId").is_none() || id(&value["messageId"]))
+                && (value.get("description").is_none() || id(&value["description"]))
                 && value["changes"].as_array().is_some_and(|changes| {
                     changes.iter().all(|change| {
                         change["path"].as_array().is_some_and(|path| {
@@ -506,6 +513,18 @@ pub(crate) fn execute_request(path: &Path, input: Value) -> Result<Value, String
             }
         }
         Request::Create { game_id, records } => write(&transaction, &game_id, records, None, &[])?,
+        Request::Prune {
+            game_id,
+            session_id,
+            event_id,
+            expected_revision,
+        } => prune(
+            &transaction,
+            &game_id,
+            &session_id,
+            &event_id,
+            expected_revision,
+        )?,
         Request::Commit {
             game_id,
             version,
@@ -623,6 +642,47 @@ fn validate_history(
         }
         nodes.insert(row.id.clone(), row.value.clone());
     }
+    let sessions = read_rows(connection, Table::Sessions, Some(game_id), None)?;
+    let session = sessions
+        .iter()
+        .find(|row| row.id == session_id)
+        .ok_or("Session not found")?;
+    let mut messages = read_rows(connection, Table::Messages, Some(game_id), Some(session_id))?;
+    messages.sort_by_key(|row| row.value["sequence"].as_u64().unwrap());
+    if session.value["messageCount"].as_u64().unwrap_or(0) != messages.len() as u64
+        || messages
+            .iter()
+            .enumerate()
+            .any(|(index, row)| row.value["sequence"].as_u64() != Some(index as u64 + 1))
+    {
+        return Err("Invalid stored message sequence".into());
+    }
+    let message_ids: std::collections::HashSet<_> =
+        messages.iter().map(|row| row.id.as_str()).collect();
+    let mut linked = std::collections::HashSet::new();
+    for node in nodes.values() {
+        if let Some(id) = node["messageId"].as_str() {
+            if !message_ids.contains(id) || !linked.insert(id) {
+                return Err("Invalid event message link".into());
+            }
+        }
+    }
+    if messages
+        .iter()
+        .any(|row| row.value["kind"] != "opening" && !linked.contains(row.id.as_str()))
+    {
+        return Err("Message has no event".into());
+    }
+    for memory in read_rows(connection, Table::Memories, Some(game_id), Some(session_id))? {
+        if memory.value["sourceTransactionIds"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|id| !nodes.contains_key(id.as_str().unwrap()))
+        {
+            return Err("Memory source event not found".into());
+        }
+    }
     for id in nodes.keys() {
         restored_state(snapshot, &nodes, Some(id))?;
     }
@@ -631,6 +691,168 @@ fn validate_history(
         return Err("저장된 상태가 진행 기록과 일치하지 않아요.".into());
     }
     Ok(())
+}
+
+fn prune(
+    connection: &Connection,
+    game_id: &str,
+    session_id: &str,
+    event_id: &str,
+    expected: u64,
+) -> Result<Value, String> {
+    validate_history(connection, game_id, session_id)?;
+    let mut game = read_rows(connection, Table::Games, Some(game_id), None)?
+        .into_iter()
+        .next()
+        .ok_or("게임을 찾을 수 없어요.")?;
+    let mut session = read_rows(connection, Table::Sessions, Some(game_id), None)?
+        .into_iter()
+        .find(|row| row.id == session_id)
+        .ok_or("세션을 찾을 수 없어요.")?;
+    let mut progress = read_rows(connection, Table::Progress, Some(game_id), Some(session_id))?
+        .into_iter()
+        .next()
+        .ok_or("세션의 진행 기록이 없어요.")?;
+    if expected >= 9_007_199_254_740_991 || progress.value["revision"].as_u64() != Some(expected) {
+        return Err("게임 상태가 변경되었어요. 최신 상태에서 다시 시도해주세요.".into());
+    }
+    let snapshots = read_rows(
+        connection,
+        Table::Snapshots,
+        Some(game_id),
+        Some(session_id),
+    )?;
+    let snapshot = &snapshots
+        .iter()
+        .find(|row| Some(row.id.as_str()) == progress.value["snapshotId"].as_str())
+        .ok_or("스냅샷을 찾을 수 없어요.")?
+        .value;
+    let transactions = read_rows(
+        connection,
+        Table::Transactions,
+        Some(game_id),
+        Some(session_id),
+    )?;
+    let target = transactions
+        .iter()
+        .find(|row| row.id == event_id)
+        .ok_or("삭제할 이벤트를 찾을 수 없어요.")?;
+    let mut removed = std::collections::HashSet::new();
+    let mut stack = vec![event_id.to_string()];
+    while let Some(id) = stack.pop() {
+        if !removed.insert(id.clone()) {
+            return Err("진행 기록이 순환하고 있어요.".into());
+        }
+        stack.extend(
+            transactions
+                .iter()
+                .filter(|row| row.value["parentId"].as_str() == Some(id.as_str()))
+                .map(|row| row.id.clone()),
+        );
+    }
+    let head = progress.value["headId"].clone();
+    let selected = head.as_str().is_some_and(|id| removed.contains(id));
+    let next_head = if selected {
+        target.value["parentId"].clone()
+    } else {
+        head
+    };
+    let nodes = transactions
+        .iter()
+        .map(|row| (row.id.clone(), row.value.clone()))
+        .collect();
+    let state = restored_state(snapshot, &nodes, next_head.as_str())?;
+    let removed_messages: std::collections::HashSet<_> = transactions
+        .iter()
+        .filter(|row| removed.contains(&row.id))
+        .filter_map(|row| row.value["messageId"].as_str().map(str::to_string))
+        .collect();
+    let messages = read_rows(connection, Table::Messages, Some(game_id), Some(session_id))?;
+    let memories = read_rows(connection, Table::Memories, Some(game_id), Some(session_id))?;
+    let mut deleted = vec![];
+    deleted.extend(transactions.iter().filter(|row| removed.contains(&row.id)));
+    deleted.extend(
+        messages
+            .iter()
+            .filter(|row| removed_messages.contains(&row.id)),
+    );
+    deleted.extend(memories.iter().filter(|row| {
+        row.value["sourceTransactionIds"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|id| id.as_str().is_some_and(|id| removed.contains(id)))
+    }));
+    for row in deleted {
+        let count = connection
+            .execute(
+                &format!(
+                    "DELETE FROM {} WHERE id=?1 AND game_id=?2 AND session_id=?3",
+                    row.table.name()
+                ),
+                params![row.id, game_id, session_id],
+            )
+            .map_err(db_error)?;
+        if count != 1 {
+            return Err("삭제할 기록을 찾을 수 없어요.".into());
+        }
+    }
+    let mut surviving: Vec<_> = messages
+        .into_iter()
+        .filter(|row| !removed_messages.contains(&row.id))
+        .collect();
+    surviving.sort_by_key(|row| row.value["sequence"].as_u64().unwrap());
+    session.value["messageCount"] = json!(surviving.len());
+    for (index, row) in surviving.iter_mut().enumerate() {
+        row.value["sequence"] = json!(index + 1);
+        write_row(connection, row, false)?;
+    }
+    let now: String = connection
+        .query_row("SELECT strftime('%Y-%m-%dT%H:%M:%fZ','now')", [], |row| {
+            row.get(0)
+        })
+        .map_err(db_error)?;
+    game.value["updatedAt"] = json!(now);
+    session.value["updatedAt"] = json!(now);
+    progress.value["headId"] = next_head;
+    progress.value["state"] = state;
+    progress.value["revision"] = json!(expected + 1);
+    for row in [game, session, progress] {
+        write_row(connection, &row, false)?;
+    }
+    if connection
+        .execute(
+            "UPDATE games SET version=version+1 WHERE id=?1 AND version<9007199254740991",
+            [game_id],
+        )
+        .map_err(db_error)?
+        != 1
+    {
+        return Err(CONFLICT.into());
+    }
+    validate_history(connection, game_id, session_id)?;
+    let version: i64 = connection
+        .query_row("SELECT version FROM games WHERE id=?1", [game_id], |row| {
+            row.get(0)
+        })
+        .map_err(db_error)?;
+    let mut records = read_rows(connection, Table::Games, Some(game_id), None)?;
+    records.extend(read_rows(connection, Table::Sessions, Some(game_id), None)?);
+    for table in [
+        Table::Messages,
+        Table::Snapshots,
+        Table::Progress,
+        Table::Transactions,
+        Table::Memories,
+    ] {
+        records.extend(read_rows(
+            connection,
+            table,
+            Some(game_id),
+            Some(session_id),
+        )?);
+    }
+    Ok(json!({"version":version,"records":records}))
 }
 
 fn write(
@@ -775,6 +997,136 @@ mod tests {
     }
     fn commit(version: u64, records: Vec<Value>) -> Value {
         json!({ "kind": "commit", "gameId": "game", "version": version, "records": records, "deleteSessions": [] })
+    }
+    fn branched_fixture() -> Fixture {
+        let fixture = Fixture::new();
+        fixture.create();
+        let now = "2026-11-02T00:00:00.000Z";
+        let schema = json!({"type":"object","properties":{"gold":{"type":"integer"}},"required":["gold"],"additionalProperties":false});
+        let snapshot = json!({"schemaVersion":1,"id":"snapshot","gameId":"game","createdAt":now,"settings":game("")["settings"],"schema":schema,"initialState":{"gold":100},"scripts":{}});
+        let progress = json!({"schemaVersion":2,"sessionId":"session","gameId":"game","snapshotId":"snapshot","headId":"F","revision":6,"state":{"gold":40}});
+        let mut current_session = session("session");
+        current_session["messageCount"] = json!(6);
+        let mut records = vec![
+            row("sessions", "session", Some("session"), current_session),
+            row("snapshots", "snapshot", Some("session"), snapshot),
+            row("progress", "session", Some("session"), progress),
+        ];
+        for (index, (name, parent, before, after)) in [
+            ("A", None, 100, 90),
+            ("B", Some("A"), 90, 80),
+            ("C", Some("B"), 80, 70),
+            ("D", Some("C"), 70, 60),
+            ("E", Some("B"), 80, 50),
+            ("F", Some("E"), 50, 40),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let message_id = format!("message-{name}");
+            records.push(row("transactions",name,Some("session"),json!({"schemaVersion":2,"id":name,"gameId":"game","sessionId":"session","parentId":parent,"createdAt":now,"createdRevision":index+1,"action":{"name":name,"args":{}},"description":format!("Event {name}"),"changes":[{"path":["gold"],"before":{"exists":true,"value":before},"after":{"exists":true,"value":after}}],"messageId":message_id})));
+            records.push(row("messages",&message_id,Some("session"),json!({"schemaVersion":1,"id":message_id,"gameId":"game","sessionId":"session","sequence":index+1,"role":"assistant","kind":"dialogue","content":name,"createdAt":now})));
+            let memory_id = format!("memory-{name}");
+            records.push(row("memories",&memory_id,Some("session"),json!({"schemaVersion":1,"id":memory_id,"gameId":"game","sessionId":"session","sourceTransactionIds":[name],"content":name,"createdAt":now})));
+        }
+        fixture.request(commit(0, records)).unwrap();
+        fixture
+    }
+    fn prune_request(event: &str, revision: u64) -> Value {
+        json!({"kind":"prune","gameId":"game","sessionId":"session","eventId":event,"expectedRevision":revision})
+    }
+    #[test]
+    fn prunes_subtrees_and_restores_logged_state_and_messages_after_reopening() {
+        for (event, head, gold, kept) in [
+            ("B", "A", 90, vec!["A"]),
+            ("E", "B", 80, vec!["A", "B", "C", "D"]),
+            ("C", "F", 40, vec!["A", "B", "E", "F"]),
+        ] {
+            let fixture = branched_fixture();
+            let reply = fixture.request(prune_request(event, 6)).unwrap();
+            assert_eq!(reply["version"], 2);
+            assert_eq!(fixture.read(), reply);
+            let rows = reply["records"].as_array().unwrap();
+            let progress = &rows.iter().find(|row| row["table"] == "progress").unwrap()["value"];
+            assert_eq!(progress["headId"], head);
+            assert_eq!(progress["state"]["gold"], gold);
+            assert_eq!(progress["revision"], 7);
+            let mut messages: Vec<_> = rows
+                .iter()
+                .filter(|row| row["table"] == "messages")
+                .map(|row| &row["value"])
+                .collect();
+            messages.sort_by_key(|value| value["sequence"].as_u64().unwrap());
+            assert_eq!(
+                messages
+                    .iter()
+                    .map(|value| value["content"].as_str().unwrap())
+                    .collect::<Vec<_>>(),
+                kept
+            );
+            for (index, value) in messages.iter().enumerate() {
+                assert_eq!(value["sequence"], index + 1);
+            }
+            assert_eq!(
+                rows.iter().filter(|row| row["table"] == "memories").count(),
+                kept.len()
+            );
+            assert_eq!(
+                rows.iter()
+                    .filter(|row| row["table"] == "transactions")
+                    .count(),
+                kept.len()
+            );
+            let empty = fixture.request(prune_request("A", 7)).unwrap();
+            let rows = empty["records"].as_array().unwrap();
+            let progress = &rows.iter().find(|row| row["table"] == "progress").unwrap()["value"];
+            assert!(progress["headId"].is_null());
+            assert_eq!(progress["state"]["gold"], 100);
+            assert!(!rows.iter().any(|row| {
+                ["messages", "transactions", "memories"].contains(&row["table"].as_str().unwrap())
+            }));
+        }
+    }
+    #[test]
+    fn prune_failures_roll_back_deleted_records_sequences_metadata_and_version() {
+        for (table, timing) in [
+            ("transactions", "AFTER DELETE"),
+            ("progress", "BEFORE UPDATE"),
+            ("games", "BEFORE UPDATE"),
+        ] {
+            let fixture = branched_fixture();
+            let before = fixture.read();
+            open(&fixture.0).unwrap().execute_batch(&format!("CREATE TRIGGER fail_prune {timing} ON {table} BEGIN SELECT RAISE(ABORT,'forced failure'); END")).unwrap();
+            assert!(fixture.request(prune_request("C", 6)).is_err());
+            assert_eq!(fixture.read(), before);
+        }
+        let fixture = branched_fixture();
+        let before = fixture.read();
+        for request in [
+            prune_request("E", 5),
+            prune_request("missing", 6),
+            json!({"kind":"prune","gameId":"game","sessionId":"foreign","eventId":"E","expectedRevision":6}),
+        ] {
+            assert!(fixture.request(request).is_err());
+            assert_eq!(fixture.read(), before);
+        }
+    }
+    #[test]
+    fn simultaneous_prunes_using_one_revision_have_one_winner() {
+        let fixture = branched_fixture();
+        let handles: Vec<_> = ["C", "E"]
+            .into_iter()
+            .map(|event| {
+                let path = fixture.0.clone();
+                std::thread::spawn(move || execute_request(&path, prune_request(event, 6)))
+            })
+            .collect();
+        let results: Vec<_> = handles
+            .into_iter()
+            .map(|handle| handle.join().unwrap())
+            .collect();
+        assert_eq!(results.iter().filter(|result| result.is_ok()).count(), 1);
+        assert_eq!(fixture.read()["version"], 2);
     }
     #[test]
     fn creates_and_reopens_same_file() {

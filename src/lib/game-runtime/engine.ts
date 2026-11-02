@@ -21,6 +21,7 @@ export interface CommitTransaction {
 	parentId: string | null;
 	nextState: GameState;
 	action: Action;
+	description?: string;
 }
 
 export function activeTransactions(
@@ -120,6 +121,7 @@ export function prepareTransaction(
 		createdRevision: revision,
 		action: parseAction(input.action),
 		changes,
+		...(input.description === undefined ? {} : { description: input.description }),
 		...(metadata.messageId === undefined ? {} : { messageId: metadata.messageId })
 	});
 	if (history.transactions.some((node) => node.id === transaction.id))

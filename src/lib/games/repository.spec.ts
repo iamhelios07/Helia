@@ -45,7 +45,162 @@ async function start() {
 	};
 }
 
+/** A–B–C–D / B–E–F, with messages and memories spanning both futures. */
+async function branchedHistory() {
+	const { gameId, sessionId } = await start();
+	const ids: Record<string, string> = {};
+	let revision = 0;
+	for (const [name, parent, gold] of [
+		['A', null, 90],
+		['B', 'A', 80],
+		['C', 'B', 70],
+		['D', 'C', 60],
+		['E', 'B', 50],
+		['F', 'E', 40]
+	] as const) {
+		const saved = await repository.commitSessionTransaction(gameId, sessionId, {
+			expectedRevision: revision,
+			parentId: parent ? ids[parent] : null,
+			nextState: { gold },
+			action: { name, args: {} },
+			description: `Event ${name}`,
+			message: { role: 'assistant', content: name }
+		});
+		revision = saved.progress.revision;
+		ids[name] = saved.progress.headId!;
+		await repository.saveSessionMemory(gameId, sessionId, revision, {
+			sourceTransactionIds: [ids.A, ids[name]],
+			content: `Memory ${name}`
+		});
+	}
+	return { gameId, sessionId, ids, revision };
+}
+
 describe('SQLite game repository', () => {
+	it.each(['B', 'E'])(
+		'deletes the entire %s subtree and restores the nearest surviving ancestor after reopening',
+		async (target) => {
+			const { gameId, sessionId, ids, revision } = await branchedHistory();
+			const before = await repository.getSessionTimeline(gameId, sessionId);
+			expect(before.events.map((event) => event.summary)).toEqual([
+				'Event A',
+				'Event B',
+				'Event C',
+				'Event D',
+				'Event E',
+				'Event F'
+			]);
+			expect(before.events.map((event) => event.depth)).toEqual([0, 1, 2, 3, 2, 3]);
+			expect(
+				before.events.filter((event) => event.active).map((event) => event.action.name)
+			).toEqual(['A', 'B', 'E', 'F']);
+			const saved = await repository.deleteSessionEvent(gameId, sessionId, ids[target], revision);
+			const kept = target === 'B' ? ['A'] : ['A', 'B', 'C', 'D'];
+			expect(saved.events.map((event) => event.action.name)).toEqual(kept);
+			expect(saved.history.progress).toMatchObject({
+				headId: ids[target === 'B' ? 'A' : 'B'],
+				revision: revision + 1,
+				state: { gold: target === 'B' ? 90 : 80 }
+			});
+			expect(saved.messages.map((message) => message.content)).toEqual(
+				target === 'B' ? ['A'] : ['A', 'B']
+			);
+			const records = (await transport({ kind: 'read', gameId, sessionId })).records;
+			const messages = records
+				.filter((row) => row.table === 'messages')
+				.map((row) => row.value as { id: string; content: string; sequence: number })
+				.sort((a, b) => a.sequence - b.sequence);
+			expect(messages.map((message) => message.content)).toEqual(kept);
+			expect(messages.map((message) => message.sequence)).toEqual(
+				kept.map((_, index) => index + 1)
+			);
+			expect(messages.map((message) => message.id)).toEqual(
+				before.events
+					.filter((event) => kept.includes(event.action.name))
+					.map((event) => event.message!.id)
+			);
+			expect(records.filter((row) => row.table === 'memories')).toHaveLength(kept.length);
+			storage.close();
+			storage = openStorage(join(directory, 'helia.sqlite'));
+			expect(await repository.getSessionTimeline(gameId, sessionId)).toEqual(saved);
+			const continued = await repository.commitSessionTransaction(gameId, sessionId, {
+				expectedRevision: revision + 1,
+				parentId: saved.history.progress.headId,
+				nextState: { gold: 25 },
+				action: { name: 'new', args: {} },
+				message: { role: 'user', content: 'new' }
+			});
+			expect(continued.transactions).toHaveLength(kept.length + 1);
+		}
+	);
+	it('keeps the selected future when deleting an inactive branch, then restores initial state when deleting the root', async () => {
+		const { gameId, sessionId, ids, revision } = await branchedHistory();
+		let saved = await repository.deleteSessionEvent(gameId, sessionId, ids.C, revision);
+		expect(saved.history.progress).toMatchObject({
+			headId: ids.F,
+			revision: revision + 1,
+			state: { gold: 40 }
+		});
+		expect(saved.messages.map((message) => message.content)).toEqual(['A', 'B', 'E', 'F']);
+		expect(saved.memories.map((memory) => memory.content)).toEqual([
+			'Memory A',
+			'Memory B',
+			'Memory E',
+			'Memory F'
+		]);
+		saved = await repository.deleteSessionEvent(gameId, sessionId, ids.A, revision + 1);
+		expect(saved.history.progress).toMatchObject({
+			headId: null,
+			revision: revision + 2,
+			state: { gold: 100 }
+		});
+		expect(saved.events).toEqual([]);
+		expect(saved.messages).toEqual([]);
+		expect(saved.memories).toEqual([]);
+	});
+	it.each(['transactions', 'progress', 'games'])(
+		'rolls back subtree deletion and sequence compaction if %s fails',
+		async (table) => {
+			const { gameId, sessionId, ids, revision } = await branchedHistory();
+			const before = await transport({ kind: 'read', gameId, sessionId });
+			storage.connection.exec(
+				`CREATE TRIGGER fail_prune ${table === 'transactions' ? 'AFTER DELETE' : 'BEFORE UPDATE'} ON ${table} BEGIN SELECT RAISE(ABORT,'forced failure'); END`
+			);
+			await expect(
+				repository.deleteSessionEvent(gameId, sessionId, ids.C, revision)
+			).rejects.toThrow();
+			expect(await transport({ kind: 'read', gameId, sessionId })).toEqual(before);
+		}
+	);
+	it('rejects stale revisions and foreign event ownership without deleting anything', async () => {
+		const { gameId, sessionId, ids, revision } = await branchedHistory();
+		const other = await repository.createSession(gameId);
+		const before = await transport({ kind: 'read', gameId, sessionId });
+		await expect(
+			repository.deleteSessionEvent(gameId, sessionId, ids.E, revision - 1)
+		).rejects.toThrow();
+		await expect(repository.deleteSessionEvent(gameId, other.id, ids.E, 0)).rejects.toThrow();
+		await expect(
+			repository.deleteSessionEvent('foreign', sessionId, ids.E, revision)
+		).rejects.toThrow();
+		expect(await transport({ kind: 'read', gameId, sessionId })).toEqual(before);
+	});
+	it('allows exactly one of a pending commit and deletion using the same revision', async () => {
+		const { gameId, sessionId, ids, revision } = await branchedHistory();
+		const results = await Promise.allSettled([
+			repository.commitSessionTransaction(gameId, sessionId, {
+				expectedRevision: revision,
+				parentId: ids.F,
+				nextState: { gold: 30 },
+				action: { name: 'pending', args: {} }
+			}),
+			repository.deleteSessionEvent(gameId, sessionId, ids.E, revision)
+		]);
+		expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+		expect((await repository.getSessionHistory(gameId, sessionId)).progress.revision).toBe(
+			revision + 1
+		);
+	});
 	it('rejects invalid schemas and initial states before writing game rules', async () => {
 		const game = await repository.createGame();
 		const before = await transport({ kind: 'read', gameId: game.id });
@@ -335,7 +490,7 @@ describe('SQLite game repository', () => {
 			a.progress.revision
 		);
 		expect(hidden.progress.state).toEqual({ gold: 100 });
-		expect(hidden.transactions).toHaveLength(2);
+		expect(hidden.transactions).toHaveLength(1);
 	});
 	it('cascades session deletion to its messages, progress, snapshots, events and memories', async () => {
 		const { gameId, sessionId } = await start();

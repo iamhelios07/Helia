@@ -21,7 +21,6 @@ import {
 	assertRevision,
 	checkoutHistory,
 	createSessionState,
-	messageBase,
 	prepareTransaction,
 	stateAt,
 	type CommitTransaction
@@ -39,6 +38,7 @@ import {
 import { parseGameState, sameValue } from '#lib/game-runtime/value.js';
 import { emptyStateDocument, parseStateDocument } from '#lib/game-runtime/schema.js';
 import type { TransactionValidator } from '#lib/game-runtime/workspace.js';
+import { historyEvents, type SessionTimeline } from '#lib/game-runtime/history.js';
 
 function makeSession(gameId: string): Session {
 	const now = new Date().toISOString();
@@ -232,7 +232,27 @@ export function createGameRepository(
 			message
 		};
 	}
+	function getTimeline(gameId: string, sessionId: string): Promise<SessionTimeline> {
+		return withHistory(gameId, sessionId, (unit, context) => ({
+			session: context.session,
+			history: context.history,
+			events: historyEvents(context.history, context.messages),
+			messages: visibleMessages(context),
+			memories: activeMemories(context.history, unit.all('memories').map(parseMemory))
+		}));
+	}
+	async function deleteEvent(
+		gameId: string,
+		sessionId: string,
+		eventId: string,
+		expectedRevision: number
+	): Promise<SessionTimeline> {
+		await transport({ kind: 'prune', gameId, sessionId, eventId, expectedRevision });
+		return getTimeline(gameId, sessionId);
+	}
 	return {
+		getSessionTimeline: getTimeline,
+		deleteSessionEvent: deleteEvent,
 		async listGames() {
 			const result = await transport({ kind: 'list' });
 			return result.records
@@ -400,6 +420,7 @@ export function createGameRepository(
 				parentId: input.parentId === null ? null : identifier(input.parentId),
 				nextState: parseGameState(input.nextState),
 				action: parseAction(input.action),
+				...(input.description === undefined ? {} : { description: identifier(input.description) }),
 				...(message ? { message } : {})
 			};
 			return withHistory(
@@ -420,22 +441,18 @@ export function createGameRepository(
 				return { ...context.history, progress };
 			});
 		},
-		deleteSessionResponse(
+		async deleteSessionResponse(
 			gameId: string,
 			sessionId: string,
 			transactionId: string,
 			expectedRevision: number
 		) {
-			return withHistory(gameId, sessionId, (unit, context) => {
-				const base = messageBase(context.history, transactionId);
-				const node = context.history.transactions.find((node) => node.id === transactionId)!;
-				const message = context.messages.find((message) => message.id === node.messageId);
-				if (message?.role !== 'assistant' || message.kind !== 'dialogue')
-					throw new Error('이 세션의 AI 응답이 아니에요.');
-				const progress = checkoutHistory(context.history, base.headId, expectedRevision);
-				unit.put('progress', progress);
-				return { ...context.history, progress };
-			});
+			const timeline = await getTimeline(gameId, sessionId);
+			assertRevision(timeline.history.progress, expectedRevision);
+			const event = timeline.events.find((event) => event.id === transactionId);
+			if (event?.message?.role !== 'assistant' || event.message.kind !== 'dialogue')
+				throw new Error('이 세션의 AI 응답이 아니에요.');
+			return (await deleteEvent(gameId, sessionId, transactionId, expectedRevision)).history;
 		},
 		saveSessionMemory(
 			gameId: string,

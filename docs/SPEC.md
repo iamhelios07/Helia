@@ -191,8 +191,9 @@ The example specifies an atomic boundary, not the detailed ordering of Filters a
 - Creating a continuation from a past event MUST preserve the previous future and create a new branch.
 - Committed transaction records MUST NOT be edited in place to replace a historical game outcome. A different outcome MUST be represented by a new continuation from an appropriate earlier event. Representation changes required by game-content migration are subject to the migration requirements below.
 - Helia MUST NOT merge branches.
-- Restoring history SHOULD use recorded outcomes rather than rerunning AI, Hooks or random decisions.
+- Restoring history MUST use recorded outcomes without rerunning AI, Hooks or random decisions.
 - A selected event MUST resolve to a consistent conversation and state boundary. How messages and transactions belonging to the same atomic operation are represented in history is an implementation choice; that representation MUST preserve the atomic branching boundary.
+- A transaction and any message committed with it MUST be navigated and deleted as one atomic event. A message without state changes and a transaction without a message MUST also be representable in history.
 
 ## Deletion
 
@@ -200,6 +201,7 @@ The example specifies an atomic boundary, not the detailed ordering of Filters a
 - Deletion MUST preserve earlier events still shared by surviving paths.
 - Associated messages and derived data MUST be removed or invalidated consistently with the deleted history.
 - Deletion MUST NOT leave the selected progress or usable memories referring to deleted events.
+- If deletion removes the selected event, Helia MUST select the deleted subtree root's surviving parent, or the initial state if there is no parent. Otherwise, the selected event MUST remain unchanged.
 - Moving to a past event and deleting an event MUST be distinct operations. Merely changing the selected head MUST NOT be presented as deletion.
 - History deletion MUST follow the product-wide confirmation-modal requirement. The installation Trash requirement does not establish a recovery guarantee for deleted history events.
 
@@ -216,6 +218,7 @@ delete(E) => remove E, F; preserve A, B, C, D
 function deleteEvent(history, event):
     removed = {event} union descendants(history, event)
     surviving = history.events minus removed
+    selected = event.parent if history.selected in removed else history.selected
 
     if not confirmDeletionInModal(removed):
         return canceled
@@ -224,10 +227,8 @@ function deleteEvent(history, event):
         removeEventsAndTheirOwnedData(removed)
         invalidateDerivedDataDependingOn(removed)
         preserveSharedPredecessors(surviving)
-        ensureSelectedProgressReferencesSurvivingHistory()
+        restoreConversationStateAndValidMemories(selected or initialState)
 ```
-
-The selection fallback after deleting the currently selected history remains open.
 
 ## Transaction Display
 
@@ -482,7 +483,6 @@ The following items require product decisions. They are not permissions to bypas
 | Content changes         | Timing of an explicit apply request while an AI response or other game operation is in progress; preservation or reset of test sessions. |
 | State evolution         | Whether existing event records are transformed or preserved with a compatibility mechanism.                                              |
 | Hooks                   | Execution order, independent transactions, error propagation, re-entry and visible execution limits.                                     |
-| History                 | Selection fallback after deleting the currently selected history.                                                                        |
 | AI execution            | Provider capability requirements and the structured text/JSON fallback contract.                                                         |
 | Prompts and memory      | Supported RisuAI-style authoring features; the exact HypaV3 behavior being retained; retrieval and branch-spanning summary rules.        |
 | Workbench               | Chat placement, panel restoration when available panels change, and layout behavior under space constraints.                             |

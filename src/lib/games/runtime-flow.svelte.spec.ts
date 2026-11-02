@@ -126,7 +126,7 @@ it('keeps real chat, state and memories on the selected response branch across r
 		]);
 	history = await deleteSessionResponse(gameId, sessionId, responseId, history.progress.revision);
 	expect(history.progress.state).toEqual({ gold: 80, iron: 5 });
-	expect(history.transactions).toHaveLength(6);
+	expect(history.transactions).toHaveLength(3);
 	await screen.unmount();
 	screen = render(AppFixture, { view: 'game', gameId });
 	await expect.poll(messages).toEqual(['대장간의 문을 열었다.', '철을 구매한다.']);

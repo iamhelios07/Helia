@@ -36,6 +36,8 @@ export {
 	parseMemory
 } from './model.js';
 export type { CommitTransaction } from './engine.js';
+export { historyEvents, transactionSummary, deleteHistoryEvent } from './history.js';
+export type { HistoryEvent, SessionTimeline } from './history.js';
 export {
 	activeTransactions,
 	activeMemories,

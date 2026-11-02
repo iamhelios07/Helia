@@ -40,7 +40,7 @@ Each game has an internal storage version, separate from its content version and
 
 The host opens one short transaction, advances the version, writes all records and verifies the active session. Every write rolls back on failure, including the version update. Normal operations retry storage conflicts up to eight times. Explicit game-state commits still check the requested session revision, so a stale AI result cannot overwrite a newer branch or state.
 
-Snapshots, transaction results and memories are insert-only. Session records and message sequence positions can be updated. SQLite foreign keys and composite ownership constraints prevent records from referring to another session's snapshot. WAL and a five-second busy timeout are enabled; committed data uses `synchronous = FULL`.
+Snapshots, transaction results and memories are insert-only during normal commits. The bounded `prune` operation deletes a selected event subtree atomically, checking the expected session revision inside the host transaction. It removes linked messages and memories depending on removed events, compacts surviving message sequence numbers while preserving message IDs, restores progress, and advances both the session revision and game storage version. A stale request or any failure rolls back the entire operation. Session records and message sequence positions can be updated. SQLite foreign keys and composite ownership constraints prevent records from referring to another session's snapshot. WAL and a five-second busy timeout are enabled; committed data uses `synchronous = FULL`.
 
 Database transactions do not stay open across UI, AI or script work. Creator code receives no database connection or raw SQL executor.
 
@@ -60,9 +60,13 @@ The [transaction workspace](../game-runtime/workspace.ts) accumulates detached c
 
 `generateStateTypes` produces a standalone `GameState` TypeScript declaration with optional fields, nullable values, arrays and literal enums. It does not replace runtime validation. The trusted `TransactionValidator` seam receives frozen detached before/after state, changes and action information, and can reject finalization with a structured Filter/Hook failure. Actual sandboxed creator-code execution and Filter/Hook scheduling belong to a later implementation stage.
 
-Branch selection restores recorded results without rerunning AI, scripts or randomness. New transactions from an earlier parent preserve existing continuations. `deleteSessionResponse` currently selects the response's parent and retains its records; subtree deletion belongs to stage 3.
+Branch selection restores recorded results without rerunning AI, scripts or randomness. New transactions from an earlier parent preserve existing continuations. `getSessionTimeline` returns every branch as depth-first events, the selected path's conversation, current state and valid memories. Each transaction, including its optional message, is one navigation and deletion unit. Message-only and state-only transactions are supported. Authored opening content belongs to the selectable initial state. Creator descriptions take priority over rule-based summaries, with no model call needed.
 
-Conversation reads return the active path and authored opening; `messageCount` includes archived messages. Normal sends record a `sendMessage` action. Memories are visible only when all source transaction IDs belong to the active path. HypaV3 generation and retrieval are later integrations.
+`deleteSessionEvent` removes an event and every descendant, preserving shared predecessors and other futures. If the selected head is removed, the subtree root's parent becomes selected; without a parent, progress restores the initial state. Deleting an inactive branch preserves the selected head and state but advances the revision to reject pending work based on the old history. `deleteSessionResponse` performs the same deletion after checking that the event contains an assistant dialogue. The history panel separates navigation from deletion and requires a confirmation modal for deletion.
+
+State restoration currently replays recorded changes from the immutable content snapshot's initial state. Periodic state checkpoints and garbage collection are not introduced at this stage.
+
+Conversation reads return the active path and authored opening; `messageCount` includes all surviving branches' messages. Normal sends record a `sendMessage` action. Both hosts check message counts, contiguous sequence numbers, unique event-message links and memory source existence along with recorded state. Memories are visible only when all source transaction IDs belong to the active path. HypaV3 generation and retrieval are later integrations.
 
 ## Development checks
 

@@ -34,6 +34,7 @@ export type StorageRequest =
 	| { kind: 'list' }
 	| { kind: 'read'; gameId: string; sessionId?: string }
 	| { kind: 'create'; gameId: string; records: StoredRecord[] }
+	| { kind: 'prune'; gameId: string; sessionId: string; eventId: string; expectedRevision: number }
 	| {
 			kind: 'commit';
 			gameId: string;
@@ -95,6 +96,14 @@ export function parseRequest(value: unknown): StorageRequest {
 	const input = record(value);
 	if (input.kind === 'list') return { kind: 'list' };
 	const gameId = identifier(input.gameId);
+	if (input.kind === 'prune')
+		return {
+			kind: 'prune',
+			gameId,
+			sessionId: identifier(input.sessionId),
+			eventId: identifier(input.eventId),
+			expectedRevision: counter(input.expectedRevision)
+		};
 	if (input.kind === 'read')
 		return {
 			kind: 'read',

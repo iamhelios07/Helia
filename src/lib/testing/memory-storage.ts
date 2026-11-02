@@ -5,6 +5,7 @@ import {
 	type StoredRecord,
 	type StorageTransport
 } from '#lib/storage/protocol.js';
+import { pruneRecords } from '#lib/storage/prune.js';
 
 /** Browser-test transport; persistence behavior is covered separately with real SQLite. */
 export function memoryStorage(): StorageTransport {
@@ -12,6 +13,31 @@ export function memoryStorage(): StorageTransport {
 	const versions = new Map<string, number>();
 	return async (input) => {
 		const request = parseRequest(structuredClone(input));
+		if (request.kind === 'prune') {
+			const plan = pruneRecords(
+				[...rows.values()],
+				request.gameId,
+				request.sessionId,
+				request.eventId,
+				request.expectedRevision
+			);
+			const next = new Map(rows);
+			for (const row of plan.deleted) next.delete(`${row.table}:${row.id}`);
+			for (const row of plan.updates) next.set(`${row.table}:${row.id}`, row);
+			rows = next;
+			const version = (versions.get(request.gameId) ?? 0) + 1;
+			versions.set(request.gameId, version);
+			return parseReply({
+				version,
+				records: [...rows.values()].filter(
+					(row) =>
+						row.gameId === request.gameId &&
+						(row.table === 'games' ||
+							row.table === 'sessions' ||
+							row.sessionId === request.sessionId)
+				)
+			});
+		}
 		if (request.kind === 'list') {
 			return parseReply({
 				version: 0,

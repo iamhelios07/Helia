@@ -42,6 +42,8 @@ export interface Transaction {
 	action: Action;
 	changes: StateChange[];
 	messageId?: string;
+	/** Optional creator-authored display summary. */
+	description?: string;
 }
 
 export interface SessionState {
@@ -160,7 +162,8 @@ export function parseTransaction(value: unknown): Transaction {
 		createdRevision: counter(input.createdRevision),
 		action: parseAction(input.action),
 		changes,
-		...(input.messageId === undefined ? {} : { messageId: identifier(input.messageId) })
+		...(input.messageId === undefined ? {} : { messageId: identifier(input.messageId) }),
+		...(input.description === undefined ? {} : { description: identifier(input.description) })
 	};
 }
 

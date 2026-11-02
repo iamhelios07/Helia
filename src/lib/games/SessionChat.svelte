@@ -1,7 +1,15 @@
 <script lang="ts">
 	import { onMount, tick } from 'svelte';
 	import Icon from '#lib/components/Icon.svelte';
-	import { appendUserMessage, getSessionConversation } from './repository.js';
+	import SessionHistoryPanel from './SessionHistoryPanel.svelte';
+	import {
+		appendUserMessage,
+		getSessionConversation,
+		getSessionTimeline,
+		selectSessionBranch,
+		deleteSessionEvent
+	} from './repository.js';
+	import type { SessionTimeline } from '#lib/game-runtime/history.js';
 	import type { Message, Session } from './model.js';
 
 	let {
@@ -25,9 +33,80 @@
 	let saving = $state(false);
 	let loadError = $state('');
 	let saveError = $state('');
+	let showTimeline = $state(false);
+	let timeline = $state.raw<SessionTimeline | null>(null);
+	let timelineBusy = $state(false);
+	let timelineError = $state('');
+	const uid = $props.id();
 	let history: HTMLDivElement | undefined;
 	let composer: HTMLTextAreaElement | undefined;
 	let disposed = false;
+	let requestId = 0;
+
+	function isCurrent(game: string, session: string) {
+		return !disposed && gameId === game && sessionId === session;
+	}
+
+	function applyTimeline(next: SessionTimeline) {
+		timeline = next;
+		messages = next.messages;
+		onsessionupdate(next.session);
+		void scrollToEnd();
+	}
+
+	async function reloadTimeline() {
+		if (timelineBusy || saving || loading) return;
+		const game = gameId;
+		const session = sessionId;
+		const request = ++requestId;
+		timelineBusy = true;
+		timelineError = '';
+		try {
+			const next = await getSessionTimeline(game, session);
+			if (isCurrent(game, session) && request === requestId) applyTimeline(next);
+		} catch {
+			if (isCurrent(game, session)) timelineError = '이력을 불러오지 못했어요. 다시 시도해주세요.';
+		} finally {
+			if (isCurrent(game, session) && request === requestId) timelineBusy = false;
+		}
+	}
+
+	async function changeTimeline(id: string | null, remove = false): Promise<boolean> {
+		if (!timeline || timelineBusy || saving || loading) return false;
+		if (!remove && timeline.history.progress.headId === id) return true;
+		const game = gameId;
+		const session = sessionId;
+		const revision = timeline.history.progress.revision;
+		timelineBusy = true;
+		timelineError = '';
+		onsavingchange(true);
+		try {
+			let next: SessionTimeline;
+			if (remove && id !== null) {
+				next = await deleteSessionEvent(game, session, id, revision);
+			} else {
+				await selectSessionBranch(game, session, id, revision);
+				next = await getSessionTimeline(game, session);
+			}
+			if (!isCurrent(game, session)) return false;
+			applyTimeline(next);
+			return true;
+		} catch {
+			if (isCurrent(game, session))
+				timelineError = '이력을 변경하지 못했어요. 새로고침 후 다시 시도해주세요.';
+			return false;
+		} finally {
+			if (isCurrent(game, session)) {
+				timelineBusy = false;
+				onsavingchange(false);
+			}
+		}
+	}
+
+	function toggleTimeline() {
+		showTimeline = !showTimeline;
+		if (showTimeline) void reloadTimeline();
+	}
 
 	onMount(() => {
 		void loadConversation();
@@ -56,44 +135,49 @@
 	}
 
 	async function loadConversation() {
+		const game = gameId;
+		const session = sessionId;
 		loading = true;
 		loadError = '';
 		try {
-			const conversation = await getSessionConversation(gameId, sessionId);
-			if (disposed) return;
+			const conversation = await getSessionConversation(game, session);
+			if (!isCurrent(game, session)) return;
 			messages = conversation.messages;
 			onsessionupdate(conversation.session);
 			void scrollToEnd();
 		} catch {
-			if (!disposed) loadError = '채팅 기록을 불러오지 못했어요.';
+			if (isCurrent(game, session)) loadError = '채팅 기록을 불러오지 못했어요.';
 		} finally {
-			if (!disposed) loading = false;
+			if (isCurrent(game, session)) loading = false;
 		}
 	}
 
 	async function sendMessage(event?: SubmitEvent) {
 		event?.preventDefault();
-		if (loading || saving || loadError || !draft.trim()) return;
+		if (loading || saving || timelineBusy || loadError || !draft.trim()) return;
+		const game = gameId;
+		const session = sessionId;
 		saving = true;
 		saveError = '';
 		onsavingchange(true);
 		const content = draft;
 		try {
-			const saved = await appendUserMessage(gameId, sessionId, content);
-			if (disposed) return;
+			const saved = await appendUserMessage(game, session, content);
+			if (!isCurrent(game, session)) return;
 			messages = [...messages, saved.message];
 			draft = '';
 			onsessionupdate(saved.session);
 			void scrollToEnd();
 			composer?.focus();
 		} catch {
-			if (!disposed) saveError = '메시지를 저장하지 못했어요. 다시 전송해주세요.';
+			if (isCurrent(game, session)) saveError = '메시지를 저장하지 못했어요. 다시 전송해주세요.';
 		} finally {
-			if (!disposed) {
+			if (isCurrent(game, session)) {
 				saving = false;
 				onsavingchange(false);
 			}
 		}
+		if (isCurrent(game, session) && showTimeline) void reloadTimeline();
 	}
 
 	function handleKeydown(event: KeyboardEvent) {
@@ -105,6 +189,29 @@
 </script>
 
 <section class="chat" aria-label="채팅">
+	<div class="history-toolbar">
+		<button
+			type="button"
+			disabled={loading || saving || timelineBusy || !!loadError}
+			aria-controls={`${uid}-timeline`}
+			aria-expanded={showTimeline}
+			onclick={toggleTimeline}>이력과 분기</button
+		>
+	</div>
+	{#if showTimeline}
+		<div class="timeline-container" id={`${uid}-timeline`}>
+			<SessionHistoryPanel
+				{timeline}
+				busy={timelineBusy || saving}
+				error={timelineError}
+				onselect={async (id) => {
+					await changeTimeline(id);
+				}}
+				ondelete={(id) => changeTimeline(id, true)}
+				onreload={reloadTimeline}
+			/>
+		</div>
+	{/if}
 	<div class="history" {@attach attachHistory}>
 		{#if loading}
 			<p class="status" role="status">채팅 기록을 불러오는 중…</p>
@@ -147,14 +254,14 @@
 				aria-label="메시지"
 				placeholder="메시지 입력"
 				rows="1"
-				readonly={saving}
+				readonly={saving || timelineBusy}
 				onkeydown={handleKeydown}></textarea>
 			<button
 				class="send"
 				type="submit"
 				aria-label="메시지 전송"
 				title="전송"
-				disabled={loading || saving || !!loadError || !draft.trim()}
+				disabled={loading || saving || timelineBusy || !!loadError || !draft.trim()}
 			>
 				<Icon name="send" size={20} />
 			</button>
@@ -163,6 +270,18 @@
 </section>
 
 <style>
+	.history-toolbar {
+		display: flex;
+		justify-content: flex-end;
+		padding: 0 0 8px;
+	}
+	.timeline-container {
+		min-height: 0;
+		max-height: 45%;
+		overflow-y: auto;
+		flex-shrink: 0;
+		margin-bottom: 8px;
+	}
 	.chat {
 		display: flex;
 		min-height: 0;

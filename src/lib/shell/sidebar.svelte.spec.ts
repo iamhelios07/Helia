@@ -25,6 +25,9 @@ vi.mock('#lib/games/repository.js', () => ({
 	updateGameSettings: vi.fn(),
 	renameSession: vi.fn(),
 	deleteSession: vi.fn(),
+	getSessionTimeline: vi.fn(),
+	selectSessionBranch: vi.fn(),
+	deleteSessionEvent: vi.fn(),
 	appendUserMessage: vi.fn()
 }));
 
