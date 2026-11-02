@@ -1,19 +1,21 @@
 <script lang="ts">
 	import Icon from '#lib/components/Icon.svelte';
 	import GameCover from './GameCover.svelte';
-	import type { PreviewGame } from './preview-games';
+	import type { LibraryGame } from './library-games.js';
 	let {
 		games,
 		onhome,
 		onadd,
 		onselect,
-		onabout
+		activeGameId = null,
+		busy = false
 	}: {
-		games: readonly PreviewGame[];
+		games: readonly LibraryGame[];
 		onhome: () => void;
 		onadd: () => void;
-		onselect: (game: PreviewGame) => void;
-		onabout: () => void;
+		onselect: (game: LibraryGame) => void;
+		activeGameId?: string | null;
+		busy?: boolean;
 	} = $props();
 </script>
 
@@ -23,11 +25,12 @@
 	>
 	<nav class="primary-nav" aria-label="메인 메뉴">
 		<button
-			class="rail-button active"
+			class={['rail-button', { active: activeGameId === null }]}
 			type="button"
 			title="내 게임"
 			aria-label="내 게임"
-			aria-current="page"
+			aria-current={activeGameId === null ? 'page' : undefined}
+			disabled={busy}
 			onclick={onhome}><Icon name="grid" size={21} /></button
 		>
 		<button
@@ -35,6 +38,7 @@
 			type="button"
 			title="게임 추가"
 			aria-label="게임 추가"
+			disabled={busy}
 			onclick={onadd}><Icon name="plus" size={23} /></button
 		>
 	</nav>
@@ -42,11 +46,13 @@
 	<nav class="recent-games" aria-label="최근 게임">
 		{#each games as game (game.id)}
 			<button
-				class="recent-game"
+				class={['recent-game', { selected: game.id === activeGameId }]}
 				type="button"
 				title={game.title}
 				aria-label={`${game.title} 상세 보기`}
-				onclick={() => onselect(game)}><GameCover kind={game.cover} /></button
+				aria-current={game.id === activeGameId ? 'page' : undefined}
+				disabled={busy}
+				onclick={() => onselect(game)}><GameCover /></button
 			>
 		{/each}
 	</nav>
@@ -55,30 +61,9 @@
 		<button
 			class="rail-button"
 			type="button"
-			title="플레이 기록 · 준비 중"
-			aria-label="플레이 기록 · 준비 중"
-			disabled><Icon name="chat" size={21} /></button
-		>
-		<button
-			class="rail-button"
-			type="button"
-			title="제작 도구 · 준비 중"
-			aria-label="제작 도구 · 준비 중"
-			disabled><Icon name="tool" size={21} /></button
-		>
-		<button
-			class="rail-button"
-			type="button"
 			title="설정 · 준비 중"
 			aria-label="설정 · 준비 중"
 			disabled><Icon name="settings" size={21} /></button
-		>
-		<button
-			class="rail-button about"
-			type="button"
-			title="Helia 정보"
-			aria-label="Helia 정보"
-			onclick={onabout}><Icon name="info" size={18} /></button
 		>
 	</nav>
 </aside>
@@ -184,9 +169,9 @@
 	.recent-game:hover {
 		border-color: var(--text-muted);
 	}
-	.about {
-		height: 30px;
-		margin-top: 2px;
+	.recent-game.selected {
+		border-color: var(--accent);
+		box-shadow: 0 0 0 2px var(--border-strong);
 	}
 	@media (max-width: 600px) {
 		.sidebar {

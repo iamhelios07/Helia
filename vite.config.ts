@@ -23,6 +23,8 @@ export default defineConfig(({ mode }) => ({
 					: node({ out: 'build/web' })
 		})
 	],
+	// Lucide's deep imports re-export .svelte files that need Svelte compilation in SSR.
+	ssr: { noExternal: ['@lucide/svelte'] },
 	server:
 		mode === 'desktop'
 			? {

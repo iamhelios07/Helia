@@ -8,6 +8,8 @@
 
 AI roleplay gaming client
 
+Storage uses Drizzle + SQLite for both web and desktop. See the [storage guide](./src/lib/storage/README.md) for database locations, web origin configuration and verification commands.
+
 ## What is Helia?
 
 **Helia** is a highly customizable, open-source AI application designed specifically for immersive roleplaying games, powered by your own API key.

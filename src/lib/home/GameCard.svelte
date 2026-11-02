@@ -1,26 +1,25 @@
 <script lang="ts">
 	import GameCover from './GameCover.svelte';
-	import { formatLastPlayed, type PreviewGame } from './preview-games';
+	import type { LibraryGame } from './library-games.js';
 	let {
 		game,
 		view,
 		onselect
-	}: { game: PreviewGame; view: 'grid' | 'list'; onselect: (game: PreviewGame) => void } = $props();
+	}: { game: LibraryGame; view: 'grid' | 'list'; onselect: (game: LibraryGame) => void } = $props();
 </script>
 
 <button
 	class={['game-card', { 'game-card--list': view === 'list' }]}
 	type="button"
-	aria-label={`${game.title} · 샘플 게임 상세 보기`}
+	aria-label={`${game.title} · 제작 중 상세 보기`}
 	onclick={() => onselect(game)}
 >
-	<span class="cover-wrap"><GameCover kind={game.cover} /></span>
+	<span class="cover-wrap"><GameCover /></span>
 	<span class="game-copy"
-		><span class="genre">{game.genre}</span><strong>{game.title}</strong><span class="metadata"
-			>{formatLastPlayed(game.lastPlayed)}</span
+		>{#if game.genre}<span class="genre">{game.genre}</span>{/if}<strong>{game.title}</strong><span
+			class="metadata">제작 중</span
 		></span
 	>
-	<span class="save-count">{game.saves ? `저장 ${game.saves}개` : '새로운 이야기'}</span>
 </button>
 
 <style>
@@ -71,14 +70,10 @@
 		text-overflow: ellipsis;
 		white-space: nowrap;
 	}
-	.metadata,
-	.save-count {
+	.metadata {
 		color: var(--text-muted);
 		font-size: 11px;
 		line-height: 1.6;
-	}
-	.save-count {
-		margin-top: 2px;
 	}
 	.game-card--list {
 		flex-direction: row;
@@ -98,9 +93,6 @@
 		gap: 4px;
 		padding: 0;
 	}
-	.game-card--list .save-count {
-		margin: 0 8px 0 auto;
-	}
 	.game-card--list:hover {
 		background: var(--surface-hover);
 	}
@@ -110,9 +102,6 @@
 	@media (max-width: 600px) {
 		.game-card--list {
 			gap: 12px;
-		}
-		.game-card--list .save-count {
-			display: none;
 		}
 	}
 </style>

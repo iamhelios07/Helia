@@ -1,0 +1,440 @@
+{
+	"version": "6",
+	"dialect": "sqlite",
+	"id": "217093d7-aff8-417e-9da1-4ece44b1dcba",
+	"prevId": "00000000-0000-0000-0000-000000000000",
+	"tables": {
+		"games": {
+			"name": "games",
+			"columns": {
+				"id": {
+					"name": "id",
+					"type": "text",
+					"primaryKey": true,
+					"notNull": true,
+					"autoincrement": false
+				},
+				"version": {
+					"name": "version",
+					"type": "integer",
+					"primaryKey": false,
+					"notNull": true,
+					"autoincrement": false,
+					"default": 0
+				},
+				"value": {
+					"name": "value",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true,
+					"autoincrement": false
+				}
+			},
+			"indexes": {},
+			"foreignKeys": {},
+			"compositePrimaryKeys": {},
+			"uniqueConstraints": {},
+			"checkConstraints": {
+				"games_json": {
+					"name": "games_json",
+					"value": "json_valid(\"games\".\"value\")"
+				}
+			}
+		},
+		"memories": {
+			"name": "memories",
+			"columns": {
+				"id": {
+					"name": "id",
+					"type": "text",
+					"primaryKey": true,
+					"notNull": true,
+					"autoincrement": false
+				},
+				"game_id": {
+					"name": "game_id",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true,
+					"autoincrement": false
+				},
+				"session_id": {
+					"name": "session_id",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true,
+					"autoincrement": false
+				},
+				"value": {
+					"name": "value",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true,
+					"autoincrement": false
+				}
+			},
+			"indexes": {
+				"memories_owner": {
+					"name": "memories_owner",
+					"columns": ["game_id", "session_id"],
+					"isUnique": false
+				}
+			},
+			"foreignKeys": {
+				"memories_session_id_game_id_sessions_id_game_id_fk": {
+					"name": "memories_session_id_game_id_sessions_id_game_id_fk",
+					"tableFrom": "memories",
+					"tableTo": "sessions",
+					"columnsFrom": ["session_id", "game_id"],
+					"columnsTo": ["id", "game_id"],
+					"onDelete": "cascade",
+					"onUpdate": "no action"
+				}
+			},
+			"compositePrimaryKeys": {},
+			"uniqueConstraints": {},
+			"checkConstraints": {
+				"memories_json": {
+					"name": "memories_json",
+					"value": "json_valid(\"memories\".\"value\")"
+				}
+			}
+		},
+		"messages": {
+			"name": "messages",
+			"columns": {
+				"id": {
+					"name": "id",
+					"type": "text",
+					"primaryKey": true,
+					"notNull": true,
+					"autoincrement": false
+				},
+				"game_id": {
+					"name": "game_id",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true,
+					"autoincrement": false
+				},
+				"session_id": {
+					"name": "session_id",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true,
+					"autoincrement": false
+				},
+				"value": {
+					"name": "value",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true,
+					"autoincrement": false
+				},
+				"sequence": {
+					"name": "sequence",
+					"type": "integer",
+					"primaryKey": false,
+					"notNull": true,
+					"autoincrement": false
+				}
+			},
+			"indexes": {
+				"messages_owner": {
+					"name": "messages_owner",
+					"columns": ["game_id", "session_id"],
+					"isUnique": false
+				},
+				"messages_session_id_sequence_unique": {
+					"name": "messages_session_id_sequence_unique",
+					"columns": ["session_id", "sequence"],
+					"isUnique": true
+				}
+			},
+			"foreignKeys": {
+				"messages_session_id_game_id_sessions_id_game_id_fk": {
+					"name": "messages_session_id_game_id_sessions_id_game_id_fk",
+					"tableFrom": "messages",
+					"tableTo": "sessions",
+					"columnsFrom": ["session_id", "game_id"],
+					"columnsTo": ["id", "game_id"],
+					"onDelete": "cascade",
+					"onUpdate": "no action"
+				}
+			},
+			"compositePrimaryKeys": {},
+			"uniqueConstraints": {},
+			"checkConstraints": {
+				"messages_json": {
+					"name": "messages_json",
+					"value": "json_valid(\"messages\".\"value\")"
+				}
+			}
+		},
+		"progress": {
+			"name": "progress",
+			"columns": {
+				"id": {
+					"name": "id",
+					"type": "text",
+					"primaryKey": true,
+					"notNull": true,
+					"autoincrement": false
+				},
+				"game_id": {
+					"name": "game_id",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true,
+					"autoincrement": false
+				},
+				"session_id": {
+					"name": "session_id",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true,
+					"autoincrement": false
+				},
+				"value": {
+					"name": "value",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true,
+					"autoincrement": false
+				},
+				"snapshot_id": {
+					"name": "snapshot_id",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true,
+					"autoincrement": false
+				}
+			},
+			"indexes": {
+				"progress_owner": {
+					"name": "progress_owner",
+					"columns": ["game_id", "session_id"],
+					"isUnique": false
+				}
+			},
+			"foreignKeys": {
+				"progress_snapshot_id_game_id_session_id_snapshots_id_game_id_session_id_fk": {
+					"name": "progress_snapshot_id_game_id_session_id_snapshots_id_game_id_session_id_fk",
+					"tableFrom": "progress",
+					"tableTo": "snapshots",
+					"columnsFrom": ["snapshot_id", "game_id", "session_id"],
+					"columnsTo": ["id", "game_id", "session_id"],
+					"onDelete": "no action",
+					"onUpdate": "no action"
+				},
+				"progress_session_id_game_id_sessions_id_game_id_fk": {
+					"name": "progress_session_id_game_id_sessions_id_game_id_fk",
+					"tableFrom": "progress",
+					"tableTo": "sessions",
+					"columnsFrom": ["session_id", "game_id"],
+					"columnsTo": ["id", "game_id"],
+					"onDelete": "cascade",
+					"onUpdate": "no action"
+				}
+			},
+			"compositePrimaryKeys": {},
+			"uniqueConstraints": {},
+			"checkConstraints": {
+				"progress_json": {
+					"name": "progress_json",
+					"value": "json_valid(\"progress\".\"value\")"
+				}
+			}
+		},
+		"sessions": {
+			"name": "sessions",
+			"columns": {
+				"id": {
+					"name": "id",
+					"type": "text",
+					"primaryKey": true,
+					"notNull": true,
+					"autoincrement": false
+				},
+				"game_id": {
+					"name": "game_id",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true,
+					"autoincrement": false
+				},
+				"value": {
+					"name": "value",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true,
+					"autoincrement": false
+				}
+			},
+			"indexes": {
+				"sessions_game": {
+					"name": "sessions_game",
+					"columns": ["game_id"],
+					"isUnique": false
+				},
+				"sessions_id_game_id_unique": {
+					"name": "sessions_id_game_id_unique",
+					"columns": ["id", "game_id"],
+					"isUnique": true
+				}
+			},
+			"foreignKeys": {
+				"sessions_game_id_games_id_fk": {
+					"name": "sessions_game_id_games_id_fk",
+					"tableFrom": "sessions",
+					"tableTo": "games",
+					"columnsFrom": ["game_id"],
+					"columnsTo": ["id"],
+					"onDelete": "cascade",
+					"onUpdate": "no action"
+				}
+			},
+			"compositePrimaryKeys": {},
+			"uniqueConstraints": {},
+			"checkConstraints": {
+				"sessions_json": {
+					"name": "sessions_json",
+					"value": "json_valid(\"sessions\".\"value\")"
+				}
+			}
+		},
+		"snapshots": {
+			"name": "snapshots",
+			"columns": {
+				"id": {
+					"name": "id",
+					"type": "text",
+					"primaryKey": true,
+					"notNull": true,
+					"autoincrement": false
+				},
+				"game_id": {
+					"name": "game_id",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true,
+					"autoincrement": false
+				},
+				"session_id": {
+					"name": "session_id",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true,
+					"autoincrement": false
+				},
+				"value": {
+					"name": "value",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true,
+					"autoincrement": false
+				}
+			},
+			"indexes": {
+				"snapshots_owner": {
+					"name": "snapshots_owner",
+					"columns": ["game_id", "session_id"],
+					"isUnique": false
+				},
+				"snapshots_id_game_id_session_id_unique": {
+					"name": "snapshots_id_game_id_session_id_unique",
+					"columns": ["id", "game_id", "session_id"],
+					"isUnique": true
+				}
+			},
+			"foreignKeys": {
+				"snapshots_session_id_game_id_sessions_id_game_id_fk": {
+					"name": "snapshots_session_id_game_id_sessions_id_game_id_fk",
+					"tableFrom": "snapshots",
+					"tableTo": "sessions",
+					"columnsFrom": ["session_id", "game_id"],
+					"columnsTo": ["id", "game_id"],
+					"onDelete": "cascade",
+					"onUpdate": "no action"
+				}
+			},
+			"compositePrimaryKeys": {},
+			"uniqueConstraints": {},
+			"checkConstraints": {
+				"snapshots_json": {
+					"name": "snapshots_json",
+					"value": "json_valid(\"snapshots\".\"value\")"
+				}
+			}
+		},
+		"transactions": {
+			"name": "transactions",
+			"columns": {
+				"id": {
+					"name": "id",
+					"type": "text",
+					"primaryKey": true,
+					"notNull": true,
+					"autoincrement": false
+				},
+				"game_id": {
+					"name": "game_id",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true,
+					"autoincrement": false
+				},
+				"session_id": {
+					"name": "session_id",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true,
+					"autoincrement": false
+				},
+				"value": {
+					"name": "value",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true,
+					"autoincrement": false
+				}
+			},
+			"indexes": {
+				"transactions_owner": {
+					"name": "transactions_owner",
+					"columns": ["game_id", "session_id"],
+					"isUnique": false
+				}
+			},
+			"foreignKeys": {
+				"transactions_session_id_game_id_sessions_id_game_id_fk": {
+					"name": "transactions_session_id_game_id_sessions_id_game_id_fk",
+					"tableFrom": "transactions",
+					"tableTo": "sessions",
+					"columnsFrom": ["session_id", "game_id"],
+					"columnsTo": ["id", "game_id"],
+					"onDelete": "cascade",
+					"onUpdate": "no action"
+				}
+			},
+			"compositePrimaryKeys": {},
+			"uniqueConstraints": {},
+			"checkConstraints": {
+				"transactions_json": {
+					"name": "transactions_json",
+					"value": "json_valid(\"transactions\".\"value\")"
+				}
+			}
+		}
+	},
+	"views": {},
+	"enums": {},
+	"_meta": {
+		"schemas": {},
+		"tables": {},
+		"columns": {}
+	},
+	"internal": {
+		"indexes": {}
+	}
+}

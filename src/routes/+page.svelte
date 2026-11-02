@@ -1,30 +1,94 @@
 <script lang="ts">
+	import { onMount } from 'svelte';
+	import { goto } from '$app/navigation';
+	import { resolve } from '$app/paths';
 	import { version } from '../../package.json';
 	import Icon from '#lib/components/Icon.svelte';
-	import AppSidebar from '#lib/home/AppSidebar.svelte';
+	import { configureAppSidebar } from '#lib/shell/sidebar.svelte.js';
 	import GameCard from '#lib/home/GameCard.svelte';
-	import GameCover from '#lib/home/GameCover.svelte';
-	import { previewGames, type PreviewGame } from '#lib/home/preview-games.js';
+	import { toLibraryGame, type LibraryGame } from '#lib/home/library-games.js';
+	import { listGames, createGame } from '#lib/games/repository.js';
+	import type { Game } from '#lib/games/model.js';
 
 	let search = $state('');
 	let sort = $state<'recent' | 'name'>('recent');
 	let view = $state<'grid' | 'list'>('grid');
-	let showSamples = $state(true);
-	let selectedGame = $state<PreviewGame | null>(null);
-	let activeDialog = $state<'add' | 'game' | 'about' | null>(null);
+	let activeDialog = $state<'add' | 'about' | null>(null);
+	let creating = $state(false);
+	let createError = $state('');
+	let navigationError = $state('');
+	let savedGames = $state.raw<Game[]>([]);
+	let loading = $state(true);
+	let loadError = $state('');
+	let ready = $derived(!loading && !loadError);
+	let libraryGames = $derived(savedGames.map(toLibraryGame));
+	configureAppSidebar(() => ({
+		games: ready ? libraryGames : undefined,
+		activeGameId: null,
+		busy: creating,
+		onhome: goHome,
+		onadd: () => (activeDialog = 'add'),
+		onselect: selectGame
+	}));
 
-	const recentGames = previewGames.filter((game) => game.lastPlayed);
+	onMount(() => {
+		void loadLibrary();
+	});
+
+	async function loadLibrary() {
+		loading = true;
+		loadError = '';
+		try {
+			savedGames = await listGames();
+		} catch {
+			loadError = '저장된 게임을 불러오지 못했어요. 다시 시도해주세요.';
+		} finally {
+			loading = false;
+		}
+	}
+
+	async function startGame() {
+		if (!ready || creating) return;
+		creating = true;
+		createError = '';
+		let saved: Game;
+		try {
+			saved = await createGame();
+		} catch {
+			createError = '게임을 만들지 못했어요. 다시 시도해주세요.';
+			return;
+		} finally {
+			creating = false;
+		}
+		savedGames = [saved, ...savedGames];
+		search = '';
+		activeDialog = null;
+		await openGame(saved.id);
+	}
+
+	async function openGame(id: string) {
+		navigationError = '';
+		try {
+			await goto(resolve('/games/[id]', { id }));
+		} catch {
+			navigationError =
+				'게임 화면을 열지 못했어요. 게임은 저장되어 있으니 목록에서 다시 열어주세요.';
+		}
+	}
+
+	function closeDialog(dialog: typeof activeDialog) {
+		if (!creating && activeDialog === dialog) activeDialog = null;
+	}
+
 	let visibleGames = $derived.by(() => {
 		const query = search.trim().toLocaleLowerCase('ko-KR');
-		const games = showSamples
-			? previewGames.filter((game) =>
-					`${game.title} ${game.genre}`.toLocaleLowerCase('ko-KR').includes(query)
-				)
-			: [];
+		const games = libraryGames.filter((game) =>
+			`${game.title} ${game.genre}`.toLocaleLowerCase('ko-KR').includes(query)
+		);
 		return [...games].sort((a, b) =>
 			sort === 'name'
 				? a.title.localeCompare(b.title, 'ko-KR')
-				: (b.lastPlayed ?? '').localeCompare(a.lastPlayed ?? '')
+				: b.updatedAt.localeCompare(a.updatedAt)
 		);
 	});
 
@@ -33,9 +97,8 @@
 		window.scrollTo({ top: 0 });
 	}
 
-	function selectGame(game: PreviewGame) {
-		selectedGame = game;
-		activeDialog = 'game';
+	function selectGame(game: LibraryGame) {
+		void openGame(game.id);
 	}
 
 	function openModal(dialog: HTMLDialogElement) {
@@ -46,18 +109,10 @@
 
 <svelte:head>
 	<title>Helia · 내 게임</title>
-	<meta name="description" content="당신만의 세계, 당신만의 이야기. Helia 게임 라이브러리." />
+	<meta name="description" content="Helia 게임 라이브러리" />
 </svelte:head>
 
 <a class="skip-link" href="#library">게임 목록으로 건너뛰기</a>
-
-<AppSidebar
-	games={showSamples ? recentGames : []}
-	onhome={goHome}
-	onadd={() => (activeDialog = 'add')}
-	onselect={selectGame}
-	onabout={() => (activeDialog = 'about')}
-/>
 
 <main>
 	<div class="content">
@@ -66,7 +121,6 @@
 				<Icon name="sun" size={36} />
 				<h1>Helia</h1>
 			</div>
-			<p class="tagline">당신만의 세계, 당신만의 이야기.</p>
 			<button
 				class="version"
 				type="button"
@@ -80,17 +134,7 @@
 			<div class="library-heading">
 				<div class="heading-copy">
 					<h2 id="library-heading">내 게임</h2>
-					<span class="count">{showSamples ? previewGames.length : 0}</span>
-				</div>
-				<div class="sample-control">
-					<span>샘플 라이브러리</span><button
-						type="button"
-						onclick={() => {
-							showSamples = !showSamples;
-							search = '';
-						}}
-						aria-pressed={showSamples}>{showSamples ? '샘플 숨기기' : '샘플 보기'}</button
-					>
+					<span class="count" aria-label="표시된 게임 수">{visibleGames.length}</span>
 				</div>
 			</div>
 
@@ -107,7 +151,7 @@
 					<label class="sort"
 						><Icon name="sort" size={15} /><span class="sr-only">게임 정렬</span><select
 							bind:value={sort}
-							><option value="recent">최근 플레이순</option><option value="name">이름순</option
+							><option value="recent">최근 활동순</option><option value="name">이름순</option
 							></select
 						><Icon name="chevron" size={13} /></label
 					>
@@ -135,6 +179,17 @@
 				</div>
 			</div>
 
+			{#if navigationError}<p class="library-status" role="alert">{navigationError}</p>{/if}
+			{#if loading}
+				<p class="library-status" role="status">저장된 게임을 불러오는 중…</p>
+			{:else if loadError}
+				<div class="library-status" role="alert">
+					<p>{loadError}</p>
+					<button class="secondary-button" type="button" onclick={loadLibrary}>다시 불러오기</button
+					>
+				</div>
+			{/if}
+
 			{#if visibleGames.length}
 				<ul class={['game-grid', { 'game-list': view === 'list' }]} aria-label="게임 목록">
 					{#each visibleGames as game (game.id)}
@@ -147,23 +202,18 @@
 								type="button"
 								onclick={() => (activeDialog = 'add')}
 								><span class="add-tile-icon"><Icon name="plus" size={24} /></span><span
-									>새로운 이야기 추가</span
+									>게임 추가</span
 								></button
 							>
 						</li>
 					{/if}
 				</ul>
-			{:else}
+			{:else if ready}
 				<div class="empty-state">
 					<span class="empty-icon"
 						><Icon name={search.trim() ? 'search' : 'folder'} size={30} /></span
 					>
-					<h3>{search.trim() ? '검색 결과가 없어요' : '첫 번째 이야기를 기다리고 있어요'}</h3>
-					<p>
-						{search.trim()
-							? '다른 이름이나 장르로 검색해보세요.'
-							: '게임을 추가하고 나만의 라이브러리를 채워보세요.'}
-					</p>
+					<h3>{search.trim() ? '검색 결과가 없습니다' : '게임이 없습니다'}</h3>
 					{#if search.trim()}
 						<button class="secondary-button" type="button" onclick={() => (search = '')}
 							>검색 초기화</button
@@ -175,70 +225,45 @@
 					{/if}
 				</div>
 			{/if}
-
-			<footer class="library-footer">
-				<span>모든 이야기는 하나의 선택에서 시작됩니다.</span><span>HELIA</span>
-			</footer>
 		</section>
 	</div>
 </main>
 
 {#if activeDialog === 'add'}
-	<dialog {@attach openModal} onclose={() => (activeDialog = null)} aria-labelledby="add-heading">
+	<dialog
+		{@attach openModal}
+		onclose={() => closeDialog('add')}
+		oncancel={(event) => {
+			if (creating) event.preventDefault();
+		}}
+		aria-labelledby="add-heading"
+		aria-busy={creating}
+	>
 		<div class="dialog-heading">
-			<h2 id="add-heading">새로운 이야기 추가</h2>
+			<h2 id="add-heading">게임 추가</h2>
 			<button
 				class="close-button"
 				type="button"
 				aria-label="닫기"
-				onclick={() => (activeDialog = null)}><Icon name="close" /></button
+				disabled={creating}
+				onclick={() => closeDialog('add')}><Icon name="close" /></button
 			>
 		</div>
-		<p class="dialog-description">게임을 만드는 방법과 가져오기 기능을 준비하고 있어요.</p>
+		{#if !ready}<p role="status">
+				{loading ? '불러오는 중…' : '게임을 불러올 수 없어요.'}
+			</p>{/if}
+		{#if createError}<p role="alert">{createError}</p>{/if}
 		<div class="add-options">
-			<button type="button" disabled
-				><Icon name="edit" size={25} /><strong>새 게임 만들기</strong><span
-					>나만의 세계와 이야기를 만들어보세요.</span
-				><small>준비 중</small></button
+			<button type="button" disabled={!ready || creating} onclick={startGame}
+				><Icon name="edit" size={25} /><strong>새 게임 만들기</strong>{#if creating}<small
+						role="status">저장 중…</small
+					>{/if}</button
 			>
 			<button type="button" disabled
-				><Icon name="import" size={25} /><strong>게임 가져오기</strong><span
-					>가지고 있는 게임을 라이브러리에 추가해요.</span
-				><small>준비 중</small></button
+				><Icon name="import" size={25} /><strong>게임 가져오기</strong><small>준비 중</small
+				></button
 			>
 		</div>
-	</dialog>
-{/if}
-
-{#if activeDialog === 'game'}
-	<dialog
-		class="details-dialog"
-		{@attach openModal}
-		onclose={() => (activeDialog = null)}
-		aria-labelledby="game-heading"
-	>
-		{#if selectedGame}
-			<div class="dialog-heading">
-				<span class="sample-badge">샘플 게임</span><button
-					class="close-button"
-					type="button"
-					aria-label="닫기"
-					onclick={() => (activeDialog = null)}><Icon name="close" /></button
-				>
-			</div>
-			<div class="game-details">
-				<div class="detail-cover"><GameCover kind={selectedGame.cover} /></div>
-				<div class="detail-copy">
-					<span class="detail-genre">{selectedGame.genre}</span>
-					<h2 id="game-heading">{selectedGame.title}</h2>
-					<p>{selectedGame.description}</p>
-					<p class="sample-notice">
-						라이브러리를 둘러보기 위한 샘플 게임입니다.<br />실제 플레이는 아직 지원하지 않습니다.
-					</p>
-					<button class="secondary-button" type="button" disabled>플레이 준비 중</button>
-				</div>
-			</div>
-		{/if}
 	</dialog>
 {/if}
 
@@ -246,7 +271,7 @@
 	<dialog
 		class="about-dialog"
 		{@attach openModal}
-		onclose={() => (activeDialog = null)}
+		onclose={() => closeDialog('about')}
 		aria-labelledby="about-heading"
 	>
 		<div class="dialog-heading">
@@ -260,14 +285,21 @@
 		<div class="about-content">
 			<Icon name="sun" size={44} />
 			<h2 id="about-heading">Helia</h2>
-			<span class="sample-badge">v{version}</span>
-			<p>당신만의 세계, 당신만의 이야기.</p>
-			<span class="about-caption">AI roleplay gaming client</span>
+			<span class="version-badge">v{version}</span>
 		</div>
 	</dialog>
 {/if}
 
 <style>
+	.library-status {
+		margin: 0 0 24px;
+		color: var(--text-muted);
+		font-size: 13px;
+	}
+	.add-options button:hover:not(:disabled) {
+		border-color: var(--text-muted);
+		background: var(--surface-hover);
+	}
 	.skip-link {
 		position: fixed;
 		top: 12px;
@@ -284,7 +316,6 @@
 	}
 	main {
 		min-height: 100dvh;
-		margin-left: var(--rail-width);
 		padding: 0 48px;
 	}
 	.content {
@@ -294,6 +325,7 @@
 	}
 	.welcome {
 		display: flex;
+		gap: 12px;
 		min-height: 190px;
 		flex-direction: column;
 		align-items: center;
@@ -312,12 +344,6 @@
 		font-weight: 550;
 		letter-spacing: -2.4px;
 		line-height: 1.2;
-	}
-	.tagline {
-		margin: 12px 0 10px;
-		color: var(--text-muted);
-		font-size: 13px;
-		letter-spacing: 0.02em;
 	}
 	.version {
 		display: flex;
@@ -371,26 +397,6 @@
 		border-radius: 6px;
 		color: var(--text-muted);
 		font-size: 11px;
-	}
-	.sample-control {
-		display: flex;
-		align-items: center;
-		gap: 12px;
-		color: var(--text-muted);
-		font-size: 11px;
-	}
-	.sample-control button {
-		padding: 0;
-		border: 0;
-		background: transparent;
-		color: var(--text);
-		font-size: 11px;
-		text-decoration: underline;
-		text-underline-offset: 4px;
-		text-decoration-color: var(--border-strong);
-	}
-	.sample-control button:hover {
-		color: var(--text-strong);
 	}
 	.toolbar {
 		display: flex;
@@ -565,22 +571,6 @@
 		height: 30px;
 		border: 0;
 	}
-	.library-footer {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		gap: 16px;
-		margin-top: 52px;
-		padding-top: 20px;
-		border-top: 1px solid var(--border);
-		color: var(--text-muted);
-		font-size: 10px;
-		line-height: 1.6;
-	}
-	.library-footer > :last-child {
-		font-size: 9px;
-		letter-spacing: 0.2em;
-	}
 	.empty-state {
 		display: flex;
 		min-height: 340px;
@@ -606,12 +596,6 @@
 		color: var(--text-strong);
 		font-size: 17px;
 		font-weight: 500;
-	}
-	.empty-state p {
-		margin: 0 0 26px;
-		color: var(--text-muted);
-		font-size: 12px;
-		line-height: 1.8;
 	}
 	.secondary-button {
 		display: inline-flex;
@@ -666,15 +650,10 @@
 		background: var(--surface-hover);
 		color: var(--text-strong);
 	}
-	.dialog-description {
-		margin: 14px 0 24px;
-		color: var(--text-muted);
-		font-size: 12px;
-		line-height: 1.8;
-	}
 	.add-options {
 		display: grid;
 		gap: 12px;
+		margin-top: 24px;
 	}
 	.add-options button {
 		display: grid;
@@ -688,7 +667,6 @@
 		text-align: left;
 	}
 	.add-options button > :global(svg) {
-		grid-row: span 2;
 		color: var(--text-muted);
 	}
 	.add-options strong {
@@ -696,63 +674,18 @@
 		font-size: 13px;
 		font-weight: 500;
 	}
-	.add-options span {
-		grid-column: 2;
-		color: var(--text-muted);
-		font-size: 11px;
-		line-height: 1.6;
-	}
 	.add-options small {
 		grid-column: 3;
-		grid-row: 1 / span 2;
 		color: var(--text-muted);
 		font-size: 10px;
 	}
-	.details-dialog {
-		width: min(620px, calc(100vw - 40px));
-	}
-	.sample-badge {
+	.version-badge {
 		display: inline-block;
 		padding: 5px 8px;
 		border: 1px solid var(--border-strong);
 		border-radius: 5px;
 		color: var(--text-muted);
 		font-size: 10px;
-	}
-	.game-details {
-		display: flex;
-		align-items: center;
-		gap: 28px;
-		padding-top: 24px;
-	}
-	.detail-cover {
-		width: 190px;
-		aspect-ratio: 3 / 4;
-		flex-shrink: 0;
-		overflow: hidden;
-		border: 1px solid var(--border);
-		border-radius: 8px;
-	}
-	.detail-copy {
-		min-width: 0;
-	}
-	.detail-genre {
-		color: var(--text-muted);
-		font-size: 11px;
-	}
-	.detail-copy h2 {
-		margin: 12px 0 16px;
-		font-size: 23px;
-		line-height: 1.5;
-	}
-	.detail-copy p {
-		font-size: 12px;
-		line-height: 1.9;
-	}
-	.sample-notice {
-		margin: 24px 0 18px;
-		color: var(--text-muted);
-		font-size: 11px;
 	}
 	.about-dialog {
 		width: min(380px, calc(100vw - 40px));
@@ -768,15 +701,6 @@
 	}
 	.about-content h2 {
 		font-size: 34px;
-	}
-	.about-content p {
-		margin: 8px 0 0;
-		color: var(--text);
-		font-size: 13px;
-	}
-	.about-caption {
-		color: var(--text-muted);
-		font-size: 11px;
 	}
 	@media (min-width: 1600px) {
 		.welcome {
@@ -814,24 +738,12 @@
 		.wordmark {
 			gap: 12px;
 		}
-		.tagline {
-			font-size: 11px;
-		}
 		.library {
 			padding-top: 24px;
 		}
 		.library-heading {
 			align-items: flex-start;
 			margin-bottom: 22px;
-		}
-		.sample-control {
-			flex-direction: column;
-			align-items: flex-end;
-			gap: 7px;
-			font-size: 10px;
-		}
-		.sample-control button {
-			font-size: 10px;
 		}
 		.toolbar {
 			gap: 12px;
@@ -879,34 +791,9 @@
 		.add-tile {
 			font-size: 10px;
 		}
-		.library-footer {
-			align-items: flex-start;
-			margin-top: 36px;
-			font-size: 9px;
-		}
-		.library-footer > :last-child {
-			display: none;
-		}
-		.game-details {
-			flex-direction: column;
-			gap: 22px;
-		}
-		.detail-cover {
-			width: 150px;
-		}
-		.detail-copy {
-			width: 100%;
-		}
-		.detail-copy h2 {
-			font-size: 21px;
-		}
 		.add-options button {
-			grid-template-columns: 25px 1fr;
+			grid-template-columns: 25px 1fr auto;
 			padding: 16px;
-		}
-		.add-options small {
-			grid-column: 2;
-			grid-row: 3;
 		}
 	}
 </style>
