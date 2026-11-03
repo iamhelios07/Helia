@@ -86,6 +86,52 @@ function conversation() {
 	);
 }
 
+it('refreshes external commits without remounting or losing the draft and open timeline', async () => {
+	const setup = await fixture();
+	const screen = setup.mount();
+	await expect.poll(conversation).toEqual(['상점에 도착했다.', '입장 완료', '돌아가기 완료']);
+	await page.getByRole('textbox', { name: '메시지', exact: true }).fill('유지할 초안');
+	await page.getByRole('button', { name: '이력과 분기', exact: true }).click();
+	const history = await getSessionHistory(setup.gameId, setup.sessionId);
+	await commitSessionTransaction(setup.gameId, setup.sessionId, {
+		expectedRevision: history.progress.revision,
+		parentId: history.progress.headId,
+		nextState: { gold: 95 },
+		action: { name: '패널 행동', args: {} },
+		message: { role: 'assistant', content: '패널에서 구매했다.' }
+	});
+	await expect
+		.poll(conversation)
+		.toEqual(['상점에 도착했다.', '입장 완료', '돌아가기 완료', '패널에서 구매했다.']);
+	await expect
+		.element(page.getByRole('textbox', { name: '메시지', exact: true }))
+		.toHaveValue('유지할 초안');
+	await expect.element(page.getByRole('region', { name: '세션 이력' })).toBeVisible();
+	await screen.unmount();
+});
+
+it('preserves chat scroll when an external action only changes state', async () => {
+	const setup = await fixture();
+	const screen = setup.mount();
+	screen.container.style.height = '220px';
+	screen.container.style.display = 'flex';
+	await expect.poll(conversation).toHaveLength(3);
+	const viewport = screen.container.querySelector<HTMLElement>('.history')!;
+	await expect.poll(() => viewport.scrollTop).toBeGreaterThan(0);
+	viewport.scrollTop = 25;
+	const updates = setup.onsessionupdate.mock.calls.length;
+	const history = await getSessionHistory(setup.gameId, setup.sessionId);
+	await commitSessionTransaction(setup.gameId, setup.sessionId, {
+		expectedRevision: history.progress.revision,
+		parentId: history.progress.headId,
+		nextState: { gold: 99 },
+		action: { name: '상태 변경', args: {} }
+	});
+	await expect.poll(() => setup.onsessionupdate.mock.calls.length).toBeGreaterThan(updates);
+	expect(viewport.scrollTop).toBe(25);
+	await screen.unmount();
+});
+
 it('navigates entire atomic events, restores state and memories, keeps drafts and forks on send', async () => {
 	const setup = await fixture();
 	let screen = setup.mount();

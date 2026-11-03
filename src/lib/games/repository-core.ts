@@ -47,6 +47,7 @@ import {
 } from '#lib/games/scripting/protocol.js';
 import { executeSessionWork, type ExecutionReport } from '#lib/games/scripting/execution.js';
 import { createSessionEvents } from '#lib/games/scripting/events.js';
+import { parseGameUI } from './ui/runtime/model.js';
 
 function makeSession(gameId: string): Session {
 	const now = new Date().toISOString();
@@ -137,7 +138,8 @@ function initialize(unit: StorageUnit, gameId: string, sessionId: string) {
 			settings: game.settings,
 			initialState: game.initialState,
 			schema: game.schema,
-			scripts: game.scripts
+			scripts: game.scripts,
+			...(game.ui ? { ui: game.ui } : {})
 		});
 		const progress = createSessionState(snapshot, session.id);
 		unit.put('snapshots', snapshot, session.id);
@@ -180,10 +182,35 @@ function visibleMessages(context: Context): Message[] {
 
 /** Shared application operations; the host owns the short SQL transactions. */
 export function createGameRepository(
-	transport: StorageTransport,
+	rawTransport: StorageTransport,
 	options: { validateTransaction?: TransactionValidator; runAction?: ActionRunner } = {}
 ) {
 	const uiEvents = createSessionEvents();
+	const changeListeners = new Map<string, Set<() => void>>();
+	const changeKey = (gameId: string, sessionId: string) => JSON.stringify([gameId, sessionId]);
+	const transport: StorageTransport = async (request) => {
+		const reply = await rawTransport(request);
+		if (request.kind === 'commit' || request.kind === 'prune' || request.kind === 'create') {
+			const sessionIds =
+				request.kind === 'prune'
+					? [request.sessionId]
+					: [
+							...request.records.flatMap((row) => (row.sessionId ? [row.sessionId] : [])),
+							...(request.kind === 'commit' ? request.deleteSessions : [])
+						];
+			for (const sessionId of new Set(sessionIds))
+				for (const listener of [
+					...(changeListeners.get(changeKey(request.gameId, sessionId)) ?? [])
+				]) {
+					try {
+						listener();
+					} catch {
+						/* Observers never turn a successful commit into a failure. */
+					}
+				}
+		}
+		return reply;
+	};
 	function withGame<T>(gameId: string, operation: (unit: StorageUnit) => T) {
 		return useStorage(transport, gameId, undefined, operation);
 	}
@@ -299,6 +326,18 @@ export function createGameRepository(
 		return getTimeline(gameId, sessionId);
 	}
 	return {
+		subscribeSessionChanges(gameId: string, sessionId: string, listener: () => void) {
+			identifier(gameId);
+			identifier(sessionId);
+			const key = changeKey(gameId, sessionId);
+			const listeners = changeListeners.get(key) ?? new Set<() => void>();
+			listeners.add(listener);
+			changeListeners.set(key, listeners);
+			return () => {
+				listeners.delete(listener);
+				if (!listeners.size) changeListeners.delete(key);
+			};
+		},
 		subscribeSessionEvents: uiEvents.subscribe,
 		getSessionTimeline: getTimeline,
 		deleteSessionEvent: deleteEvent,
@@ -365,18 +404,23 @@ export function createGameRepository(
 				return game;
 			});
 		},
-		updateGameRules(gameId: string, input: Pick<Game, 'schema' | 'initialState' | 'scripts'>) {
+		updateGameRules(
+			gameId: string,
+			input: Pick<Game, 'schema' | 'initialState' | 'scripts' | 'ui'>
+		) {
 			const { schema, initialState } = parseStateDocument({
 				schema: input.schema,
 				initialState: input.initialState
 			});
 			const scripts = parseScripts(input.scripts);
+			const ui = input.ui === undefined ? undefined : parseGameUI(input.ui);
 			return withGame(gameId, (unit) => {
 				const game = {
 					...gameIn(unit, gameId),
 					initialState,
 					schema,
 					scripts,
+					...(ui ? { ui } : {}),
 					updatedAt: new Date().toISOString()
 				};
 				unit.put('games', game);

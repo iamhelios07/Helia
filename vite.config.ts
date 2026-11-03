@@ -41,6 +41,13 @@ export default defineConfig(({ mode }) => ({
 		projects: [
 			{
 				extends: './vite.config.ts',
+				optimizeDeps: {
+					include: [
+						'typescript',
+						'@jitl/quickjs-singlefile-browser-release-sync',
+						'quickjs-emscripten-core'
+					]
+				},
 				test: {
 					name: 'client',
 					browser: {

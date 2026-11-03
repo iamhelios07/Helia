@@ -1,4 +1,4 @@
-﻿<script lang="ts">
+<script lang="ts">
 	import Sun from '@lucide/svelte/icons/sun';
 	import LayoutGrid from '@lucide/svelte/icons/layout-grid';
 	import Plus from '@lucide/svelte/icons/plus';
@@ -25,6 +25,7 @@
 	import Check from '@lucide/svelte/icons/check';
 	import SendHorizontal from '@lucide/svelte/icons/send-horizontal';
 	import UserRound from '@lucide/svelte/icons/user-round';
+	import Minus from '@lucide/svelte/icons/minus';
 	const icons = {
 		sun: Sun,
 		grid: LayoutGrid,
@@ -51,7 +52,8 @@
 		trash: Trash2,
 		check: Check,
 		send: SendHorizontal,
-		user: UserRound
+		user: UserRound,
+		minus: Minus
 	};
 	let { name, size = 20 }: { name: keyof typeof icons; size?: number } = $props();
 	let Glyph = $derived(icons[name]);

@@ -11,6 +11,36 @@ const CONFLICT: &str = "STORAGE_CONFLICT";
 
 pub struct StoragePath(pub PathBuf);
 
+/// A per-process credential injected into a main-frame-only JavaScript closure.
+/// WebView iframe-origin reporting differs by platform, so origin ACLs alone are insufficient.
+pub struct StorageAccess {
+    token: String,
+}
+impl StorageAccess {
+    pub fn new() -> Result<Self, String> {
+        let mut bytes = [0u8; 32];
+        getrandom::fill(&mut bytes)
+            .map_err(|_| "Could not initialize storage access".to_owned())?;
+        Ok(Self {
+            token: bytes.iter().map(|byte| format!("{byte:02x}")).collect(),
+        })
+    }
+    pub fn initialization_script(&self) -> String {
+        format!(
+            r#";(() => {{
+            if (window !== window.top) return;
+            const token = "{}";
+            const invoke = window.__TAURI_INTERNALS__.invoke;
+            Object.defineProperty(window, '__HELIA_STORAGE__', {{
+                value: request => invoke('storage_request', {{ request, token }}),
+                writable: false, configurable: false
+            }});
+        }})();"#,
+            self.token
+        )
+    }
+}
+
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 enum Table {
@@ -285,6 +315,119 @@ fn scripts(value: &Value) -> bool {
         })
     })
 }
+fn panel_layout(value: &Value, depth: usize, seen: &mut std::collections::HashSet<String>) -> bool {
+    if depth > 8 {
+        return false;
+    }
+    if value["kind"] == "panel" {
+        return value["id"].as_str().is_some_and(|id| {
+            !id.is_empty()
+                && id.len() <= 80
+                && id
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+                && seen.len() < 16
+                && seen.insert(id.to_owned())
+        });
+    }
+    value["kind"] == "split"
+        && matches!(value["axis"].as_str(), Some("horizontal" | "vertical"))
+        && value["ratio"]
+            .as_f64()
+            .is_some_and(|n| (0.1..=0.9).contains(&n))
+        && panel_layout(&value["first"], depth + 1, seen)
+        && panel_layout(&value["second"], depth + 1, seen)
+}
+fn game_ui(value: Option<&Value>) -> bool {
+    let Some(value) = value else {
+        return true;
+    };
+    if !object_state(value) || value["version"] != 1 {
+        return false;
+    }
+    let Some(modules) = value["modules"].as_object() else {
+        return false;
+    };
+    let Some(entry) = value["entry"].as_str() else {
+        return false;
+    };
+    if modules.is_empty() || modules.len() > 32 || !modules.contains_key(entry) {
+        return false;
+    }
+    let mut bytes = 0;
+    for (name, module) in modules {
+        if name.is_empty()
+            || name.len() > 128
+            || matches!(name.as_str(), "preact" | "preact/hooks")
+            || !name
+                .chars()
+                .next()
+                .is_some_and(|c| c.is_ascii_alphanumeric() || c == '_')
+            || !name
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '/' | '-'))
+            || name.split('/').any(|part| matches!(part, "" | "." | ".."))
+            || !matches!(
+                module["language"].as_str(),
+                Some("jsx" | "tsx" | "javascript" | "typescript")
+            )
+        {
+            return false;
+        }
+        let Some(source) = module["source"].as_str() else {
+            return false;
+        };
+        bytes += source.len();
+        if bytes > 512 * 1024 {
+            return false;
+        }
+    }
+    if value
+        .get("layout")
+        .is_some_and(|layout| !panel_layout(layout, 0, &mut std::collections::HashSet::new()))
+    {
+        return false;
+    }
+    if value
+        .get("chatDock")
+        .is_some_and(|dock| !matches!(dock.as_str(), Some("left" | "right" | "top" | "bottom")))
+        || value
+            .get("chatRatio")
+            .is_some_and(|ratio| !ratio.as_f64().is_some_and(|n| (0.2..=0.8).contains(&n)))
+    {
+        return false;
+    }
+    if let Some(style) = value.get("chatStyle") {
+        let Some(style) = style.as_object() else {
+            return false;
+        };
+        for (key, color) in style {
+            let Some(color) = color.as_str() else {
+                return false;
+            };
+            if color.encode_utf16().count() > 100 || color.is_empty() {
+                return false;
+            }
+            if key == "fontFamily" {
+                if !color.chars().all(|c| {
+                    c.is_alphanumeric() || c.is_whitespace() || matches!(c, ',' | '"' | '\'' | '-')
+                }) {
+                    return false;
+                }
+            } else if !matches!(
+                key.as_str(),
+                "background" | "color" | "userBackground" | "assistantBackground"
+            ) || !(color.chars().all(|c| c.is_ascii_alphabetic())
+                || color.strip_prefix('#').is_some_and(|hex| {
+                    (3..=8).contains(&hex.len()) && hex.chars().all(|c| c.is_ascii_hexdigit())
+                }))
+            {
+                return false;
+            }
+        }
+    }
+    true
+}
 fn valid_value(table: Table, value: &Value) -> bool {
     match table {
         Table::Games => {
@@ -303,6 +446,7 @@ fn valid_value(table: Table, value: &Value) -> bool {
                 && settings(&value["settings"])
                 && object_state(&value["initialState"])
                 && scripts(&value["scripts"])
+                && game_ui(value.get("ui"))
         }
         Table::Sessions => {
             id(&value["title"])
@@ -328,6 +472,7 @@ fn valid_value(table: Table, value: &Value) -> bool {
                 && settings(&value["settings"])
                 && object_state(&value["initialState"])
                 && scripts(&value["scripts"])
+                && game_ui(value.get("ui"))
         }
         Table::Progress => {
             id(&value["snapshotId"])
@@ -936,9 +1081,11 @@ fn write(
 pub async fn storage_request<R: tauri::Runtime>(
     window: tauri::Window<R>,
     state: tauri::State<'_, StoragePath>,
+    access: tauri::State<'_, StorageAccess>,
+    token: String,
     request: Value,
 ) -> Result<Value, String> {
-    if window.label() != "main" {
+    if window.label() != "main" || token != access.token {
         return Err("허용하지 않는 저장 요청이에요.".into());
     }
     let path = state.0.clone();
@@ -950,6 +1097,33 @@ pub async fn storage_request<R: tauri::Runtime>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn creates_distinct_main_frame_storage_credentials() {
+        let first = StorageAccess::new().unwrap();
+        let second = StorageAccess::new().unwrap();
+        assert_eq!(first.token.len(), 64);
+        assert_ne!(first.token, second.token);
+        let initialization = first.initialization_script();
+        assert!(initialization.contains("if (window !== window.top) return"));
+        assert!(initialization.contains("__HELIA_STORAGE__"));
+    }
+
+    #[test]
+    fn validates_packaged_game_ui_and_creator_layouts() {
+        let ui = json!({"version":1,"entry":"main.tsx","modules":{"main.tsx":{"language":"tsx","source":"export default function(){}"}},"layout":{"kind":"panel","id":"main"},"chatStyle":{"background":"#123456","fontFamily":"serif"}});
+        assert!(game_ui(Some(&ui)));
+        assert!(game_ui(None));
+        let mut invalid = ui.clone();
+        invalid["entry"] = json!("missing.tsx");
+        assert!(!game_ui(Some(&invalid)));
+        invalid = ui.clone();
+        invalid["chatStyle"]["background"] = json!("url(https://example.com)");
+        assert!(!game_ui(Some(&invalid)));
+        invalid = ui.clone();
+        invalid["layout"] = json!({"kind":"split","axis":"horizontal","ratio":0.5,"first":{"kind":"panel","id":"same"},"second":{"kind":"panel","id":"same"}});
+        assert!(!game_ui(Some(&invalid)));
+    }
     use std::sync::atomic::{AtomicUsize, Ordering};
     static NEXT: AtomicUsize = AtomicUsize::new(0);
     struct Fixture(PathBuf);
@@ -1342,6 +1516,9 @@ mod tests {
         let fixture = Fixture::new();
         let app = tauri::test::mock_builder()
             .manage(StoragePath(fixture.0.clone()))
+            .manage(StorageAccess {
+                token: "test-only-token".into(),
+            })
             .invoke_handler(tauri::generate_handler![storage_request])
             .build(tauri::test::mock_context(tauri::test::noop_assets()))
             .unwrap();
@@ -1355,7 +1532,9 @@ mod tests {
                 callback: tauri::ipc::CallbackFn(0),
                 error: tauri::ipc::CallbackFn(1),
                 url: "http://tauri.localhost".parse().unwrap(),
-                body: tauri::ipc::InvokeBody::Json(json!({ "request": create() })),
+                body: tauri::ipc::InvokeBody::Json(
+                    json!({ "request": create(), "token": "test-only-token" }),
+                ),
                 headers: Default::default(),
                 invoke_key: tauri::test::INVOKE_KEY.to_string(),
             },
@@ -1365,5 +1544,23 @@ mod tests {
         .unwrap();
         assert_eq!(response["version"], 0);
         assert_eq!(fixture.read()["records"].as_array().unwrap().len(), 2);
+
+        for token in ["", "forged-token"] {
+            let denied = tauri::test::get_ipc_response(
+                &window,
+                tauri::webview::InvokeRequest {
+                    cmd: "storage_request".into(),
+                    callback: tauri::ipc::CallbackFn(0),
+                    error: tauri::ipc::CallbackFn(1),
+                    url: "about:srcdoc".parse().unwrap(),
+                    body: tauri::ipc::InvokeBody::Json(
+                        json!({ "request": {"kind":"list"}, "token": token }),
+                    ),
+                    headers: Default::default(),
+                    invoke_key: tauri::test::INVOKE_KEY.to_string(),
+                },
+            );
+            assert!(denied.is_err());
+        }
     }
 }

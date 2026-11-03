@@ -7,6 +7,8 @@
 	import { toLibraryGame, type LibraryGame } from '#lib/library/library-games.js';
 	import GameSettingsPanel from './GameSettingsPanel.svelte';
 	import SessionChat from './SessionChat.svelte';
+	import GameWorkbench from './GameWorkbench.svelte';
+	import type { GameUI } from './runtime/model.js';
 	import {
 		getGameWorkspace,
 		createSession,
@@ -41,10 +43,11 @@
 	let missing = $state(false);
 	let sessionBusy = $state(false);
 	let chatSaving = $state(false);
+	let uiSaving = $state(false);
 	let chatDrafts = $state<Record<string, string>>({});
 	let conversationRevision = $state(0);
 	let refreshOpeningAfterSend = false;
-	let busy = $derived(sessionBusy || chatSaving);
+	let busy = $derived(sessionBusy || chatSaving || uiSaving);
 	let actionError = $state('');
 	let renamingSessionId = $state<string | null>(null);
 	let sessionName = $state('');
@@ -525,37 +528,57 @@
 				onclick={toggleSidebar}
 				><Icon name={sidebarCollapsed ? 'arrow-right' : 'arrow-left'} size={20} /></button
 			>
-			<main class="session-workspace" aria-label="현재 세션">
+			<main class={['session-workspace', { 'has-game-ui': !!game.ui }]} aria-label="현재 세션">
 				{#if actionError}<p class="action-error" role="alert">{actionError}</p>{/if}
 				{#if activeSession}
 					{@const currentSessionId = activeSession.id}
+					{@const currentGame = game}
 					<div class="session-heading">
 						<Icon name="chat" size={18} />
 						<h2>{activeSession.title}</h2>
 					</div>
-					{#key `${currentSessionId}:${conversationRevision}`}
-						<SessionChat
-							gameId={game.id}
-							sessionId={currentSessionId}
-							gameTitle={game.title}
-							bind:draft={
-								() => chatDrafts[currentSessionId] ?? '',
-								(value) => (chatDrafts[currentSessionId] = value)
-							}
-							onsessionupdate={(updated) => {
-								sessions = sessions.map((session) =>
-									session.id === updated.id ? updated : session
-								);
-							}}
-							onsavingchange={(saving) => {
-								chatSaving = saving;
-								if (!saving && refreshOpeningAfterSend) {
-									refreshOpeningAfterSend = false;
-									conversationRevision += 1;
+					{#snippet chat(theme?: GameUI['chatStyle'])}
+						{#key `${currentSessionId}:${conversationRevision}`}
+							<SessionChat
+								gameId={currentGame.id}
+								sessionId={currentSessionId}
+								gameTitle={currentGame.title}
+								blocked={sessionBusy || uiSaving}
+								chatStyle={theme}
+								bind:draft={
+									() => chatDrafts[currentSessionId] ?? '',
+									(value) => (chatDrafts[currentSessionId] = value)
 								}
-							}}
-						/>
-					{/key}
+								onsessionupdate={(updated) => {
+									sessions = sessions.map((session) =>
+										session.id === updated.id ? updated : session
+									);
+								}}
+								onsavingchange={(saving) => {
+									chatSaving = saving;
+									if (!saving && refreshOpeningAfterSend) {
+										refreshOpeningAfterSend = false;
+										conversationRevision += 1;
+									}
+								}}
+							/>
+						{/key}
+					{/snippet}
+					{#if game.ui}
+						{#key currentSessionId}
+							<GameWorkbench
+								gameId={game.id}
+								sessionId={currentSessionId}
+								ui={game.ui}
+								blocked={sessionBusy || chatSaving}
+								onsavingchange={(saving) => (uiSaving = saving)}
+							>
+								{#snippet children(theme)}{@render chat(theme)}{/snippet}
+							</GameWorkbench>
+						{/key}
+					{:else}
+						{@render chat()}
+					{/if}
 				{/if}
 			</main>
 		</div>
@@ -860,6 +883,13 @@
 		border-bottom: 1px solid var(--border);
 		color: var(--text-muted);
 	}
+	.session-workspace.has-game-ui {
+		padding: 0 0 0 36px;
+	}
+	.has-game-ui .session-heading {
+		padding: 7px 12px;
+		font-size: 12px;
+	}
 	.session-heading h2 {
 		min-width: 0;
 		overflow-wrap: anywhere;
@@ -933,6 +963,9 @@
 		}
 		.session-workspace {
 			padding: 20px 12px 12px;
+		}
+		.session-workspace.has-game-ui {
+			padding: 0;
 		}
 		.sidebar-collapsed .session-heading {
 			padding-left: 44px;

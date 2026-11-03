@@ -7,10 +7,11 @@ import {
 } from './value.js';
 import { parseGameSettings, parseScripts, type Game } from '#lib/games/model.js';
 import { parseStateDocument } from './schema.js';
+import { parseGameUI } from '../ui/runtime/model.js';
 
 export interface GameSnapshot extends Pick<
 	Game,
-	'schema' | 'initialState' | 'scripts' | 'settings'
+	'schema' | 'initialState' | 'scripts' | 'settings' | 'ui'
 > {
 	schemaVersion: 1;
 	id: string;
@@ -108,6 +109,7 @@ export function parseGameSnapshot(value: unknown): GameSnapshot {
 		createdAt: timestamp(input.createdAt),
 		...parseStateDocument({ schema: input.schema, initialState: input.initialState }),
 		scripts: parseScripts(input.scripts),
+		...(input.ui === undefined ? {} : { ui: parseGameUI(input.ui) }),
 		settings: parseGameSettings(input.settings)
 	};
 }

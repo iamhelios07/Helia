@@ -1,5 +1,6 @@
 import { validateStateKey, type GameState } from '#lib/games/state/value.js';
 import { parseStateDocument, type ObjectSchema } from '#lib/games/state/schema.js';
+import { parseGameUI, type GameUI } from './ui/runtime/model.js';
 
 export const GAME_TITLE_MAX_LENGTH = 120;
 export const GAME_GENRE_MAX_LENGTH = 80;
@@ -35,6 +36,7 @@ export interface Game extends GameMetadata {
 	schema: ObjectSchema;
 	/** Source declarations; execution is handled separately. */
 	scripts: Record<string, { language: string; source: string }>;
+	ui?: GameUI;
 }
 
 /** One independent playthrough, corresponding to a chat in a chat-based client. */
@@ -168,6 +170,7 @@ export function parseGame(value: unknown): Game {
 		updatedAt: value.updatedAt,
 		...parseStateDocument({ schema: value.schema, initialState: value.initialState }),
 		scripts: parseScripts(value.scripts),
+		...(value.ui === undefined ? {} : { ui: parseGameUI(value.ui) }),
 		settings: parseGameSettings(value.settings)
 	};
 }

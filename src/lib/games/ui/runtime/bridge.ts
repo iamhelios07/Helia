@@ -1,0 +1,255 @@
+import {
+	getSessionHistory,
+	executeSessionAction,
+	commitSessionTransaction,
+	subscribeSessionChanges,
+	subscribeSessionEvents
+} from '#lib/games/repository.js';
+import { parseAction, type SessionHistory } from '#lib/games/state/model.js';
+import { parseGameState, type GameState } from '#lib/games/state/value.js';
+import { UI_LIMITS, type GameUI, type PanelInfo, type PanelView } from './model.js';
+import { compileGameUI } from './compiler.js';
+
+// UI State lasts only for this application execution, scoped to a game and session.
+const transient = new Map<string, GameState>();
+export type GameUIHandle = (() => void) & { setViews(views: PanelView[]): void };
+export interface MountOptions {
+	onerror?: (message: string) => void;
+	onready?: () => void;
+	onui?: (ui: GameUI | undefined) => void;
+	onbusy?: (busy: boolean) => void;
+	onpanels?: (panels: PanelInfo[]) => void;
+	blocked?: () => boolean;
+}
+
+/** The iframe has no origin/storage/native privileges; the host owns validation and all commits. */
+export async function mountGameUI(
+	frame: HTMLIFrameElement,
+	gameId: string,
+	sessionId: string,
+	options: MountOptions = {}
+): Promise<GameUIHandle> {
+	let history = await getSessionHistory(gameId, sessionId);
+	const ui = history.snapshot.ui;
+	options.onui?.(ui);
+	if (!ui) {
+		options.onready?.();
+		return Object.assign(() => {}, { setViews: () => {} });
+	}
+	const token = crypto.randomUUID();
+	const document = await compileGameUI(ui, token);
+	const channel = new MessageChannel();
+	const abort = new AbortController();
+	const stateKey = JSON.stringify([gameId, sessionId]);
+	let disposed = false,
+		connected = false,
+		busy = false,
+		refreshing: Promise<void> | undefined,
+		dirty = false;
+	const queuedEvents: GameState[] = [];
+	const send = (message: unknown) => {
+		if (!disposed && connected) channel.port1.postMessage(JSON.stringify(message));
+	};
+	const sendState = () =>
+		send({ kind: 'state', state: history.progress.state, revision: history.progress.revision });
+	function drainEvents() {
+		for (const event of queuedEvents.splice(0)) send({ kind: 'event', event });
+	}
+	function refresh(): Promise<void> {
+		dirty = true;
+		if (!refreshing)
+			refreshing = (async () => {
+				try {
+					while (dirty && !disposed) {
+						dirty = false;
+						const next = await getSessionHistory(gameId, sessionId);
+						if (!disposed && next.progress.revision >= history.progress.revision) {
+							history = next;
+							sendState();
+						}
+					}
+					drainEvents();
+				} catch {
+					if (!disposed) options.onerror?.('게임 상태를 새로 불러오지 못했어요.');
+				} finally {
+					refreshing = undefined;
+				}
+			})();
+		return refreshing;
+	}
+	const unsubscribeChanges = subscribeSessionChanges(gameId, sessionId, () => {
+		void refresh();
+	});
+	const unsubscribeEvents = subscribeSessionEvents(gameId, sessionId, (event) => {
+		if (queuedEvents.length < 128) queuedEvents.push(parseGameState(event));
+		void refresh();
+	});
+	const receive = async (event: MessageEvent<unknown>) => {
+		let id: string | undefined;
+		try {
+			if (
+				disposed ||
+				typeof event.data !== 'string' ||
+				new TextEncoder().encode(event.data).length > UI_LIMITS.wireBytes
+			)
+				return;
+			const message = parseGameState(JSON.parse(event.data));
+			if (message.kind === 'ready') {
+				clearTimeout(timeout);
+				options.onready?.();
+				return;
+			}
+			if (message.kind === 'error') {
+				clearTimeout(timeout);
+				options.onerror?.('게임 UI를 실행하지 못했어요. 다시 시도해주세요.');
+				dispose();
+				return;
+			}
+			if (message.kind === 'panels') {
+				if (!Array.isArray(message.panels) || message.panels.length > UI_LIMITS.panels)
+					throw Error('Invalid panels');
+				const panels = message.panels.map((item) => {
+					const panel = parseGameState(item);
+					if (
+						typeof panel.id !== 'string' ||
+						!/^[\w-]{1,80}$/.test(panel.id) ||
+						typeof panel.title !== 'string' ||
+						!panel.title.trim() ||
+						panel.title.length > 100
+					)
+						throw Error('Invalid panel');
+					return { id: panel.id, title: panel.title };
+				});
+				if (new Set(panels.map((panel) => panel.id)).size !== panels.length)
+					throw Error('Duplicate panels');
+				options.onpanels?.(panels);
+				return;
+			}
+			if (message.kind === 'ui-state') {
+				const values = parseGameState(message.values);
+				if (JSON.stringify(values).length > 256 * 1024 || Object.keys(values).length > 1024)
+					throw Error('UI State limit');
+				transient.set(stateKey, values);
+				return;
+			}
+			if (
+				!['action', 'transaction'].includes(String(message.kind)) ||
+				typeof message.id !== 'string' ||
+				!/^\d{1,12}$/.test(message.id)
+			)
+				return;
+			id = message.id;
+			if (busy || options.blocked?.()) throw Error('Busy');
+			const action = parseAction(message.action);
+			busy = true;
+			options.onbusy?.(true);
+			let result: SessionHistory;
+			try {
+				if (message.kind === 'action')
+					result = await executeSessionAction(
+						gameId,
+						sessionId,
+						{ expectedRevision: history.progress.revision, action },
+						{ signal: abort.signal }
+					);
+				else
+					result = await commitSessionTransaction(
+						gameId,
+						sessionId,
+						{
+							expectedRevision: history.progress.revision,
+							parentId: history.progress.headId,
+							action,
+							nextState: parseGameState(message.state)
+						},
+						{ signal: abort.signal }
+					);
+				if (disposed) return;
+				if (result.progress.revision >= history.progress.revision) history = result;
+				sendState();
+				await refresh();
+			} finally {
+				busy = false;
+				if (!disposed) options.onbusy?.(false);
+			}
+			send({ kind: 'response', id, ok: true, result: { revision: history.progress.revision } });
+		} catch {
+			if (id)
+				send({
+					kind: 'response',
+					id,
+					ok: false,
+					error: '변경을 적용하지 못했어요. 상태와 입력을 확인하고 다시 시도해주세요.'
+				});
+		}
+	};
+	channel.port1.onmessage = (event) => {
+		void receive(event);
+	};
+	channel.port1.start();
+	function initialize(event: MessageEvent) {
+		if (
+			disposed ||
+			connected ||
+			event.source !== frame.contentWindow ||
+			event.data?.heliaUI !== token
+		)
+			return;
+		connected = true;
+		window.removeEventListener('message', initialize);
+		frame.contentWindow!.postMessage({ token }, '*', [channel.port2]);
+		send({
+			kind: 'init',
+			state: history.progress.state,
+			uiState: transient.get(stateKey) ?? {}
+		});
+	}
+	function dispose() {
+		if (disposed) return;
+		send({ kind: 'dispose' });
+		disposed = true;
+		abort.abort();
+		clearTimeout(timeout);
+		unsubscribeChanges();
+		unsubscribeEvents();
+		window.removeEventListener('message', initialize);
+		frame.removeEventListener('load', navigation);
+		channel.port1.close();
+		channel.port2.close();
+		frame.removeAttribute('srcdoc');
+		if (busy) options.onbusy?.(false);
+	}
+	let loads = 0;
+	function navigation() {
+		if (++loads > 1) {
+			options.onerror?.('게임 UI의 페이지 이동은 지원하지 않아요.');
+			dispose();
+		}
+	}
+	window.addEventListener('message', initialize);
+	frame.addEventListener('load', navigation);
+	const timeout = setTimeout(() => {
+		options.onerror?.('게임 UI가 응답하지 않아요. 다시 시도해주세요.');
+		dispose();
+	}, 15_000);
+	frame.setAttribute('sandbox', 'allow-scripts');
+	frame.referrerPolicy = 'no-referrer';
+	frame.srcdoc = document;
+	return Object.assign(dispose, {
+		setViews(views: PanelView[]) {
+			if (
+				views.length > UI_LIMITS.panels ||
+				views.some(
+					(view) =>
+						typeof view.id !== 'string' ||
+						!/^[\w-]{1,80}$/.test(view.id) ||
+						[view.x, view.y, view.width, view.height].some(
+							(n) => !Number.isFinite(n) || n < 0 || n > 100_000
+						)
+				)
+			)
+				throw Error('Invalid panel geometry');
+			send({ kind: 'views', views });
+		}
+	});
+}

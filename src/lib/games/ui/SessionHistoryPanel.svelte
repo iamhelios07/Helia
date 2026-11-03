@@ -14,11 +14,18 @@
 		busy: boolean;
 		error: string;
 		onselect: (id: string | null) => Promise<void>;
-		ondelete: (id: string) => Promise<boolean>;
+		ondelete: (id: string, expectedRevision: number) => Promise<boolean>;
 		onreload: () => Promise<void>;
 	} = $props();
 	const uid = $props.id();
 	let deleting = $state.raw<HistoryEvent | null>(null);
+	let deletingRevision = 0;
+
+	function requestDelete(event: HistoryEvent) {
+		if (!timeline) return;
+		deletingRevision = timeline.history.progress.revision;
+		deleting = event;
+	}
 
 	function openDialog(dialog: HTMLDialogElement) {
 		dialog.showModal();
@@ -29,7 +36,7 @@
 	}
 	async function confirmDelete() {
 		if (!deleting || busy) return;
-		if (await ondelete(deleting.id)) deleting = null;
+		if (await ondelete(deleting.id, deletingRevision)) deleting = null;
 	}
 </script>
 
@@ -73,7 +80,7 @@
 							type="button"
 							disabled={busy}
 							aria-label={`${event.summary} 삭제`}
-							onclick={() => (deleting = event)}>삭제</button
+							onclick={() => requestDelete(event)}>삭제</button
 						>
 					</div>
 					<details>

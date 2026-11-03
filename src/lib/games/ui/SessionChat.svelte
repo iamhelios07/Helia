@@ -2,12 +2,15 @@
 	import { onMount, tick } from 'svelte';
 	import Icon from '#lib/components/Icon.svelte';
 	import SessionHistoryPanel from './SessionHistoryPanel.svelte';
+	import type { GameUI } from './runtime/model.js';
+	import { safeChatStyle } from './chat-style.js';
 	import {
 		appendUserMessage,
 		getSessionConversation,
 		getSessionTimeline,
 		selectSessionBranch,
-		deleteSessionEvent
+		deleteSessionEvent,
+		subscribeSessionChanges
 	} from '../repository.js';
 	import type { SessionTimeline } from '#lib/games/state/history.js';
 	import type { Message, Session } from '../model.js';
@@ -18,7 +21,9 @@
 		gameTitle,
 		draft = $bindable(''),
 		onsessionupdate,
-		onsavingchange
+		onsavingchange,
+		blocked = false,
+		chatStyle
 	}: {
 		gameId: string;
 		sessionId: string;
@@ -26,6 +31,8 @@
 		draft?: string;
 		onsessionupdate: (session: Session) => void;
 		onsavingchange: (saving: boolean) => void;
+		blocked?: boolean;
+		chatStyle?: GameUI['chatStyle'];
 	} = $props();
 
 	let messages = $state.raw<Message[]>([]);
@@ -42,16 +49,69 @@
 	let composer: HTMLTextAreaElement | undefined;
 	let disposed = false;
 	let requestId = 0;
+	let refreshPending = false;
+	let refreshRunning = false;
+	let refreshTimer: ReturnType<typeof setTimeout> | undefined;
+	let theme = $derived(safeChatStyle(chatStyle));
+
+	$effect(() => {
+		if (!blocked) queueMicrotask(scheduleRefresh);
+	});
+
+	function scheduleRefresh() {
+		if (disposed || !refreshPending || refreshTimer !== undefined) return;
+		refreshTimer = setTimeout(() => {
+			refreshTimer = undefined;
+			void refreshConversation();
+		}, 0);
+	}
+
+	async function refreshConversation() {
+		if (
+			disposed ||
+			!refreshPending ||
+			refreshRunning ||
+			loading ||
+			saving ||
+			timelineBusy ||
+			blocked
+		)
+			return;
+		refreshPending = false;
+		refreshRunning = true;
+		const game = gameId;
+		const session = sessionId;
+		const request = ++requestId;
+		try {
+			const next = await getSessionTimeline(game, session);
+			if (isCurrent(game, session) && request === requestId) {
+				const previousTail = messages.at(-1);
+				const nextTail = next.messages.at(-1);
+				applyTimeline(
+					next,
+					previousTail?.id !== nextTail?.id || previousTail?.content !== nextTail?.content
+				);
+				loadError = '';
+				timelineError = '';
+			}
+		} catch {
+			if (isCurrent(game, session) && request === requestId)
+				timelineError = '이력을 불러오지 못했어요. 다시 시도해주세요.';
+		} finally {
+			refreshRunning = false;
+			scheduleRefresh();
+		}
+	}
 
 	function isCurrent(game: string, session: string) {
 		return !disposed && gameId === game && sessionId === session;
 	}
 
-	function applyTimeline(next: SessionTimeline) {
+	function applyTimeline(next: SessionTimeline, scroll = true) {
 		timeline = next;
 		messages = next.messages;
 		onsessionupdate(next.session);
-		void scrollToEnd();
+		if (scroll) void scrollToEnd();
 	}
 
 	async function reloadTimeline() {
@@ -68,15 +128,21 @@
 			if (isCurrent(game, session)) timelineError = '이력을 불러오지 못했어요. 다시 시도해주세요.';
 		} finally {
 			if (isCurrent(game, session) && request === requestId) timelineBusy = false;
+			scheduleRefresh();
 		}
 	}
 
-	async function changeTimeline(id: string | null, remove = false): Promise<boolean> {
-		if (!timeline || timelineBusy || saving || loading) return false;
+	async function changeTimeline(
+		id: string | null,
+		remove = false,
+		expectedRevision?: number
+	): Promise<boolean> {
+		if (!timeline || timelineBusy || saving || loading || blocked) return false;
 		if (!remove && timeline.history.progress.headId === id) return true;
 		const game = gameId;
 		const session = sessionId;
-		const revision = timeline.history.progress.revision;
+		const revision = expectedRevision ?? timeline.history.progress.revision;
+		requestId += 1;
 		timelineBusy = true;
 		timelineError = '';
 		onsavingchange(true);
@@ -99,6 +165,7 @@
 			if (isCurrent(game, session)) {
 				timelineBusy = false;
 				onsavingchange(false);
+				scheduleRefresh();
 			}
 		}
 	}
@@ -109,9 +176,15 @@
 	}
 
 	onMount(() => {
+		const unsubscribe = subscribeSessionChanges(gameId, sessionId, () => {
+			refreshPending = true;
+			scheduleRefresh();
+		});
 		void loadConversation();
 		return () => {
 			disposed = true;
+			unsubscribe();
+			if (refreshTimer !== undefined) clearTimeout(refreshTimer);
 		};
 	});
 
@@ -149,12 +222,14 @@
 			if (isCurrent(game, session)) loadError = '채팅 기록을 불러오지 못했어요.';
 		} finally {
 			if (isCurrent(game, session)) loading = false;
+			scheduleRefresh();
 		}
 	}
 
 	async function sendMessage(event?: SubmitEvent) {
 		event?.preventDefault();
-		if (loading || saving || timelineBusy || loadError || !draft.trim()) return;
+		if (loading || saving || timelineBusy || blocked || loadError || !draft.trim()) return;
+		requestId += 1;
 		const game = gameId;
 		const session = sessionId;
 		saving = true;
@@ -175,6 +250,7 @@
 			if (isCurrent(game, session)) {
 				saving = false;
 				onsavingchange(false);
+				scheduleRefresh();
 			}
 		}
 		if (isCurrent(game, session) && showTimeline) void reloadTimeline();
@@ -188,11 +264,19 @@
 	}
 </script>
 
-<section class="chat" aria-label="채팅">
+<section
+	class="chat"
+	aria-label="채팅"
+	style:--chat-background={theme?.background}
+	style:--chat-color={theme?.color}
+	style:--chat-font={theme?.fontFamily}
+	style:--chat-user-background={theme?.userBackground}
+	style:--chat-assistant-background={theme?.assistantBackground}
+>
 	<div class="history-toolbar">
 		<button
 			type="button"
-			disabled={loading || saving || timelineBusy || !!loadError}
+			disabled={loading || saving || timelineBusy || blocked || !!loadError}
 			aria-controls={`${uid}-timeline`}
 			aria-expanded={showTimeline}
 			onclick={toggleTimeline}>이력과 분기</button
@@ -202,12 +286,12 @@
 		<div class="timeline-container" id={`${uid}-timeline`}>
 			<SessionHistoryPanel
 				{timeline}
-				busy={timelineBusy || saving}
+				busy={timelineBusy || saving || blocked}
 				error={timelineError}
 				onselect={async (id) => {
 					await changeTimeline(id);
 				}}
-				ondelete={(id) => changeTimeline(id, true)}
+				ondelete={(id, revision) => changeTimeline(id, true, revision)}
 				onreload={reloadTimeline}
 			/>
 		</div>
@@ -254,14 +338,14 @@
 				aria-label="메시지"
 				placeholder="메시지 입력"
 				rows="1"
-				readonly={saving || timelineBusy}
+				readonly={saving || timelineBusy || blocked}
 				onkeydown={handleKeydown}></textarea>
 			<button
 				class="send"
 				type="submit"
 				aria-label="메시지 전송"
 				title="전송"
-				disabled={loading || saving || timelineBusy || !!loadError || !draft.trim()}
+				disabled={loading || saving || timelineBusy || blocked || !!loadError || !draft.trim()}
 			>
 				<Icon name="send" size={20} />
 			</button>
@@ -283,6 +367,9 @@
 		margin-bottom: 8px;
 	}
 	.chat {
+		background: var(--chat-background, transparent);
+		color: var(--chat-color, var(--text));
+		font-family: var(--chat-font, inherit);
 		display: flex;
 		min-height: 0;
 		min-width: 0;
@@ -308,7 +395,10 @@
 		border-radius: 10px;
 	}
 	.message.player {
-		background: var(--surface);
+		background: var(--chat-user-background, var(--surface));
+	}
+	.message:not(.player) {
+		background: var(--chat-assistant-background, transparent);
 	}
 	.avatar {
 		display: grid;
@@ -332,7 +422,7 @@
 		overflow-wrap: anywhere;
 	}
 	.message-content {
-		color: var(--text);
+		color: var(--chat-color, var(--text));
 		font-size: 14px;
 		line-height: 1.85;
 		white-space: pre-wrap;

@@ -1,11 +1,13 @@
-import { invoke } from '@tauri-apps/api/core';
 import { isDesktopBuild, isTauri } from '#lib/platform/index.js';
 import { parseReply, type StorageTransport } from './protocol.js';
 
 export const storageRequest: StorageTransport = async (request) => {
 	if (isDesktopBuild) {
 		if (!isTauri()) throw new Error('데스크톱 저장소는 Helia 앱에서 사용할 수 있어요.');
-		return parseReply(await invoke('storage_request', { request }));
+		const host: unknown = Reflect.get(window, '__HELIA_STORAGE__');
+		if (window !== window.top || typeof host !== 'function')
+			throw new Error('데스크톱 저장소 접근이 허용되지 않았어요.');
+		return parseReply(await host(request));
 	}
 	const response = await fetch('/api/storage', {
 		method: 'POST',

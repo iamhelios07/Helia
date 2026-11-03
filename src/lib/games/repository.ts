@@ -21,6 +21,7 @@ export const {
 	commitSessionTransaction,
 	executeSessionAction,
 	subscribeSessionEvents,
+	subscribeSessionChanges,
 	selectSessionBranch,
 	deleteSessionResponse,
 	saveSessionMemory,

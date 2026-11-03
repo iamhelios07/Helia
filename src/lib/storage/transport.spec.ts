@@ -40,9 +40,22 @@ it('handles non-JSON error responses without leaking a parser error', async () =
 it('routes desktop requests to the single host command', async () => {
 	flags.desktop = true;
 	flags.native = true;
-	nativeInvoke.mockResolvedValue({ version: 0, records: [] });
+	const host = vi.fn().mockResolvedValue({ version: 0, records: [] });
+	const main = { __HELIA_STORAGE__: host };
+	Object.assign(main, { top: main });
+	vi.stubGlobal('window', main);
 	expect(await storageRequest({ kind: 'list' })).toEqual({ version: 0, records: [] });
-	expect(nativeInvoke).toHaveBeenCalledWith('storage_request', { request: { kind: 'list' } });
+	expect(host).toHaveBeenCalledWith({ kind: 'list' });
+	expect(nativeInvoke).not.toHaveBeenCalled();
+});
+it('refuses raw native access without the trusted main-frame closure', async () => {
+	flags.desktop = true;
+	flags.native = true;
+	vi.stubGlobal('window', { top: {} });
+	await expect(storageRequest({ kind: 'list' })).rejects.toThrow(
+		'데스크톱 저장소 접근이 허용되지 않았어요.'
+	);
+	expect(nativeInvoke).not.toHaveBeenCalled();
 });
 it('does not silently use web storage in desktop browser previews', async () => {
 	flags.desktop = true;

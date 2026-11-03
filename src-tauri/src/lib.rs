@@ -1,7 +1,11 @@
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 #[cfg(feature = "desktop")]
 pub fn run() {
+    let access = storage::StorageAccess::new().expect("Could not initialize storage access");
+    let initialization = access.initialization_script();
     tauri::Builder::default()
+        .manage(access)
+        .append_invoke_initialization_script(initialization)
         .setup(|app| {
             let directory = app.path().app_data_dir()?;
             std::fs::create_dir_all(&directory)?;

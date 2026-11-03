@@ -14,6 +14,8 @@ Storage uses Drizzle + SQLite for both web and desktop. See the [storage guide](
 
 Group code by the feature it belongs to, and keep shared storage and platform support separate.
 
+See the [game UI guide](./src/lib/games/ui/README.md) for packaged Preact panels, the sandbox bridge and player layout behavior.
+
 | Location                                                         | Responsibility                                                                 |
 | ---------------------------------------------------------------- | ------------------------------------------------------------------------------ |
 | [app](./src/lib/app/)                                            | App-wide navigation, sidebar control and device preferences                    |
