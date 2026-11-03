@@ -61,9 +61,11 @@
 		"#lib/*": "./src/lib/*"
 	},
 	"dependencies": {
+		"@jitl/quickjs-singlefile-browser-release-sync": "0.32.0",
 		"@lucide/svelte": "^1.66.0",
 		"@tauri-apps/api": "^2.12.4",
 		"better-sqlite3": "^13.0.3",
-		"drizzle-orm": "0.45.4"
+		"drizzle-orm": "0.45.4",
+		"quickjs-emscripten-core": "0.32.0"
 	}
 }

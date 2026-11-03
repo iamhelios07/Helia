@@ -39,6 +39,14 @@ import { parseGameState, sameValue } from '#lib/game-runtime/value.js';
 import { emptyStateDocument, parseStateDocument } from '#lib/game-runtime/schema.js';
 import type { TransactionValidator } from '#lib/game-runtime/workspace.js';
 import { historyEvents, type SessionTimeline } from '#lib/game-runtime/history.js';
+import {
+	CreatorRuntimeError,
+	type ActionRunner,
+	type RunOptions,
+	type ActionRequest
+} from '#lib/creator-runtime/protocol.js';
+import { executeSessionWork, type ExecutionReport } from '#lib/creator-runtime/execution.js';
+import { createSessionEvents } from '#lib/creator-runtime/events.js';
 
 function makeSession(gameId: string): Session {
 	const now = new Date().toISOString();
@@ -173,8 +181,9 @@ function visibleMessages(context: Context): Message[] {
 /** Shared application operations; the host owns the short SQL transactions. */
 export function createGameRepository(
 	transport: StorageTransport,
-	options: { validateTransaction?: TransactionValidator } = {}
+	options: { validateTransaction?: TransactionValidator; runAction?: ActionRunner } = {}
 ) {
+	const uiEvents = createSessionEvents();
 	function withGame<T>(gameId: string, operation: (unit: StorageUnit) => T) {
 		return useStorage(transport, gameId, undefined, operation);
 	}
@@ -241,6 +250,45 @@ export function createGameRepository(
 			memories: activeMemories(context.history, unit.all('memories').map(parseMemory))
 		}));
 	}
+	async function executeWork(
+		context: Context,
+		input: Omit<CommitTransaction, 'nextState'> & {
+			message?: Pick<Message, 'role' | 'content'>;
+			operation?: ActionRequest['operation'];
+		},
+		runOptions: RunOptions = {}
+	) {
+		if (!options.runAction) throw new CreatorRuntimeError('unavailable');
+		const gameId = context.game.id,
+			sessionId = context.session.id;
+		let session = context.session,
+			message: Message | undefined;
+		const history = await executeSessionWork(
+			context.history,
+			input,
+			{
+				run: options.runAction,
+				read: () => withHistory(gameId, sessionId, (_unit, next) => next.history),
+				commit: (proposal, snapshotId) =>
+					withHistory(gameId, sessionId, (unit, next) => {
+						if (runOptions.signal?.aborted) throw new CreatorRuntimeError('canceled');
+						if (
+							next.history.progress.revision !== proposal.expectedRevision ||
+							next.history.snapshot.id !== snapshotId
+						)
+							throw new CreatorRuntimeError('conflict');
+						const saved = commit(unit, next, proposal);
+						session = saved.session;
+						if (saved.message) message = saved.message;
+						return saved.history;
+					}),
+				publish: (transactionId, events) =>
+					uiEvents.publish(gameId, sessionId, transactionId, events)
+			},
+			runOptions
+		);
+		return { history, session, message };
+	}
 	async function deleteEvent(
 		gameId: string,
 		sessionId: string,
@@ -251,6 +299,7 @@ export function createGameRepository(
 		return getTimeline(gameId, sessionId);
 	}
 	return {
+		subscribeSessionEvents: uiEvents.subscribe,
 		getSessionTimeline: getTimeline,
 		deleteSessionEvent: deleteEvent,
 		async listGames() {
@@ -389,9 +438,17 @@ export function createGameRepository(
 				messages: visibleMessages(context)
 			}));
 		},
-		appendUserMessage(gameId: string, sessionId: string, input: string) {
+		appendUserMessage(
+			gameId: string,
+			sessionId: string,
+			input: string,
+			runOptions: RunOptions = {}
+		) {
 			const content = validateMessageContent(input);
 			return withHistory(gameId, sessionId, (unit, context) => {
+				if (runOptions.signal?.aborted) throw new CreatorRuntimeError('canceled');
+				if (Object.keys(context.history.snapshot.scripts).length)
+					return { kind: 'pending', context } as const;
 				const result = commit(unit, context, {
 					expectedRevision: context.history.progress.revision,
 					parentId: context.history.progress.headId,
@@ -399,17 +456,56 @@ export function createGameRepository(
 					action: { name: 'sendMessage', args: { content } },
 					message: { role: 'user', content }
 				});
+				return {
+					kind: 'saved',
+					result: { session: result.session, message: result.message! }
+				} as const;
+			}).then(async (prepared) => {
+				if (prepared.kind === 'saved') return prepared.result;
+				const { context } = prepared;
+				const result = await executeWork(
+					context,
+					{
+						expectedRevision: context.history.progress.revision,
+						parentId: context.history.progress.headId,
+						action: { name: 'sendMessage', args: { content } },
+						message: { role: 'user', content },
+						operation: { kind: 'proposal', state: context.history.progress.state }
+					},
+					runOptions
+				);
 				return { session: result.session, message: result.message! };
 			});
 		},
 		getSessionHistory(gameId: string, sessionId: string) {
 			return withHistory(gameId, sessionId, (_unit, context) => context.history);
 		},
+		async executeSessionAction(
+			gameId: string,
+			sessionId: string,
+			input: { expectedRevision: number; action: CommitTransaction['action'] },
+			runOptions: RunOptions = {}
+		) {
+			const revision = counter(input.expectedRevision);
+			const action = parseAction(input.action);
+			const context = await withHistory(gameId, sessionId, (_unit, context) => {
+				assertRevision(context.history.progress, revision);
+				return context;
+			});
+			return (
+				await executeWork(
+					context,
+					{ expectedRevision: revision, parentId: context.history.progress.headId, action },
+					runOptions
+				)
+			).history;
+		},
 		commitSessionTransaction(
 			gameId: string,
 			sessionId: string,
-			input: CommitTransaction & { message?: Pick<Message, 'role' | 'content'> }
-		) {
+			input: CommitTransaction & { message?: Pick<Message, 'role' | 'content'> },
+			runOptions: RunOptions = {}
+		): Promise<SessionHistory & { execution?: ExecutionReport }> {
 			const message = input.message
 				? { role: input.message.role, content: validateMessageContent(input.message.content) }
 				: undefined;
@@ -423,11 +519,25 @@ export function createGameRepository(
 				...(input.description === undefined ? {} : { description: identifier(input.description) }),
 				...(message ? { message } : {})
 			};
-			return withHistory(
-				gameId,
-				sessionId,
-				(unit, context) => commit(unit, context, detached).history
-			);
+			return withHistory(gameId, sessionId, (unit, context) => {
+				if (runOptions.signal?.aborted) throw new CreatorRuntimeError('canceled');
+				assertRevision(context.history.progress, detached.expectedRevision);
+				if (Object.keys(context.history.snapshot.scripts).length)
+					return { kind: 'pending', context } as const;
+				return { kind: 'saved', history: commit(unit, context, detached).history } as const;
+			}).then(async (prepared) => {
+				if (prepared.kind === 'saved') return prepared.history;
+				return (
+					await executeWork(
+						prepared.context,
+						{
+							...detached,
+							operation: { kind: 'proposal', state: detached.nextState }
+						},
+						runOptions
+					)
+				).history;
+			});
 		},
 		selectSessionBranch(
 			gameId: string,

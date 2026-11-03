@@ -35,6 +35,7 @@ export default defineConfig(({ mode }) => ({
 				}
 			: undefined,
 	clearScreen: false,
+	worker: { format: 'es' },
 	test: {
 		expect: { requireAssertions: true },
 		projects: [
