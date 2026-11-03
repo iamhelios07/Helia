@@ -1,5 +1,5 @@
-import { validateStateKey, type GameState } from '#lib/game-runtime/value.js';
-import { parseStateDocument, type ObjectSchema } from '#lib/game-runtime/schema.js';
+import { validateStateKey, type GameState } from '#lib/games/state/value.js';
+import { parseStateDocument, type ObjectSchema } from '#lib/games/state/schema.js';
 
 export const GAME_TITLE_MAX_LENGTH = 120;
 export const GAME_GENRE_MAX_LENGTH = 80;

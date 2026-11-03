@@ -1,6 +1,6 @@
 import { createContext, onDestroy, onMount } from 'svelte';
 import { SvelteSet } from 'svelte/reactivity';
-import type { LibraryGame } from '#lib/home/library-games.js';
+import type { LibraryGame } from '#lib/library/library-games.js';
 
 export interface AppSidebarOptions {
 	/** Undefined while this page loads; keep the last known saved-game shortcuts. */

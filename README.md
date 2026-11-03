@@ -10,6 +10,24 @@ AI roleplay gaming client
 
 Storage uses Drizzle + SQLite for both web and desktop. See the [storage guide](./src/lib/storage/README.md) for database locations, web origin configuration and verification commands.
 
+## Source organization
+
+Group code by the feature it belongs to, and keep shared storage and platform support separate.
+
+| Location                                                         | Responsibility                                                                 |
+| ---------------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| [app](./src/lib/app/)                                            | App-wide navigation, sidebar control and device preferences                    |
+| [library](./src/lib/library/)                                    | Browsing and selecting games                                                   |
+| [games](./src/lib/games/)                                        | Game and session models, operations and repository composition                 |
+| [games/state](./src/lib/games/state/)                            | State validation, transactions, history, branches and restoration              |
+| [games/scripting](./src/lib/games/scripting/)                    | Sandboxed script execution, Actions, Filters, Hooks and execution coordination |
+| [games/ui](./src/lib/games/ui/)                                  | Game workspace, chat, settings and history panels                              |
+| [storage](./src/lib/storage/)                                    | Storage schema, protocol, transport and shared persistence operations          |
+| [server](./src/lib/server/)                                      | Web server SQLite implementation                                               |
+| [platform](./src/lib/platform/)                                  | Build target and native environment detection                                  |
+| [components](./src/lib/components/), [assets](./src/lib/assets/) | Shared UI components and application assets                                    |
+| [testing](./src/lib/testing/)                                    | Shared test fixtures and in-memory storage                                     |
+
 ## What is Helia?
 
 **Helia** is a highly customizable, open-source AI application designed specifically for immersive roleplaying games, powered by your own API key.

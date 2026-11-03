@@ -8,9 +8,9 @@
 		getSessionTimeline,
 		selectSessionBranch,
 		deleteSessionEvent
-	} from './repository.js';
-	import type { SessionTimeline } from '#lib/game-runtime/history.js';
-	import type { Message, Session } from './model.js';
+	} from '../repository.js';
+	import type { SessionTimeline } from '#lib/games/state/history.js';
+	import type { Message, Session } from '../model.js';
 
 	let {
 		gameId,

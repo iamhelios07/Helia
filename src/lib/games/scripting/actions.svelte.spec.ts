@@ -10,8 +10,8 @@ import {
 	subscribeSessionEvents
 } from '#lib/games/repository.js';
 
-vi.mock('../storage/transport.js', async () => {
-	const { memoryStorage } = await import('../testing/memory-storage.js');
+vi.mock('../../storage/transport.js', async () => {
+	const { memoryStorage } = await import('../../testing/memory-storage.js');
 	return { storageRequest: memoryStorage() };
 });
 const schema = {

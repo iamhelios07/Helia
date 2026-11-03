@@ -1,6 +1,6 @@
 <script lang="ts">
-	import type { HistoryEvent, SessionTimeline } from '#lib/game-runtime/history.js';
-	import type { StateSlot } from '#lib/game-runtime/model.js';
+	import type { HistoryEvent, SessionTimeline } from '#lib/games/state/history.js';
+	import type { StateSlot } from '#lib/games/state/model.js';
 
 	let {
 		timeline,

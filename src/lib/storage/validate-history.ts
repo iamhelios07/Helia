@@ -1,13 +1,13 @@
-import { stateAt } from '#lib/game-runtime/engine.js';
+import { stateAt } from '#lib/games/state/engine.js';
 import {
 	parseGameSnapshot,
 	parseSessionState,
 	parseTransaction,
 	parseMemory
-} from '#lib/game-runtime/model.js';
+} from '#lib/games/state/model.js';
 import { parseMessage, parseSession } from '#lib/games/model.js';
-import { validateState } from '#lib/game-runtime/schema.js';
-import { sameValue } from '#lib/game-runtime/value.js';
+import { validateState } from '#lib/games/state/schema.js';
+import { sameValue } from '#lib/games/state/value.js';
 import type { StoredRecord } from './protocol.js';
 
 /** Validate the resulting records inside the host's write transaction, including inactive branches. */

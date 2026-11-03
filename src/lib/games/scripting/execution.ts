@@ -1,5 +1,5 @@
-import { stateAt, type CommitTransaction } from '#lib/game-runtime/engine.js';
-import type { SessionHistory } from '#lib/game-runtime/model.js';
+import { stateAt, type CommitTransaction } from '#lib/games/state/engine.js';
+import type { SessionHistory } from '#lib/games/state/model.js';
 import type { Message } from '#lib/games/model.js';
 import {
 	CreatorRuntimeError,

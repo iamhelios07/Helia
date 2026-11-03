@@ -1,10 +1,10 @@
-import { deleteHistoryEvent } from '#lib/game-runtime/history.js';
+import { deleteHistoryEvent } from '#lib/games/state/history.js';
 import {
 	parseGameSnapshot,
 	parseSessionState,
 	parseTransaction,
 	parseMemory
-} from '#lib/game-runtime/model.js';
+} from '#lib/games/state/model.js';
 import { parseGame, parseSession, parseMessage } from '#lib/games/model.js';
 import { storedRecord, type StoredRecord } from './protocol.js';
 import { validateStoredHistory } from './validate-history.js';

@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { openStorage } from '#lib/server/sqlite.js';
 import { createGameRepository } from './repository-core.js';
-import { createWorkspace, TransactionFailure } from '#lib/game-runtime/workspace.js';
+import { createWorkspace, TransactionFailure } from '#lib/games/state/workspace.js';
 import {
 	CONFLICT,
 	parseReply,

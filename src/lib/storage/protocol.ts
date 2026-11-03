@@ -7,7 +7,7 @@ import {
 	parseMemory,
 	parseSessionState,
 	parseTransaction
-} from '#lib/game-runtime/model.js';
+} from '#lib/games/state/model.js';
 
 export const tables = [
 	'games',

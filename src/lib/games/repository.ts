@@ -1,6 +1,6 @@
 import { storageRequest } from '#lib/storage/transport.js';
 import { createGameRepository } from './repository-core.js';
-import { runCreatorAction } from '#lib/creator-runtime/browser.js';
+import { runCreatorAction } from '#lib/games/scripting/browser.js';
 
 export const {
 	listGames,

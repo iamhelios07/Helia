@@ -1,7 +1,7 @@
 <script lang="ts">
 	import Icon from '#lib/components/Icon.svelte';
-	import GameCover from './GameCover.svelte';
-	import type { LibraryGame } from './library-games.js';
+	import GameCover from '../library/GameCover.svelte';
+	import type { LibraryGame } from '../library/library-games.js';
 	let {
 		games,
 		onhome,

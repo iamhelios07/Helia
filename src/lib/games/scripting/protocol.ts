@@ -1,6 +1,6 @@
-import { parseAction, identifier, type Action } from '#lib/game-runtime/model.js';
-import { parseObjectSchema, validateState, type ObjectSchema } from '#lib/game-runtime/schema.js';
-import { parseGameState, type GameState } from '#lib/game-runtime/value.js';
+import { parseAction, identifier, type Action } from '#lib/games/state/model.js';
+import { parseObjectSchema, validateState, type ObjectSchema } from '#lib/games/state/schema.js';
+import { parseGameState, type GameState } from '#lib/games/state/value.js';
 import { parseScripts, type Game } from '#lib/games/model.js';
 
 /** Host policy; creator code cannot override these ceilings. */

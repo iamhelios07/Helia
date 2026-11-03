@@ -6,7 +6,7 @@ import {
 	type VmCallResult
 } from 'quickjs-emscripten-core';
 import { BOOTSTRAP } from './bootstrap.js';
-import { parseGameState } from '#lib/game-runtime/value.js';
+import { parseGameState } from '#lib/games/state/value.js';
 import { evaluateRules, type Definition, type RuleKind } from './rules.js';
 import {
 	boundedText,

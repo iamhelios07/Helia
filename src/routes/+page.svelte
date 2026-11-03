@@ -4,9 +4,9 @@
 	import { resolve } from '$app/paths';
 	import { version } from '../../package.json';
 	import Icon from '#lib/components/Icon.svelte';
-	import { configureAppSidebar } from '#lib/shell/sidebar.svelte.js';
-	import GameCard from '#lib/home/GameCard.svelte';
-	import { toLibraryGame, type LibraryGame } from '#lib/home/library-games.js';
+	import { configureAppSidebar } from '#lib/app/sidebar.svelte.js';
+	import GameCard from '#lib/library/GameCard.svelte';
+	import { toLibraryGame, type LibraryGame } from '#lib/library/library-games.js';
 	import { listGames, createGame } from '#lib/games/repository.js';
 	import type { Game } from '#lib/games/model.js';
 

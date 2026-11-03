@@ -1,4 +1,4 @@
-import { identifier } from '#lib/game-runtime/model.js';
+import { identifier } from '#lib/games/state/model.js';
 import type { UIEvent } from './protocol.js';
 
 export interface SessionUIEvent extends UIEvent {

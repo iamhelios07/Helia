@@ -1,8 +1,8 @@
-import { diffState } from '#lib/game-runtime/changes.js';
-import { parseAction, type Action } from '#lib/game-runtime/model.js';
-import { parseObjectSchema, validateState, type ObjectSchema } from '#lib/game-runtime/schema.js';
-import { parseGameState, type GameState } from '#lib/game-runtime/value.js';
-import { createWorkspace } from '#lib/game-runtime/workspace.js';
+import { diffState } from '#lib/games/state/changes.js';
+import { parseAction, type Action } from '#lib/games/state/model.js';
+import { parseObjectSchema, validateState, type ObjectSchema } from '#lib/games/state/schema.js';
+import { parseGameState, type GameState } from '#lib/games/state/value.js';
+import { createWorkspace } from '#lib/games/state/workspace.js';
 import {
 	CreatorRuntimeError,
 	SANDBOX_LIMITS,

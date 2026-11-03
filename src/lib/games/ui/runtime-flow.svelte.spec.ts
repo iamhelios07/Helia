@@ -1,8 +1,8 @@
-import '../../app.css';
+import '../../../app.css';
 import { beforeEach, expect, it, vi } from 'vitest';
 import { page } from 'vitest/browser';
 import { render } from 'vitest-browser-svelte';
-import AppFixture from '../testing/AppFixture.svelte';
+import AppFixture from '../../testing/AppFixture.svelte';
 import {
 	createGame,
 	createSession,
@@ -14,11 +14,11 @@ import {
 	deleteSessionResponse,
 	saveSessionMemory,
 	listSessionMemories
-} from './repository.js';
+} from '../repository.js';
 
 vi.mock('$app/navigation', () => ({ goto: vi.fn() }));
-vi.mock('../storage/transport.js', async () => {
-	const { memoryStorage } = await import('../testing/memory-storage.js');
+vi.mock('../../storage/transport.js', async () => {
+	const { memoryStorage } = await import('../../testing/memory-storage.js');
 	return { storageRequest: memoryStorage() };
 });
 

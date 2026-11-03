@@ -3,8 +3,8 @@
 	import { resolve } from '$app/paths';
 	import { goto } from '$app/navigation';
 	import Icon from '#lib/components/Icon.svelte';
-	import { configureAppSidebar } from '#lib/shell/sidebar.svelte.js';
-	import { toLibraryGame, type LibraryGame } from '#lib/home/library-games.js';
+	import { configureAppSidebar } from '#lib/app/sidebar.svelte.js';
+	import { toLibraryGame, type LibraryGame } from '#lib/library/library-games.js';
 	import GameSettingsPanel from './GameSettingsPanel.svelte';
 	import SessionChat from './SessionChat.svelte';
 	import {
@@ -16,14 +16,14 @@
 		deleteSession,
 		listGames,
 		createGame
-	} from './repository.js';
+	} from '../repository.js';
 	import {
 		SESSION_TITLE_MAX_LENGTH,
 		validateSessionTitle,
 		type Game,
 		type Session,
 		type UpdateGameSettings
-	} from './model.js';
+	} from '../model.js';
 	import {
 		DEFAULT_SIDEBAR_WIDTH,
 		MIN_SIDEBAR_WIDTH,
@@ -31,7 +31,7 @@
 		saveSidebarWidth,
 		loadSidebarCollapsed,
 		saveSidebarCollapsed
-	} from '#lib/preferences/sidebar.js';
+	} from '#lib/app/preferences/sidebar.js';
 
 	let { gameId }: { gameId: string } = $props();
 	let game = $state.raw<Game | null>(null);

@@ -5,14 +5,14 @@
 		loadSettingsDraft,
 		sameSettings,
 		storeSettingsDraft
-	} from './settings-draft.js';
+	} from '../settings-draft.js';
 	import Icon from '#lib/components/Icon.svelte';
 	import {
 		GAME_TITLE_MAX_LENGTH,
 		validateGameSettings,
 		type Game,
 		type UpdateGameSettings
-	} from './model.js';
+	} from '../model.js';
 	let { game, onsave }: { game: Game; onsave: (input: UpdateGameSettings) => Promise<Game> } =
 		$props();
 	const categories = [

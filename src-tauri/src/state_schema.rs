@@ -218,7 +218,7 @@ mod tests {
     #[test]
     fn shares_schema_conformance_cases_with_the_web_runtime() {
         let cases: Value = serde_json::from_str(include_str!(
-            "../../src/lib/game-runtime/schema-fixtures.json"
+            "../../src/lib/games/state/schema-fixtures.json"
         ))
         .unwrap();
         for case in cases.as_array().unwrap() {

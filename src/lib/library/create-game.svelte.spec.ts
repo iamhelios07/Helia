@@ -5,7 +5,7 @@ import { render as renderSvelte } from 'vitest-browser-svelte';
 import AppFixture from '../testing/AppFixture.svelte';
 import { goto } from '$app/navigation';
 import Home from '../../routes/+page.svelte';
-import GameWorkspace from '../games/GameWorkspace.svelte';
+import GameWorkspace from '../games/ui/GameWorkspace.svelte';
 import {
 	listGames,
 	createGame,
@@ -23,7 +23,7 @@ import { loadSettingsDraft, storeSettingsDraft } from '../games/settings-draft.j
 import {
 	SIDEBAR_WIDTH_STORAGE_KEY,
 	SIDEBAR_COLLAPSED_STORAGE_KEY
-} from '../preferences/sidebar.js';
+} from '../app/preferences/sidebar.js';
 
 vi.mock('$app/navigation', () => ({ goto: vi.fn() }));
 vi.mock('../games/repository.js', () => ({

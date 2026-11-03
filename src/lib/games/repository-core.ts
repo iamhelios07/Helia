@@ -24,7 +24,7 @@ import {
 	prepareTransaction,
 	stateAt,
 	type CommitTransaction
-} from '#lib/game-runtime/engine.js';
+} from '#lib/games/state/engine.js';
 import {
 	counter,
 	identifier,
@@ -34,19 +34,19 @@ import {
 	parseSessionState,
 	parseTransaction,
 	type SessionHistory
-} from '#lib/game-runtime/model.js';
-import { parseGameState, sameValue } from '#lib/game-runtime/value.js';
-import { emptyStateDocument, parseStateDocument } from '#lib/game-runtime/schema.js';
-import type { TransactionValidator } from '#lib/game-runtime/workspace.js';
-import { historyEvents, type SessionTimeline } from '#lib/game-runtime/history.js';
+} from '#lib/games/state/model.js';
+import { parseGameState, sameValue } from '#lib/games/state/value.js';
+import { emptyStateDocument, parseStateDocument } from '#lib/games/state/schema.js';
+import type { TransactionValidator } from '#lib/games/state/workspace.js';
+import { historyEvents, type SessionTimeline } from '#lib/games/state/history.js';
 import {
 	CreatorRuntimeError,
 	type ActionRunner,
 	type RunOptions,
 	type ActionRequest
-} from '#lib/creator-runtime/protocol.js';
-import { executeSessionWork, type ExecutionReport } from '#lib/creator-runtime/execution.js';
-import { createSessionEvents } from '#lib/creator-runtime/events.js';
+} from '#lib/games/scripting/protocol.js';
+import { executeSessionWork, type ExecutionReport } from '#lib/games/scripting/execution.js';
+import { createSessionEvents } from '#lib/games/scripting/events.js';
 
 function makeSession(gameId: string): Session {
 	const now = new Date().toISOString();

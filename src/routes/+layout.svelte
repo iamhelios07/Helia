@@ -1,8 +1,8 @@
 <script lang="ts">
 	import '../app.css';
 	import favicon from '#lib/assets/helia.svg';
-	import AppSidebar from '#lib/home/AppSidebar.svelte';
-	import { AppSidebarController, provideAppSidebar } from '#lib/shell/sidebar.svelte.js';
+	import AppSidebar from '#lib/app/AppSidebar.svelte';
+	import { AppSidebarController, provideAppSidebar } from '#lib/app/sidebar.svelte.js';
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import type { LayoutProps } from './$types';
