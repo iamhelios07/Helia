@@ -1,4 +1,4 @@
-import { parsePanelLayout, type GameUI, type PanelLayout } from './runtime/model.js';
+import { parsePanelLayout, UI_LIMITS, type GameUI, type PanelLayout } from './runtime/model.js';
 import { dockPanel, panelIds, reconcileLayout, removePanel } from './runtime/layout.js';
 
 /** Creator panel IDs cannot contain '$', so the trusted chat cannot be impersonated. */
@@ -54,10 +54,23 @@ export function reconcileWorkbenchLayout(tree: PanelLayout, ids: string[]): Pane
 	const visible = [CHAT_PANEL_ID, ...ids];
 	let next: PanelLayout | null = tree;
 	for (const id of panelIds(tree)) if (!visible.includes(id)) next = removePanel(next, id);
-	next ??= chat();
+	return addWorkbenchPanels(next ?? chat(), ids);
+}
+
+/** Keep saved slots for hidden or temporarily absent registrations when adding new panels. */
+export function addWorkbenchPanels(tree: PanelLayout, ids: string[]): PanelLayout {
+	let next = tree;
 	if (!panelIds(next).includes(CHAT_PANEL_ID)) next = besideChat(next, 'left', 0.72);
 	for (const id of ids) {
 		if (panelIds(next).includes(id)) continue;
+		// At capacity, reuse an absent registration's slot budget, never an active hidden panel's.
+		if (panelIds(next).length >= UI_LIMITS.panels + 1) {
+			const absent = panelIds(next).find(
+				(saved) => saved !== CHAT_PANEL_ID && !ids.includes(saved)
+			);
+			if (!absent) continue;
+			next = removePanel(next, absent)!;
+		}
 		// Prefer existing side/bottom panels so registration does not subdivide the main chat.
 		let target = CHAT_PANEL_ID;
 		let shallowest = Infinity;
@@ -103,15 +116,28 @@ export function dockWorkbenchPanel(
 export function resizeWorkbenchSplit(
 	tree: PanelLayout,
 	path: number[],
-	ratio: number
+	ratio: number,
+	visibleIds: string[] = panelIds(tree)
 ): PanelLayout {
-	if (tree.kind !== 'split' || !Number.isFinite(ratio)) return tree;
-	if (!path.length) return { ...tree, ratio: Math.max(0.1, Math.min(0.9, ratio)) };
-	const [branch, ...rest] = path;
-	if (branch !== 0 && branch !== 1) return tree;
-	return branch === 0
-		? { ...tree, first: resizeWorkbenchSplit(tree.first, rest, ratio) }
-		: { ...tree, second: resizeWorkbenchSplit(tree.second, rest, ratio) };
+	if (!Number.isFinite(ratio)) return tree;
+	const visible = new Set(visibleIds);
+	const hasVisible = (node: PanelLayout) => panelIds(node).some((id) => visible.has(id));
+	function resize(node: PanelLayout, remaining: number[]): PanelLayout {
+		if (node.kind !== 'split') return node;
+		const firstVisible = hasVisible(node.first),
+			secondVisible = hasVisible(node.second);
+		// A collapsed split consumes no path segment in the visible tree.
+		if (!firstVisible && !secondVisible) return node;
+		if (!firstVisible) return { ...node, second: resize(node.second, remaining) };
+		if (!secondVisible) return { ...node, first: resize(node.first, remaining) };
+		if (!remaining.length) return { ...node, ratio: Math.max(0.1, Math.min(0.9, ratio)) };
+		const [branch, ...rest] = remaining;
+		if (branch !== 0 && branch !== 1) return node;
+		return branch === 0
+			? { ...node, first: resize(node.first, rest) }
+			: { ...node, second: resize(node.second, rest) };
+	}
+	return resize(tree, path);
 }
 
 function parseTree(input: unknown): PanelLayout {

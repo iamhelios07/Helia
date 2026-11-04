@@ -3,6 +3,7 @@ import type { GameUI, PanelLayout } from './runtime/model.js';
 import { panelIds } from './runtime/layout.js';
 import {
 	CHAT_PANEL_ID,
+	addWorkbenchPanels,
 	defaultWorkbenchLayout,
 	dockWorkbenchPanel,
 	loadWorkbenchPreferences,
@@ -63,6 +64,115 @@ describe('unified workbench layout', () => {
 		});
 		expect(original).toEqual(defaultWorkbenchLayout(undefined, ['status']));
 		expect(reconcileWorkbenchLayout(next, [])).toEqual(leaf(CHAT_PANEL_ID));
+	});
+	it('retains hidden and temporarily absent slots when adding a dynamic panel', () => {
+		const original = defaultWorkbenchLayout(undefined, ['status', 'controls']);
+		const next = addWorkbenchPanels(original, ['status', 'inventory']);
+		expect(next).toMatchObject({
+			first: { kind: 'split', ratio: 0.7, first: leaf(CHAT_PANEL_ID), second: leaf('controls') },
+			second: { first: leaf('status'), second: leaf('inventory') }
+		});
+		expect(panelIds(next)).toContain('controls');
+		expect(addWorkbenchPanels(next, [])).toEqual(next);
+		expect(reconcileWorkbenchLayout(next, [])).toEqual(leaf(CHAT_PANEL_ID));
+	});
+	it('reuses absent slots at capacity while retaining active hidden panels and valid persistence', () => {
+		const ids = Array.from({ length: 16 }, (_, index) => `panel${index}`);
+		const original = defaultWorkbenchLayout(undefined, ids);
+		const next = addWorkbenchPanels(original, [...ids.slice(1), 'new-panel']);
+		expect(panelIds(next)).not.toContain('panel0');
+		expect(panelIds(next)).toContain('panel1');
+		saveWorkbenchPreferences('one', { version: 2, tree: next, hidden: ['panel1'] });
+		expect(loadWorkbenchPreferences('one')).toEqual({
+			version: 2,
+			tree: next,
+			hidden: ['panel1']
+		});
+	});
+	it.each([false, true])(
+		'maps resize paths past collapsed ancestors (hidden first: %s)',
+		(hiddenFirst) => {
+			const visible: PanelLayout = {
+				kind: 'split',
+				axis: 'horizontal',
+				ratio: 0.6,
+				first: leaf(CHAT_PANEL_ID),
+				second: leaf('status')
+			};
+			const hidden: PanelLayout = {
+				kind: 'split',
+				axis: 'vertical',
+				ratio: 0.3,
+				first: leaf('hidden-a'),
+				second: leaf('hidden-b')
+			};
+			const original: PanelLayout = {
+				kind: 'split',
+				axis: 'vertical',
+				ratio: 0.7,
+				first: hiddenFirst ? hidden : visible,
+				second: hiddenFirst ? visible : hidden
+			};
+			const next = resizeWorkbenchSplit(original, [], 0.45, [CHAT_PANEL_ID, 'status']);
+			expect(next).toEqual({
+				...original,
+				[hiddenFirst ? 'second' : 'first']: { ...visible, ratio: 0.45 }
+			});
+			expect(reconcileWorkbenchLayout(next, ['status'])).toEqual({ ...visible, ratio: 0.45 });
+		}
+	);
+	it('maps nested visible resize paths while preserving hidden split ratios and docking edits', () => {
+		const original: PanelLayout = {
+			kind: 'split',
+			axis: 'horizontal',
+			ratio: 0.63,
+			first: {
+				kind: 'split',
+				axis: 'vertical',
+				ratio: 0.7,
+				first: leaf(CHAT_PANEL_ID),
+				second: leaf('hidden-a')
+			},
+			second: {
+				kind: 'split',
+				axis: 'vertical',
+				ratio: 0.4,
+				first: leaf('hidden-b'),
+				second: {
+					kind: 'split',
+					axis: 'horizontal',
+					ratio: 0.35,
+					first: leaf('status'),
+					second: leaf('inventory')
+				}
+			}
+		};
+		const next = resizeWorkbenchSplit(original, [1], 0.8, [CHAT_PANEL_ID, 'status', 'inventory']);
+		expect(next).toMatchObject({
+			ratio: 0.63,
+			first: original.first,
+			second: { ratio: 0.4, first: leaf('hidden-b'), second: { ratio: 0.8 } }
+		});
+		const moved = dockWorkbenchPanel(next, 'inventory', CHAT_PANEL_ID, 'bottom');
+		expect(moved).toMatchObject({
+			ratio: 0.63,
+			first: { ratio: 0.7, second: leaf('hidden-a') },
+			second: { ratio: 0.4, first: leaf('hidden-b'), second: leaf('status') }
+		});
+		expect(panelIds(moved).sort()).toEqual(panelIds(original).sort());
+		expect(reconcileWorkbenchLayout(moved, ['status', 'inventory'])).toEqual({
+			kind: 'split',
+			axis: 'horizontal',
+			ratio: 0.63,
+			first: {
+				kind: 'split',
+				axis: 'vertical',
+				ratio: 0.5,
+				first: leaf(CHAT_PANEL_ID),
+				second: leaf('inventory')
+			},
+			second: leaf('status')
+		});
 	});
 	it('converts legacy creator defaults without fixing chat outside the movable tree', () => {
 		const ui = {

@@ -2,9 +2,10 @@
 	import { onMount, type Snippet } from 'svelte';
 	import Icon from '#lib/components/Icon.svelte';
 	import type { PanelInfo, PanelLayout, PanelView } from './runtime/model.js';
-	import { panelIds, removePanel } from './runtime/layout.js';
+	import { panelIds } from './runtime/layout.js';
 	import {
 		CHAT_PANEL_ID,
+		addWorkbenchPanels,
 		dockWorkbenchPanel,
 		loadWorkbenchPreferences,
 		reconcileWorkbenchLayout,
@@ -33,9 +34,15 @@
 	let hidden = $derived(preferences?.hidden ?? []);
 	let visiblePanels = $derived(panels.filter((panel) => !hidden.includes(panel.id)));
 	let metadata = $derived([{ id: CHAT_PANEL_ID, title: '채팅' }, ...visiblePanels]);
+	let template = $derived(
+		addWorkbenchPanels(
+			preferences?.tree ?? initialLayout ?? { kind: 'panel', id: CHAT_PANEL_ID },
+			panels.map((panel) => panel.id)
+		)
+	);
 	let tree = $derived(
 		reconcileWorkbenchLayout(
-			preferences?.tree ?? initialLayout ?? { kind: 'panel', id: CHAT_PANEL_ID },
+			template,
 			visiblePanels.map((panel) => panel.id)
 		)
 	);
@@ -125,26 +132,26 @@
 		scheduleMeasure();
 	}
 	function hide(id: string) {
-		if (id !== CHAT_PANEL_ID)
-			update(removePanel(tree, id) ?? { kind: 'panel', id: CHAT_PANEL_ID }, [
-				...new Set([...hidden, id])
-			]);
+		if (id !== CHAT_PANEL_ID) update(template, [...new Set([...hidden, id])]);
 	}
 	function reopen(id: string) {
-		const nextHidden = hidden.filter((item) => item !== id);
 		update(
-			reconcileWorkbenchLayout(
-				tree,
-				panels.filter((panel) => !nextHidden.includes(panel.id)).map((panel) => panel.id)
-			),
-			nextHidden
+			template,
+			hidden.filter((item) => item !== id)
 		);
 	}
 	function dock(id: string, target: string, edge: DockEdge) {
-		update(dockWorkbenchPanel(tree, id, target, edge));
+		update(dockWorkbenchPanel(template, id, target, edge));
 	}
 	function resize(path: number[], ratio: number, persist: boolean) {
-		update(resizeWorkbenchSplit(tree, path, ratio), hidden, persist);
+		update(
+			resizeWorkbenchSplit(template, path, ratio, [
+				CHAT_PANEL_ID,
+				...visiblePanels.map((panel) => panel.id)
+			]),
+			hidden,
+			persist
+		);
 	}
 	function reset(event: MouseEvent) {
 		(event.currentTarget as HTMLElement).closest('details')?.removeAttribute('open');

@@ -62,6 +62,16 @@ function leaf(id: string) {
 function rect(id: string) {
 	return leaf(id).getBoundingClientRect();
 }
+function panelGeometry(id: string) {
+	const bounds = rect(id);
+	const origin = leaf(id).closest('.panel-surface')!.getBoundingClientRect();
+	return {
+		left: bounds.left - origin.left,
+		top: bounds.top - origin.top,
+		width: bounds.width,
+		height: bounds.height
+	};
+}
 function options() {
 	return vi.mocked(mountGameUI).mock.calls.at(-1)![3]!;
 }
@@ -207,6 +217,78 @@ it('supports keyboard and pointer split resizing with a shield over the iframe',
 	await expect.poll(() => slider.getAttribute('aria-valuenow')).toBe('90');
 	slider.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 7 }));
 	expect(saved().tree.ratio).toBe(0.9);
+	expect(mountGameUI).toHaveBeenCalledTimes(1);
+	await screen.unmount();
+});
+it('restores minimized panels to their saved geometry and ratios after reopening and remounting', async () => {
+	let screen = mount();
+	await ready();
+	const chat = page.getByText('채팅 유지', { exact: true }).element();
+	const slider = document.querySelector<HTMLElement>(
+		'[role="slider"][aria-orientation="vertical"]'
+	)!;
+	slider.focus();
+	await userEvent.keyboard('{ArrowUp}');
+	await expect.poll(() => saved().tree.first.ratio).toBeCloseTo(0.68);
+	const original = saved().tree;
+	const { left, top, width, height } = panelGeometry('status');
+	await minimize('능력치');
+	expect(saved().tree).toEqual(original);
+	await expect.poll(() => leaf('status')).toBeNull();
+	await layoutMenu();
+	await page.getByRole('button', { name: '능력치 패널 열기' }).click();
+	await ready();
+	await expect.poll(() => panelGeometry('status').top).toBeCloseTo(top);
+	expect(panelGeometry('status').left).toBeCloseTo(left);
+	expect(panelGeometry('status').width).toBeCloseTo(width);
+	expect(panelGeometry('status').height).toBeCloseTo(height);
+	expect(saved().tree).toEqual(original);
+	expect(page.getByText('채팅 유지', { exact: true }).element()).toBe(chat);
+	await minimize('능력치');
+	await minimize('소지품');
+	expect(saved().tree).toEqual(original);
+	await screen.unmount();
+	screen = mount();
+	await expect.element(page.getByRole('region', { name: '채팅 패널', exact: true })).toBeVisible();
+	expect(leaf('inventory')).toBeNull();
+	expect(leaf('status')).toBeNull();
+	await layoutMenu();
+	await page.getByRole('button', { name: '소지품 패널 열기' }).click();
+	await expect
+		.element(page.getByRole('region', { name: '소지품 패널', exact: true }))
+		.toBeVisible();
+	await layoutMenu();
+	await page.getByRole('button', { name: '능력치 패널 열기' }).click();
+	await ready();
+	await expect.poll(() => panelGeometry('status').top).toBeCloseTo(top);
+	expect(panelGeometry('status').height).toBeCloseTo(height);
+	expect(saved().tree).toEqual(original);
+	expect(saved().hidden).toEqual([]);
+	await screen.unmount();
+});
+it('preserves hidden placement while resizing collapsed splits and docking other panels', async () => {
+	const screen = mount();
+	await ready();
+	await minimize('소지품');
+	const slider = document.querySelector<HTMLElement>(
+		'[role="slider"][aria-orientation="vertical"]'
+	)!;
+	slider.focus();
+	await userEvent.keyboard('{Home}');
+	expect(saved().tree.ratio).toBe(0.72);
+	expect(saved().tree.first.ratio).toBe(0.1);
+	await dock('능력치', CHAT_PANEL_ID, 'right');
+	expect(saved().tree).toMatchObject({
+		ratio: 0.72,
+		first: { axis: 'horizontal', first: { id: CHAT_PANEL_ID }, second: { id: 'status' } },
+		second: { id: 'inventory' }
+	});
+	await layoutMenu();
+	await page.getByRole('button', { name: '소지품 패널 열기' }).click();
+	await ready();
+	await expect.poll(() => rect('inventory').left > rect('status').right).toBe(true);
+	expect(rect('status').left).toBeGreaterThan(rect(CHAT_PANEL_ID).right);
+	expect(saved().tree.ratio).toBe(0.72);
 	expect(mountGameUI).toHaveBeenCalledTimes(1);
 	await screen.unmount();
 });
