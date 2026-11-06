@@ -1,7 +1,7 @@
 import { diffState } from '#lib/games/state/changes.js';
 import { parseAction, type Action } from '#lib/games/state/model.js';
 import { parseObjectSchema, validateState, type ObjectSchema } from '#lib/games/state/schema.js';
-import { parseGameState, type GameState } from '#lib/games/state/value.js';
+import { parseGameState, parseStateValue, type GameState } from '#lib/games/state/value.js';
 import { createWorkspace } from '#lib/games/state/workspace.js';
 import {
 	CreatorRuntimeError,
@@ -20,6 +20,7 @@ export interface Definition {
 }
 interface ActionDefinition extends Definition {
 	arguments: ObjectSchema;
+	ai: boolean;
 }
 interface FilterDefinition extends Definition {
 	priority: number;
@@ -30,7 +31,7 @@ interface HookDefinition extends Definition {
 	actions: string[] | null;
 	mode: 'included' | 'independent';
 }
-export type RuleKind = 'action' | 'filter' | 'hook';
+export type RuleKind = 'action' | 'query' | 'filter' | 'hook';
 export type RuleInvoker = (
 	kind: RuleKind,
 	definition: Definition,
@@ -41,7 +42,7 @@ function definitions(value: unknown) {
 	try {
 		const input = parseGameState(value);
 		function list(key: string): GameState[] {
-			const items = input[key];
+			const items = input[key] ?? (key === 'queries' ? [] : undefined);
 			if (!Array.isArray(items) || items.length > SANDBOX_LIMITS.ruleCount)
 				throw Error('definitions');
 			const rows = items.map(parseGameState);
@@ -82,7 +83,13 @@ function definitions(value: unknown) {
 		}
 		const actions: ActionDefinition[] = list('actions').map((item) => ({
 			...base(item),
-			arguments: parseObjectSchema(item.arguments)
+			arguments: parseObjectSchema(item.arguments),
+			ai: item.ai === true
+		}));
+		const queries: ActionDefinition[] = list('queries').map((item) => ({
+			...base(item),
+			arguments: parseObjectSchema(item.arguments),
+			ai: item.ai === true
 		}));
 		const filters = list('filters')
 			.map(filter)
@@ -93,7 +100,7 @@ function definitions(value: unknown) {
 				return { ...filter(item), mode: item.mode };
 			})
 			.sort((a, b) => a.priority - b.priority);
-		return { actions, filters, hooks };
+		return { actions, queries, filters, hooks };
 	} catch {
 		throw new CreatorRuntimeError('registration');
 	}
@@ -109,6 +116,29 @@ export function evaluateRules(
 	invoke: RuleInvoker
 ): ActionResult {
 	const registry = definitions(metadata);
+	if (input.operation?.kind === 'catalog')
+		return {
+			state: input.state,
+			tools: [
+				...registry.actions.filter((d) => d.ai).map((d) => ({ kind: 'action' as const, ...d })),
+				...registry.queries.filter((d) => d.ai).map((d) => ({ kind: 'query' as const, ...d }))
+			].map((d) => ({
+				kind: d.kind,
+				name: d.name,
+				description: d.description ?? d.name,
+				arguments: d.arguments
+			}))
+		};
+	if (input.operation?.kind === 'query') {
+		const query = registry.queries.find(
+			(d) => d.name === (input.operation?.kind === 'query' ? input.operation.name : '')
+		);
+		if (!query) throw new CreatorRuntimeError('action-not-found');
+		const args = validateState(query.arguments, input.operation.args, 'arguments');
+		const result = invoke('query', query, { state: input.state, args });
+		if (result.events.length) throw new CreatorRuntimeError('protocol');
+		return { state: input.state, value: parseStateValue(result.value) };
+	}
 	const workspace = createWorkspace(input.schema, input.state);
 	const events: UIEvent[] = [];
 	let steps = 0,
@@ -210,7 +240,7 @@ export function evaluateRules(
 			if (!rule) throw new CreatorRuntimeError('hook', null, input.operation.name);
 			description = rule.description;
 			for (const action of hook(rule, input.operation.trigger)) execute(action, 1);
-		} else if (input.operation?.kind === 'proposal') {
+		} else if (input.operation?.kind === 'proposal' || input.operation?.kind === 'validate') {
 			steps++;
 			const after = validateState(input.schema, input.operation.state, 'commit');
 			const definition = registry.actions.find((item) => item.name === input.action.name);
@@ -225,7 +255,8 @@ export function evaluateRules(
 			workspace.replace(after);
 			active.add(input.action.name);
 			try {
-				included({ before: input.state, after, action: input.action }, 0);
+				if (input.operation.kind !== 'validate')
+					included({ before: input.state, after, action: input.action }, 0);
 			} finally {
 				active.delete(input.action.name);
 			}

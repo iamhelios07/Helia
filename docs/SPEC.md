@@ -31,25 +31,27 @@ Prohibitions use MUST NOT. This specification does not use MAY NOT or IN ANY CAS
 
 # Core Concepts
 
-| Term         | Meaning                                                                                                  |
-| ------------ | -------------------------------------------------------------------------------------------------------- |
-| Creator      | A person who defines a game's content, rules, UI and behavior.                                           |
-| Player       | A person who installs and plays a game. A player MAY also edit an unlocked game.                         |
-| Game         | The creator-authored content and rules that define an independently playable experience.                 |
-| Game Package | A distributable file containing a game and the resources needed to install it.                           |
-| Installation | A locally identified copy of a game, created directly or imported from a package.                        |
-| Session      | An independent playthrough of one installed game, with its own state, history and branches.              |
-| Game State   | Structured, persistent facts about the game world, authoritative within a session.                       |
-| UI State     | Transient presentation state such as selected tabs, scroll positions and open dialogs.                   |
-| Action       | A creator-defined operation identified by its name and arguments, regardless of what invokes it.         |
-| Schema       | A declaration of permitted state structure and types.                                                    |
-| Filter       | Creator-defined logic that accepts or rejects a proposed transaction without correcting its data.        |
-| Hook         | Creator-defined logic that reacts to changes or events and performs follow-up work.                      |
-| Transaction  | An atomic unit that commits validated state changes and their associated record.                         |
-| Event        | A committed message or transaction that can participate in session history.                              |
-| Branch       | A continuation of session history sharing an earlier history with another continuation.                  |
-| Agent Loop   | One AI request that can include multiple tool calls and produces one atomic scope of game-state changes. |
-| Memory       | Derived narrative information grounded in conversation, game events or both.                             |
+| Term         | Meaning                                                                                                                      |
+| ------------ | ---------------------------------------------------------------------------------------------------------------------------- |
+| Creator      | A person who defines a game's content, rules, UI and behavior.                                                               |
+| Player       | A person who installs and plays a game. A player MAY also edit an unlocked game.                                             |
+| Game         | The creator-authored content and rules that define an independently playable experience.                                     |
+| Game Package | A distributable file containing a game and the resources needed to install it.                                               |
+| Installation | A locally identified copy of a game, created directly or imported from a package.                                            |
+| Session      | An independent playthrough of one installed game, with its own state, history and branches.                                  |
+| Game State   | Structured, persistent facts about the game world, authoritative within a session.                                           |
+| UI State     | Transient presentation state such as selected tabs, scroll positions and open dialogs.                                       |
+| Action       | A creator-defined operation identified by its name and arguments, regardless of what invokes it.                             |
+| Query        | A creator-defined read-only operation that returns data without changing state, creating transactions or emitting UI events. |
+| Tool         | A creator-authorized Action or Query exposed to the AI with a description and argument contract.                             |
+| Schema       | A declaration of permitted state structure and types.                                                                        |
+| Filter       | Creator-defined logic that accepts or rejects a proposed transaction without correcting its data.                            |
+| Hook         | Creator-defined logic that reacts to changes or events and performs follow-up work.                                          |
+| Transaction  | An atomic unit that commits validated state changes and their associated record.                                             |
+| Event        | A committed message or transaction that can participate in session history.                                                  |
+| Branch       | A continuation of session history sharing an earlier history with another continuation.                                      |
+| Agent Loop   | One AI request that can include multiple tool calls and produces one atomic scope of game-state changes.                     |
+| Memory       | Derived narrative information grounded in conversation, game events or both.                                                 |
 
 An original game identifier, an installation identifier and a content version MUST be treated as distinct concepts. Sessions of the same game MUST have independent progress; shared game content MUST NOT imply shared session state.
 
@@ -244,13 +246,23 @@ function deleteEvent(history, event):
 - Players MUST supply their own API credentials and choose the provider and model from supported integrations.
 - Helia MUST leave model selection to the player rather than granting a creator the ability to force a particular model.
 - The creator's prompt MUST determine the AI's role, including whether it acts as a game master, one character or multiple characters.
-- Prompt authoring SHOULD follow the RisuAI-style prompt management model. The exact supported slots, ordering rules, lorebook behavior and variables remain open.
+- Prompt authoring SHOULD follow the RisuAI-style prompt management model, including ordered blocks, block types, special types and roles. The initial integration excludes CBS execution; exact compatibility and remaining authoring features MUST be documented.
+- Prompt presets MUST be player-owned, application-wide settings managed through Settings → Prompts. Presets and their active selection MUST NOT be saved in game definitions, game content snapshots, history or distributable game packages.
+- Game-specific instructions and lorebook content MUST remain creator-owned game content. Each AI invocation MUST assemble that content using the selected player preset captured at invocation start; preset changes MUST apply to the next invocation, including existing sessions.
 - Helia MUST support repeated tool calls and follow-up model responses within one agent loop.
-- For models without native tool calling, Helia SHOULD support a structured text/JSON fallback. The supported model capabilities and fallback contract remain open.
+- The initial integration MUST support OpenAI-compatible Chat Completions, OpenAI Responses, Anthropic Messages, Google generation and Google Interactions API formats. Tool calling MUST use the provider's native contract; a structured text/JSON tool-call fallback is outside the initial integration.
+- Creators MUST explicitly choose which Actions and Queries are exposed as AI tools. Queries MUST NOT modify Game State, create Transactions or emit UI events.
 - AI state writes MUST be restricted to creator-authorized tools by default.
 - A creator MAY enable broader state-writing tools, but those tools MUST NOT bypass Schema, Filter or Transaction requirements.
 - The AI MUST be able to retrieve permitted state details through tools.
 - Committed game changes MUST be represented in AI context using transaction information. A current-state summary MUST appear at the bottom of the assembled game context.
+
+## API Credential Storage
+
+- Desktop builds MUST persist API credentials in the operating system's credential store, accessed through the trusted Tauri host.
+- Node.js builds MUST encrypt API credentials before storing them in SQLite. The host MUST automatically generate a cryptographically random master key and persist it in a separate file with access restricted to the server's operating-system account. Users MUST NOT need to provision an external secret manager or enter a master password for the initial implementation.
+- The Node.js host MUST reuse the stored master key across restarts. If existing credentials cannot be decrypted because the master key is missing, inaccessible or invalid, Helia MUST report the failure rather than silently replace the key or overwrite the credentials. Users MAY recover by explicitly replacing the affected credentials.
+- Credential-store failures MUST NOT cause a silent fallback to plaintext storage. API credentials and the master key MUST remain outside creator code, game state, content snapshots, logs, diagnostics, and game or play-data exports.
 
 ## Atomic Agent Loop
 
@@ -483,7 +495,7 @@ The following items require product decisions. They are not permissions to bypas
 | Content changes         | Timing of an explicit apply request while an AI response or other game operation is in progress; preservation or reset of test sessions. |
 | State evolution         | Whether existing event records are transformed or preserved with a compatibility mechanism.                                              |
 | Hooks                   | Execution order, independent transactions, error propagation, re-entry and visible execution limits.                                     |
-| AI execution            | Provider capability requirements and the structured text/JSON fallback contract.                                                         |
+| AI execution            | Additional model capabilities and any later structured text/JSON tool-call fallback contract.                                            |
 | Prompts and memory      | Supported RisuAI-style authoring features; the exact HypaV3 behavior being retained; retrieval and branch-spanning summary rules.        |
 | Workbench               | Chat placement, panel restoration when available panels change, and layout behavior under space constraints.                             |
 | Authoring               | External-bundle source management, preview/test reset behavior and advanced debugging facilities.                                        |

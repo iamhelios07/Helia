@@ -48,6 +48,11 @@ import {
 import { executeSessionWork, type ExecutionReport } from '#lib/games/scripting/execution.js';
 import { createSessionEvents } from '#lib/games/scripting/events.js';
 import { parseGameUI } from './ui/runtime/model.js';
+import { parseGameAIContent } from './ai/prompts.js';
+import { isSessionBusy } from './ai/activity.js';
+import { aiError } from './ai/protocol.js';
+import type { AgentWorkspaceResult } from './ai/loop.js';
+import type { RuleTrigger } from './scripting/protocol.js';
 
 function makeSession(gameId: string): Session {
 	const now = new Date().toISOString();
@@ -139,7 +144,8 @@ function initialize(unit: StorageUnit, gameId: string, sessionId: string) {
 			initialState: game.initialState,
 			schema: game.schema,
 			scripts: game.scripts,
-			...(game.ui ? { ui: game.ui } : {})
+			...(game.ui ? { ui: game.ui } : {}),
+			...(game.ai ? { ai: game.ai } : {})
 		});
 		const progress = createSessionState(snapshot, session.id);
 		unit.put('snapshots', snapshot, session.id);
@@ -183,12 +189,57 @@ function visibleMessages(context: Context): Message[] {
 /** Shared application operations; the host owns the short SQL transactions. */
 export function createGameRepository(
 	rawTransport: StorageTransport,
-	options: { validateTransaction?: TransactionValidator; runAction?: ActionRunner } = {}
+	options: {
+		validateTransaction?: TransactionValidator;
+		runAction?: ActionRunner;
+		requestAI?: (
+			gameId: string,
+			sessionId: string,
+			input: { text: string; visible: boolean }
+		) => void;
+	} = {}
 ) {
 	const uiEvents = createSessionEvents();
+	function publish(
+		gameId: string,
+		sessionId: string,
+		transactionId: string,
+		events: import('./scripting/protocol.js').UIEvent[]
+	) {
+		const failures = uiEvents.publish(gameId, sessionId, transactionId, events);
+		for (const event of events)
+			if (
+				event.name === '$helia.ai' &&
+				typeof event.payload.text === 'string' &&
+				!isSessionBusy(gameId, sessionId)
+			) {
+				const input = { text: event.payload.text, visible: event.payload.visible === true };
+				queueMicrotask(() => {
+					try {
+						options.requestAI?.(gameId, sessionId, input);
+					} catch {
+						/* Post-commit invocation cannot undo its originating transaction. */
+					}
+				});
+			}
+		return failures;
+	}
 	const changeListeners = new Map<string, Set<() => void>>();
 	const changeKey = (gameId: string, sessionId: string) => JSON.stringify([gameId, sessionId]);
 	const transport: StorageTransport = async (request) => {
+		if (
+			request.kind === 'commit' &&
+			!request.aiLease &&
+			[
+				...request.records
+					.filter((row) => ['progress', 'messages', 'transactions'].includes(row.table))
+					.map((row) => row.sessionId),
+				...request.deleteSessions
+			].some((id) => id && isSessionBusy(request.gameId, id))
+		)
+			throw aiError('busy');
+		if (request.kind === 'prune' && isSessionBusy(request.gameId, request.sessionId))
+			throw aiError('busy');
 		const reply = await rawTransport(request);
 		if (request.kind === 'commit' || request.kind === 'prune' || request.kind === 'create') {
 			const sessionIds =
@@ -217,9 +268,18 @@ export function createGameRepository(
 	function withHistory<T>(
 		gameId: string,
 		sessionId: string,
-		operation: (unit: StorageUnit, context: Context) => T
+		operation: (unit: StorageUnit, context: Context) => T,
+		runOptions: RunOptions = {}
 	) {
-		return useStorage(transport, gameId, sessionId, (unit) =>
+		const scoped: StorageTransport = (command) => {
+			if (runOptions.signal?.aborted) throw aiError('canceled');
+			return transport(
+				command.kind === 'commit' && runOptions.lease
+					? { ...command, aiLease: runOptions.lease }
+					: command
+			);
+		};
+		return useStorage(scoped, gameId, sessionId, (unit) =>
 			operation(unit, initialize(unit, gameId, sessionId))
 		);
 	}
@@ -297,20 +357,24 @@ export function createGameRepository(
 				run: options.runAction,
 				read: () => withHistory(gameId, sessionId, (_unit, next) => next.history),
 				commit: (proposal, snapshotId) =>
-					withHistory(gameId, sessionId, (unit, next) => {
-						if (runOptions.signal?.aborted) throw new CreatorRuntimeError('canceled');
-						if (
-							next.history.progress.revision !== proposal.expectedRevision ||
-							next.history.snapshot.id !== snapshotId
-						)
-							throw new CreatorRuntimeError('conflict');
-						const saved = commit(unit, next, proposal);
-						session = saved.session;
-						if (saved.message) message = saved.message;
-						return saved.history;
-					}),
-				publish: (transactionId, events) =>
-					uiEvents.publish(gameId, sessionId, transactionId, events)
+					withHistory(
+						gameId,
+						sessionId,
+						(unit, next) => {
+							if (runOptions.signal?.aborted) throw new CreatorRuntimeError('canceled');
+							if (
+								next.history.progress.revision !== proposal.expectedRevision ||
+								next.history.snapshot.id !== snapshotId
+							)
+								throw new CreatorRuntimeError('conflict');
+							const saved = commit(unit, next, proposal);
+							session = saved.session;
+							if (saved.message) message = saved.message;
+							return saved.history;
+						},
+						runOptions
+					),
+				publish: (transactionId, events) => publish(gameId, sessionId, transactionId, events)
 			},
 			runOptions
 		);
@@ -326,6 +390,88 @@ export function createGameRepository(
 		return getTimeline(gameId, sessionId);
 	}
 	return {
+		async commitSessionAgent(
+			gameId: string,
+			sessionId: string,
+			input: {
+				expectedRevision: number;
+				snapshotId: string;
+				input: string;
+				visible: boolean;
+				result: AgentWorkspaceResult;
+			},
+			runOptions: RunOptions = {}
+		) {
+			const saved = await withHistory(
+				gameId,
+				sessionId,
+				(unit, context) => {
+					if (runOptions.signal?.aborted) throw aiError('canceled');
+					assertRevision(context.history.progress, input.expectedRevision);
+					if (context.history.snapshot.id !== input.snapshotId)
+						throw new CreatorRuntimeError('conflict');
+					let current = context;
+					if (input.visible) {
+						const user = commit(unit, current, {
+							expectedRevision: current.history.progress.revision,
+							parentId: current.history.progress.headId,
+							nextState: current.history.progress.state,
+							action: { name: 'sendMessage', args: { content: input.input } },
+							message: { role: 'user', content: input.input }
+						});
+						current = {
+							...current,
+							history: user.history,
+							session: user.session,
+							messages: [...current.messages, user.message!]
+						};
+					}
+					const assistant = commit(unit, current, {
+						expectedRevision: current.history.progress.revision,
+						parentId: current.history.progress.headId,
+						nextState: input.result.state,
+						action: { name: '$helia.ai', args: { input: input.input } },
+						description: 'AI 응답',
+						message: { role: 'assistant', content: input.result.text }
+					});
+					const completed = {
+						...current,
+						history: assistant.history,
+						session: assistant.session,
+						messages: [...current.messages, assistant.message!]
+					};
+					return {
+						session: completed.session,
+						history: completed.history,
+						events: historyEvents(completed.history, completed.messages),
+						messages: visibleMessages(completed),
+						memories: activeMemories(completed.history, unit.all('memories').map(parseMemory))
+					};
+				},
+				runOptions
+			);
+			publish(gameId, sessionId, saved.history.progress.headId!, input.result.events);
+			return saved;
+		},
+		async executeSessionAgentHook(
+			gameId: string,
+			sessionId: string,
+			name: string,
+			trigger: RuleTrigger,
+			runOptions: RunOptions = {}
+		) {
+			const context = await withHistory(gameId, sessionId, (_unit, context) => context);
+			return executeWork(
+				context,
+				{
+					expectedRevision: context.history.progress.revision,
+					parentId: context.history.progress.headId,
+					action: { name: `hook:${name}`, args: {} },
+					operation: { kind: 'hook', name, trigger }
+				},
+				runOptions
+			);
+		},
 		subscribeSessionChanges(gameId: string, sessionId: string, listener: () => void) {
 			identifier(gameId);
 			identifier(sessionId);
@@ -406,7 +552,7 @@ export function createGameRepository(
 		},
 		updateGameRules(
 			gameId: string,
-			input: Pick<Game, 'schema' | 'initialState' | 'scripts' | 'ui'>
+			input: Pick<Game, 'schema' | 'initialState' | 'scripts' | 'ui' | 'ai'>
 		) {
 			const { schema, initialState } = parseStateDocument({
 				schema: input.schema,
@@ -414,6 +560,7 @@ export function createGameRepository(
 			});
 			const scripts = parseScripts(input.scripts);
 			const ui = input.ui === undefined ? undefined : parseGameUI(input.ui);
+			const ai = input.ai === undefined ? undefined : parseGameAIContent(input.ai);
 			return withGame(gameId, (unit) => {
 				const game = {
 					...gameIn(unit, gameId),
@@ -421,6 +568,7 @@ export function createGameRepository(
 					schema,
 					scripts,
 					...(ui ? { ui } : {}),
+					...(ai ? { ai } : {}),
 					updatedAt: new Date().toISOString()
 				};
 				unit.put('games', game);

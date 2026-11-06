@@ -6,6 +6,7 @@ import { dirname, resolve } from 'node:path';
 import migration from '#lib/storage/migrations/0000_initial.sql?raw';
 import { validateStoredHistory } from '#lib/storage/validate-history.js';
 import { pruneRecords } from '#lib/storage/prune.js';
+import { hostAILeases } from '#lib/games/ai/leases.js';
 import {
 	CONFLICT,
 	parseRequest,
@@ -106,6 +107,7 @@ export function openStorage(filename: string) {
 
 	function request(input: unknown): StorageReply {
 		const command = parseRequest(input);
+		hostAILeases.guard(command);
 		return db.transaction(
 			() => {
 				if (command.kind === 'prune') {

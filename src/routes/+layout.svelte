@@ -1,7 +1,9 @@
 <script lang="ts">
 	import '../app.css';
+	import { tick } from 'svelte';
 	import favicon from '#lib/assets/helia.svg';
 	import AppSidebar from '#lib/app/AppSidebar.svelte';
+	import SettingsDialog from '#lib/app/settings/SettingsDialog.svelte';
 	import { AppSidebarController, provideAppSidebar } from '#lib/app/sidebar.svelte.js';
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
@@ -10,6 +12,24 @@
 	let { children, params }: LayoutProps = $props();
 	const sidebar = provideAppSidebar(new AppSidebarController());
 	let options = $derived(sidebar.options);
+	let settingsOpen = $state(false);
+	let settingsOpener: HTMLElement | null = null;
+
+	function openSettings() {
+		if (settingsOpen) return;
+		settingsOpener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+		settingsOpen = true;
+	}
+
+	async function closeSettings() {
+		if (!settingsOpen) return;
+		const opener = settingsOpener;
+		settingsOpener = null;
+		settingsOpen = false;
+		await tick();
+		if (!settingsOpen && opener?.isConnected) opener.focus();
+	}
+
 	function goHome() {
 		void goto(resolve('/'));
 	}
@@ -27,11 +47,16 @@
 		onhome={options?.onhome ?? goHome}
 		onadd={options?.onadd ?? goHome}
 		onselect={options?.onselect ?? goHome}
+		onsettings={openSettings}
 	/>
 </div>
 <div class={['app-content', { 'sidebar-hidden': !sidebar.visible }]}>
 	{@render children()}
 </div>
+
+{#if settingsOpen}
+	<SettingsDialog onclose={closeSettings} />
+{/if}
 
 <style>
 	.app-content {

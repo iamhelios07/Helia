@@ -77,6 +77,27 @@ async function branchedHistory() {
 }
 
 describe('SQLite game repository', () => {
+	it('persists only game-owned AI context, stripping embedded legacy player presets from game and snapshot writes', async () => {
+		const game = await repository.createGame();
+		const ai = {
+			version: 1 as const,
+			lorebook: [{ keys: [], content: 'Creator lore', always: true }],
+			mainPrompt: 'Private player preset',
+			promptTemplate: [{ type: 'plain', text: 'Private player block' }],
+			maxTokens: 900
+		};
+		await repository.updateGameRules(game.id, {
+			schema: { type: 'object', properties: {}, additionalProperties: false },
+			initialState: {},
+			scripts: {},
+			ai
+		});
+		const timeline = await repository.getSessionTimeline(game.id, game.activeSessionId);
+		expect(timeline.history.snapshot.ai?.lorebook[0].content).toBe('Creator lore');
+		const dump = await transport({ kind: 'read', gameId: game.id });
+		expect(JSON.stringify(dump)).not.toContain('Private player');
+		expect(JSON.stringify(dump)).not.toContain('maxTokens');
+	});
 	it.each(['B', 'E'])(
 		'deletes the entire %s subtree and restores the nearest surviving ancestor after reopening',
 		async (target) => {

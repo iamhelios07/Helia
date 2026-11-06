@@ -15,9 +15,12 @@ import {
 	updateGameSettings,
 	renameSession,
 	deleteSession,
-	getSessionConversation,
-	appendUserMessage
+	getSessionConversation
 } from '../games/repository.js';
+import { invokeSessionAI } from '../games/ai/browser.js';
+import type { SessionTimeline } from '../games/state/history.js';
+import { saveAISettings } from '../app/settings/repository.js';
+import { beginSessionActivity, publishSessionAIEvent } from '../games/ai/activity.js';
 import type { Message, Game, Session, SessionConversation } from '../games/model.js';
 import { loadSettingsDraft, storeSettingsDraft } from '../games/settings-draft.js';
 import {
@@ -26,6 +29,7 @@ import {
 } from '../app/preferences/sidebar.js';
 
 vi.mock('$app/navigation', () => ({ goto: vi.fn() }));
+vi.mock('../games/ai/browser.js', () => ({ invokeSessionAI: vi.fn() }));
 vi.mock('../games/repository.js', () => ({
 	listGames: vi.fn(),
 	createGame: vi.fn(),
@@ -39,8 +43,7 @@ vi.mock('../games/repository.js', () => ({
 	getSessionTimeline: vi.fn(),
 	selectSessionBranch: vi.fn(),
 	deleteSessionEvent: vi.fn(),
-	subscribeSessionChanges: vi.fn(() => () => {}),
-	appendUserMessage: vi.fn()
+	subscribeSessionChanges: vi.fn(() => () => {})
 }));
 
 const game: Game = {
@@ -71,6 +74,28 @@ const session: Session = {
 };
 const otherSession: Session = { ...session, id: 'session-two', title: '두 번째 세션' };
 
+function committedTimeline(messages: Message[], currentSession = session): SessionTimeline {
+	return {
+		session: currentSession,
+		messages,
+		events: [],
+		memories: [],
+		history: {
+			snapshot: { ...game, schemaVersion: 1, gameId: game.id },
+			progress: {
+				schemaVersion: 2,
+				sessionId: currentSession.id,
+				gameId: game.id,
+				snapshotId: game.id,
+				headId: null,
+				revision: 0,
+				state: {}
+			},
+			transactions: []
+		}
+	};
+}
+
 function render(component: typeof Home | typeof GameWorkspace, props?: { gameId: string }) {
 	return renderSvelte(AppFixture, {
 		view: component === Home ? 'home' : 'game',
@@ -98,6 +123,14 @@ function chatMessage(
 beforeEach(async () => {
 	vi.resetAllMocks();
 	localStorage.clear();
+	saveAISettings({
+		version: 1,
+		providers: [
+			{ id: 'provider', name: 'API', kind: 'openai-compatible', baseUrl: 'https://example.com/v1' }
+		],
+		models: [{ id: 'model', name: 'Test model', providerId: 'provider', modelId: 'test' }],
+		defaultModelId: 'model'
+	});
 	localStorage.removeItem(SIDEBAR_WIDTH_STORAGE_KEY);
 	localStorage.removeItem(SIDEBAR_COLLAPSED_STORAGE_KEY);
 	await page.viewport(1200, 800);
@@ -138,6 +171,228 @@ const resizer = () => page.getByRole('slider', { name: '사이드바 너비 조�
 const measuredWidth = () => sidebar().element().getBoundingClientRect().width;
 
 describe('session chat', () => {
+	it('shows script-triggered AI readiness failures even when no game panel is mounted', async () => {
+		render(GameWorkspace, { gameId: game.id });
+		await expect.element(page.getByRole('log')).toBeVisible();
+		await page.getByRole('textbox', { name: '메시지', exact: true }).fill('유지할 초안');
+		publishSessionAIEvent(game.id, session.id, {
+			type: 'error',
+			message: 'API 키를 등록해주세요.'
+		});
+		await expect.element(page.getByRole('alert')).toHaveTextContent('API 키를 등록해주세요.');
+		await expect
+			.element(page.getByRole('complementary', { name: 'AI 생성 진행' }))
+			.toHaveTextContent('생성 중단 · 저장되지 않은 응답');
+		await expect
+			.element(page.getByRole('textbox', { name: '메시지', exact: true }))
+			.toHaveValue('유지할 초안');
+		expect(invokeSessionAI).not.toHaveBeenCalled();
+	});
+
+	it('shows custom UI AI streams and marks external attempts incomplete when they end without a commit', async () => {
+		render(GameWorkspace, { gameId: game.id });
+		await expect.element(page.getByRole('log')).toBeVisible();
+		await page.getByRole('textbox', { name: '메시지', exact: true }).fill('유지할 초안');
+		const finish = beginSessionActivity(game.id, session.id);
+		try {
+			publishSessionAIEvent(game.id, session.id, { type: 'status', status: 'generating' });
+			publishSessionAIEvent(game.id, session.id, { type: 'text', text: '패널에서 시작한 응답' });
+			publishSessionAIEvent(game.id, session.id, { type: 'thinking', text: '패널 요청 처리 중' });
+			publishSessionAIEvent(game.id, session.id, {
+				type: 'tool',
+				name: 'readRoom',
+				status: 'running'
+			});
+			await expect
+				.element(page.getByLabelText('저장 전 AI 응답'))
+				.toHaveTextContent('패널에서 시작한 응답');
+			const progress = page.getByRole('complementary', { name: 'AI 생성 진행' });
+			expect(progress.element().querySelector('details')?.open).toBe(false);
+		} finally {
+			finish();
+		}
+		await expect
+			.element(page.getByRole('complementary', { name: 'AI 생성 진행' }))
+			.toHaveTextContent('생성 중단 · 저장되지 않은 응답');
+		await page.getByText('도구 진행 · 1개', { exact: true }).click();
+		await expect
+			.element(page.getByRole('list', { name: '도구 진행' }))
+			.toHaveTextContent('readRoom · 실패');
+		await expect
+			.element(page.getByRole('textbox', { name: '메시지', exact: true }))
+			.toHaveValue('유지할 초안');
+		expect(invokeSessionAI).not.toHaveBeenCalled();
+	});
+
+	it('blocks chat and session changes while a custom UI AI request is active', async () => {
+		vi.mocked(getGameWorkspace).mockResolvedValue({ game, sessions: [session, otherSession] });
+		render(GameWorkspace, { gameId: game.id });
+		await expect.element(page.getByRole('log')).toBeVisible();
+		await page.getByRole('textbox', { name: '메시지', exact: true }).fill('보존할 초안');
+		const finish = beginSessionActivity(game.id, session.id);
+		try {
+			await expect.element(page.getByRole('button', { name: '메시지 전송' })).toBeDisabled();
+			await expect
+				.element(page.getByRole('button', { name: '새 세션', exact: true }))
+				.toBeDisabled();
+			await expect.element(page.getByRole('button', { name: '두 번째 세션 열기' })).toBeDisabled();
+		} finally {
+			finish();
+		}
+		await expect.element(page.getByRole('button', { name: '새 세션', exact: true })).toBeEnabled();
+		await expect.element(page.getByRole('button', { name: '메시지 전송' })).toBeEnabled();
+		await expect
+			.element(page.getByRole('textbox', { name: '메시지', exact: true }))
+			.toHaveValue('보존할 초안');
+	});
+
+	it('uses the model selected by the player for the next explicit AI request', async () => {
+		saveAISettings({
+			version: 1,
+			providers: [
+				{
+					id: 'provider',
+					name: 'API',
+					kind: 'openai-compatible',
+					baseUrl: 'https://example.com/v1'
+				}
+			],
+			models: [
+				{ id: 'model', name: 'Test model', providerId: 'provider', modelId: 'test' },
+				{ id: 'other-model', name: 'Other model', providerId: 'provider', modelId: 'other' }
+			],
+			defaultModelId: 'model'
+		});
+		vi.mocked(invokeSessionAI).mockResolvedValue(committedTimeline([chatMessage('시작')]));
+		render(GameWorkspace, { gameId: game.id });
+		await expect.element(page.getByRole('log')).toBeVisible();
+		await page.getByRole('combobox', { name: '모델', exact: true }).selectOptions('other-model');
+		await page.getByRole('textbox', { name: '메시지', exact: true }).fill('시작');
+		await page.getByRole('button', { name: '메시지 전송' }).click();
+		expect(invokeSessionAI).toHaveBeenCalledWith(
+			game.id,
+			session.id,
+			{ text: '시작', modelId: 'other-model' },
+			expect.any(Object)
+		);
+	});
+
+	it('streams an uncommitted response, hides thinking and tool progress, then displays the committed answer', async () => {
+		let finish!: (value: SessionTimeline) => void;
+		let onEvent!: NonNullable<NonNullable<Parameters<typeof invokeSessionAI>[3]>['onEvent']>;
+		vi.mocked(invokeSessionAI).mockImplementation((_game, _session, _input, options) => {
+			onEvent = options!.onEvent!;
+			return new Promise((resolve) => (finish = resolve));
+		});
+		render(GameWorkspace, { gameId: game.id });
+		await expect.element(page.getByRole('log')).toBeVisible();
+		await page.getByRole('textbox', { name: '메시지', exact: true }).fill('문을 연다.');
+		await page.getByRole('button', { name: '메시지 전송' }).click();
+		onEvent({ type: 'thinking', text: '숨겨진 생각' });
+		onEvent({ type: 'text', text: '도구 호출 전 임시 텍스트' });
+		onEvent({ type: 'reset' });
+		onEvent({ type: 'progress', text: '도구 호출 전 임시 텍스트' });
+		onEvent({ type: 'tool', name: 'getInventory', status: 'running' });
+		onEvent({ type: 'text', text: '<img src=x> 낡은 문이' });
+		onEvent({ type: 'text', text: ' 열린다.' });
+		await expect
+			.element(page.getByLabelText('저장 전 AI 응답'))
+			.toHaveTextContent('<img src=x> 낡은 문이 열린다.');
+		expect(page.getByRole('log').element().querySelectorAll('article')).toHaveLength(0);
+		const progress = page.getByRole('complementary', { name: 'AI 생성 진행' });
+		expect(progress.element().querySelector('img')).toBeNull();
+		expect(
+			Array.from(progress.element().querySelectorAll('details')).every((detail) => !detail.open)
+		).toBe(true);
+		await progress.getByText('중간 응답', { exact: true }).click();
+		await expect
+			.element(progress.getByLabelText('중간 응답 내용'))
+			.toHaveTextContent('도구 호출 전 임시 텍스트');
+		const thinkingDetails = Array.from(progress.element().querySelectorAll('details')).find(
+			(details) => details.querySelector('summary')?.textContent === 'Thinking'
+		);
+		expect(thinkingDetails?.textContent).toContain('숨겨진 생각');
+		expect(thinkingDetails?.textContent).not.toContain('도구 호출 전 임시 텍스트');
+		await progress.getByText('도구 진행 · 1개', { exact: true }).click();
+		await expect.element(progress.getByRole('list')).toHaveTextContent('getInventory · 실행 중');
+		onEvent({ type: 'tool', name: 'getInventory', status: 'completed' });
+		await expect.element(progress.getByRole('list')).toHaveTextContent('getInventory · 완료');
+		finish(
+			committedTimeline([chatMessage('문을 연다.'), chatMessage('낡은 문이 열린다.', 'assistant')])
+		);
+		await expect
+			.element(page.getByRole('article', { name: '게임 메시지' }))
+			.toHaveTextContent('낡은 문이 열린다.');
+		await expect.element(progress.getByRole('status')).toHaveTextContent('응답 저장 완료');
+		await progress.getByText('Thinking', { exact: true }).click();
+		await expect.element(progress.getByText('숨겨진 생각', { exact: true })).toBeVisible();
+		await expect
+			.element(progress.getByLabelText('중간 응답 내용'))
+			.toHaveTextContent('도구 호출 전 임시 텍스트');
+		await expect.element(progress.getByRole('list')).toHaveTextContent('getInventory · 완료');
+		expect(page.getByLabelText('저장 전 AI 응답').query()).toBeNull();
+		await expect
+			.element(page.getByRole('textbox', { name: '메시지', exact: true }))
+			.toHaveValue('');
+	});
+
+	it('cancels generation without clearing the draft or treating partial text as a committed answer', async () => {
+		vi.mocked(invokeSessionAI).mockImplementation((_game, _session, _input, options) => {
+			options?.onEvent?.({ type: 'text', text: '미완성 응답' });
+			return new Promise((_resolve, reject) =>
+				options?.signal?.addEventListener(
+					'abort',
+					() => reject(new DOMException('Aborted', 'AbortError')),
+					{ once: true }
+				)
+			);
+		});
+		render(GameWorkspace, { gameId: game.id });
+		await expect.element(page.getByRole('log')).toBeVisible();
+		const input = page.getByRole('textbox', { name: '메시지', exact: true });
+		await input.fill('  보존할 행동\n');
+		await page.getByRole('button', { name: '메시지 전송' }).click();
+		await page.getByRole('button', { name: '생성 중지' }).click();
+		await expect.element(page.getByRole('alert')).toHaveTextContent('생성을 취소했어요');
+		await expect.element(input).toHaveValue('  보존할 행동\n');
+		await expect
+			.element(page.getByRole('complementary', { name: 'AI 생성 진행' }))
+			.toHaveTextContent('생성 취소됨 · 저장되지 않은 응답');
+		expect(page.getByRole('log').element().querySelectorAll('article')).toHaveLength(0);
+		await expect.element(page.getByRole('button', { name: '새 세션', exact: true })).toBeEnabled();
+	});
+
+	it('aborts its in-flight AI request when the session view unmounts', async () => {
+		let signal: AbortSignal | undefined;
+		vi.mocked(invokeSessionAI).mockImplementation((_game, _session, _input, options) => {
+			signal = options?.signal;
+			return new Promise((_resolve, reject) =>
+				signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), {
+					once: true
+				})
+			);
+		});
+		const screen = render(GameWorkspace, { gameId: game.id });
+		await expect.element(page.getByRole('log')).toBeVisible();
+		await page.getByRole('textbox', { name: '메시지', exact: true }).fill('시작');
+		await page.getByRole('button', { name: '메시지 전송' }).click();
+		expect(signal?.aborted).toBe(false);
+		await screen.unmount();
+		expect(signal?.aborted).toBe(true);
+	});
+
+	it('explains missing models and does not generate until one is registered', async () => {
+		localStorage.removeItem('helia:ai-settings');
+		render(GameWorkspace, { gameId: game.id });
+		await expect.element(page.getByRole('log')).toBeVisible();
+		await page.getByRole('textbox', { name: '메시지', exact: true }).fill('기다리는 행동');
+		await expect.element(page.getByRole('button', { name: '메시지 전송' })).toBeDisabled();
+		await expect
+			.element(page.getByText('앱 설정에서 API 연결과 모델을 등록해주세요.'))
+			.toBeVisible();
+		expect(invokeSessionAI).not.toHaveBeenCalled();
+	});
+
 	it('shows an authored opening before existing messages after autosave without losing the draft', async () => {
 		const existing = chatMessage('이미 진행한 행동');
 		const opening = chatMessage('  새로 설정한 첫 장면\n', 'assistant');
@@ -166,10 +421,10 @@ describe('session chat', () => {
 	});
 
 	it('waits for an in-flight send before refreshing an authored opening', async () => {
-		let finish!: (value: Awaited<ReturnType<typeof appendUserMessage>>) => void;
+		let finish!: (value: Awaited<ReturnType<typeof invokeSessionAI>>) => void;
 		const sent = chatMessage('전송하는 행동');
 		const opening = chatMessage('첫 장면', 'assistant');
-		vi.mocked(appendUserMessage).mockReturnValue(new Promise((resolve) => (finish = resolve)));
+		vi.mocked(invokeSessionAI).mockReturnValue(new Promise((resolve) => (finish = resolve)));
 		vi.mocked(getSessionConversation)
 			.mockResolvedValueOnce({ session: { ...session, messageCount: 0 }, messages: [] })
 			.mockResolvedValue({
@@ -184,7 +439,7 @@ describe('session chat', () => {
 		await page.getByRole('textbox', { name: '첫 메시지', exact: true }).fill(opening.content);
 		await expect.poll(() => vi.mocked(updateGameSettings).mock.calls.length).toBe(1);
 		expect(getSessionConversation).toHaveBeenCalledTimes(1);
-		finish({ session: { ...session, messageCount: 1 }, message: sent });
+		finish(committedTimeline([sent], { ...session, messageCount: 1 }));
 		await expect.element(page.getByRole('article', { name: '게임 메시지' })).toBeVisible();
 		await expect
 			.element(page.getByRole('textbox', { name: '메시지', exact: true }))
@@ -209,12 +464,12 @@ describe('session chat', () => {
 		await expect.element(page.getByRole('button', { name: '메시지 전송' })).toBeDisabled();
 		await page.getByRole('textbox', { name: '메시지', exact: true }).fill(' \n ');
 		await expect.element(page.getByRole('button', { name: '메시지 전송' })).toBeDisabled();
-		expect(appendUserMessage).not.toHaveBeenCalled();
+		expect(invokeSessionAI).not.toHaveBeenCalled();
 	});
 
 	it('waits for a committed send before clearing input and does not invent an AI reply', async () => {
-		let finish!: (value: Awaited<ReturnType<typeof appendUserMessage>>) => void;
-		vi.mocked(appendUserMessage).mockReturnValue(new Promise((resolve) => (finish = resolve)));
+		let finish!: (value: Awaited<ReturnType<typeof invokeSessionAI>>) => void;
+		vi.mocked(invokeSessionAI).mockReturnValue(new Promise((resolve) => (finish = resolve)));
 		render(GameWorkspace, { gameId: game.id });
 		const input = page.getByRole('textbox', { name: '메시지', exact: true });
 		await expect.element(input).toBeVisible();
@@ -226,9 +481,14 @@ describe('session chat', () => {
 		await expect.element(input).toHaveAttribute('readonly');
 		await expect.element(page.getByRole('button', { name: '메시지 전송' })).toBeDisabled();
 		await expect.element(page.getByRole('button', { name: '새 세션', exact: true })).toBeDisabled();
-		expect(appendUserMessage).toHaveBeenCalledExactlyOnceWith(game.id, session.id, content);
+		expect(invokeSessionAI).toHaveBeenCalledExactlyOnceWith(
+			game.id,
+			session.id,
+			{ text: content, modelId: 'model' },
+			expect.objectContaining({ signal: expect.any(AbortSignal), onEvent: expect.any(Function) })
+		);
 		expect(page.getByRole('article').query()).toBeNull();
-		finish({ session: { ...session, messageCount: 1 }, message: chatMessage(content) });
+		finish(committedTimeline([chatMessage(content)], { ...session, messageCount: 1 }));
 		await expect.element(input).toHaveValue('');
 		await expect.element(page.getByRole('article', { name: '플레이어 메시지' })).toBeVisible();
 		expect(page.getByRole('article').element().querySelector('.message-content')?.textContent).toBe(
@@ -239,20 +499,20 @@ describe('session chat', () => {
 
 	it('keeps the exact draft after storage failure and retries it', async () => {
 		const content = '  저장할 행동\n';
-		vi.mocked(appendUserMessage)
+		vi.mocked(invokeSessionAI)
 			.mockRejectedValueOnce(new Error('Storage unavailable'))
-			.mockResolvedValue({ session, message: chatMessage(content) });
+			.mockResolvedValue(committedTimeline([chatMessage(content)]));
 		render(GameWorkspace, { gameId: game.id });
 		await expect.element(page.getByRole('log')).toBeVisible();
 		const input = page.getByRole('textbox', { name: '메시지', exact: true });
 		await input.fill(content);
 		await page.getByRole('button', { name: '메시지 전송' }).click();
-		await expect.element(page.getByRole('alert')).toHaveTextContent('메시지를 저장하지 못했어요');
+		await expect.element(page.getByRole('alert')).toHaveTextContent('Storage unavailable');
 		await expect.element(input).toHaveValue(content);
 		expect(page.getByRole('article').query()).toBeNull();
 		await page.getByRole('button', { name: '메시지 전송' }).click();
 		await expect.element(input).toHaveValue('');
-		expect(appendUserMessage).toHaveBeenCalledTimes(2);
+		expect(invokeSessionAI).toHaveBeenCalledTimes(2);
 	});
 
 	it('keeps histories and unsent drafts separate when switching sessions', async () => {
@@ -294,10 +554,9 @@ describe('session chat', () => {
 	});
 
 	it('supports newline and Korean composition without accidental sends, then sends with Enter', async () => {
-		vi.mocked(appendUserMessage).mockImplementation(async (_gameId, _sessionId, content) => ({
-			session,
-			message: chatMessage(content)
-		}));
+		vi.mocked(invokeSessionAI).mockImplementation(async (_gameId, _sessionId, input) =>
+			committedTimeline([chatMessage(input.text)])
+		);
 		render(GameWorkspace, { gameId: game.id });
 		await expect.element(page.getByRole('log')).toBeVisible();
 		const input = page.getByRole('textbox', { name: '메시지', exact: true });
@@ -310,14 +569,19 @@ describe('session chat', () => {
 				cancelable: true
 			})
 		);
-		expect(appendUserMessage).not.toHaveBeenCalled();
+		expect(invokeSessionAI).not.toHaveBeenCalled();
 		await input.click();
 		await userEvent.keyboard('{Shift>}{Enter}{/Shift}');
 		await expect.element(input).toHaveValue('안녕\n');
-		expect(appendUserMessage).not.toHaveBeenCalled();
+		expect(invokeSessionAI).not.toHaveBeenCalled();
 		await userEvent.keyboard('{Enter}');
 		await expect.element(page.getByRole('article')).toHaveTextContent('안녕');
-		expect(appendUserMessage).toHaveBeenCalledExactlyOnceWith(game.id, session.id, '안녕\n');
+		expect(invokeSessionAI).toHaveBeenCalledExactlyOnceWith(
+			game.id,
+			session.id,
+			{ text: '안녕\n', modelId: 'model' },
+			expect.objectContaining({ signal: expect.any(AbortSignal), onEvent: expect.any(Function) })
+		);
 	});
 
 	it('disables sending until a failed history load is successfully retried', async () => {
@@ -332,7 +596,7 @@ describe('session chat', () => {
 		await expect.element(page.getByRole('button', { name: '메시지 전송' })).toBeDisabled();
 		await page.getByRole('button', { name: '다시 불러오기', exact: true }).click();
 		await expect.element(page.getByRole('button', { name: '메시지 전송' })).toBeEnabled();
-		expect(appendUserMessage).not.toHaveBeenCalled();
+		expect(invokeSessionAI).not.toHaveBeenCalled();
 	});
 });
 

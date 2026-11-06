@@ -9,6 +9,7 @@ import { parseAction, type SessionHistory } from '#lib/games/state/model.js';
 import { parseGameState, type GameState } from '#lib/games/state/value.js';
 import { UI_LIMITS, type GameUI, type PanelInfo, type PanelView } from './model.js';
 import { compileGameUI } from './compiler.js';
+import { invokeSessionAI } from '#lib/games/ai/browser.js';
 
 // UI State lasts only for this application execution, scoped to a game and session.
 const transient = new Map<string, GameState>();
@@ -133,23 +134,33 @@ export async function mountGameUI(
 				return;
 			}
 			if (
-				!['action', 'transaction'].includes(String(message.kind)) ||
+				!['action', 'transaction', 'ai'].includes(String(message.kind)) ||
 				typeof message.id !== 'string' ||
 				!/^\d{1,12}$/.test(message.id)
 			)
 				return;
 			id = message.id;
 			if (busy || options.blocked?.()) throw Error('Busy');
-			const action = parseAction(message.action);
+			const action = message.kind === 'ai' ? undefined : parseAction(message.action);
 			busy = true;
 			options.onbusy?.(true);
 			let result: SessionHistory;
 			try {
-				if (message.kind === 'action')
+				if (message.kind === 'ai') {
+					if (typeof message.text !== 'string') throw Error('Invalid AI request');
+					result = (
+						await invokeSessionAI(
+							gameId,
+							sessionId,
+							{ text: message.text, visible: message.visible === true },
+							{ signal: abort.signal }
+						)
+					).history;
+				} else if (message.kind === 'action')
 					result = await executeSessionAction(
 						gameId,
 						sessionId,
-						{ expectedRevision: history.progress.revision, action },
+						{ expectedRevision: history.progress.revision, action: action! },
 						{ signal: abort.signal }
 					);
 				else
@@ -159,7 +170,7 @@ export async function mountGameUI(
 						{
 							expectedRevision: history.progress.revision,
 							parentId: history.progress.headId,
-							action,
+							action: action!,
 							nextState: parseGameState(message.state)
 						},
 						{ signal: abort.signal }

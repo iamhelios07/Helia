@@ -7,6 +7,7 @@
 		onhome,
 		onadd,
 		onselect,
+		onsettings,
 		activeGameId = null,
 		busy = false
 	}: {
@@ -14,6 +15,7 @@
 		onhome: () => void;
 		onadd: () => void;
 		onselect: (game: LibraryGame) => void;
+		onsettings?: () => void;
 		activeGameId?: string | null;
 		busy?: boolean;
 	} = $props();
@@ -61,9 +63,10 @@
 		<button
 			class="rail-button"
 			type="button"
-			title="설정 · 준비 중"
-			aria-label="설정 · 준비 중"
-			disabled><Icon name="settings" size={21} /></button
+			title="설정"
+			aria-label="설정"
+			disabled={busy || !onsettings}
+			onclick={onsettings}><Icon name="settings" size={21} /></button
 		>
 	</nav>
 </aside>

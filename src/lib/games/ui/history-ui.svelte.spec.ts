@@ -3,6 +3,7 @@ import { beforeEach, expect, it, vi } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
 import { render } from 'vitest-browser-svelte';
 import SessionChat from './SessionChat.svelte';
+import { saveAISettings } from '#lib/app/settings/repository.js';
 import {
 	createGame,
 	updateGameRules,
@@ -17,8 +18,23 @@ vi.mock('../../storage/transport.js', async () => {
 	const { memoryStorage } = await import('../../testing/memory-storage.js');
 	return { storageRequest: memoryStorage() };
 });
+vi.mock('../ai/browser.js', () => ({
+	invokeSessionAI: async (gameId: string, sessionId: string, input: { text: string }) => {
+		const { appendUserMessage, getSessionTimeline } = await import('../repository.js');
+		await appendUserMessage(gameId, sessionId, input.text);
+		return getSessionTimeline(gameId, sessionId);
+	}
+}));
 
 beforeEach(async () => {
+	saveAISettings({
+		version: 1,
+		providers: [
+			{ id: 'provider', name: 'API', kind: 'openai-compatible', baseUrl: 'https://example.com/v1' }
+		],
+		models: [{ id: 'model', name: 'Test model', providerId: 'provider', modelId: 'test' }],
+		defaultModelId: 'model'
+	});
 	await page.viewport(1280, 900);
 });
 

@@ -1,5 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { createSubscriber } from 'svelte/reactivity';
+	import { isSessionBusy, subscribeSessionActivity } from '#lib/games/ai/activity.js';
 	import { resolve } from '$app/paths';
 	import { goto } from '$app/navigation';
 	import Icon from '#lib/components/Icon.svelte';
@@ -47,7 +49,18 @@
 	let chatDrafts = $state<Record<string, string>>({});
 	let conversationRevision = $state(0);
 	let refreshOpeningAfterSend = false;
-	let busy = $derived(sessionBusy || chatSaving || uiSaving);
+	let sessionActivity = $derived.by(() => {
+		const sessionId = game?.activeSessionId;
+		const currentGameId = gameId;
+		const subscribe = createSubscriber((update) =>
+			sessionId ? subscribeSessionActivity(currentGameId, sessionId, update) : undefined
+		);
+		return () => {
+			subscribe();
+			return sessionId ? isSessionBusy(currentGameId, sessionId) : false;
+		};
+	});
+	let busy = $derived(sessionBusy || chatSaving || uiSaving || sessionActivity());
 	let actionError = $state('');
 	let renamingSessionId = $state<string | null>(null);
 	let sessionName = $state('');

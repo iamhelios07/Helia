@@ -13,7 +13,7 @@ export const BOOTSTRAP = String.raw`
   const definitions = new Map();
   const put = Map.prototype.set.bind(definitions), get = Map.prototype.get.bind(definitions);
   const has = Map.prototype.has.bind(definitions);
-  const metadata = {actions:[],filters:[],hooks:[]};
+  const metadata = {actions:[],queries:[],filters:[],hooks:[]};
   let sealed = false, failed = false, scriptId = null, phase = null, events = [];
 
   // Validate before encoding: JSON.stringify alone silently changes NaN, undefined and accessors.
@@ -53,14 +53,15 @@ export const BOOTSTRAP = String.raw`
   }
   const define = (kind, definition) => {
     try {
-      const entries = metadata[kind + 's'];
+      const entries = metadata[kind === 'query' ? 'queries' : kind + 's'];
       if (sealed || entries.length >= 256 || !definition || typeof definition !== 'object') throw Error('registration');
       const {name, arguments: args, description, run} = definition;
       const key = kind + ':' + name;
       if (typeof name !== 'string' || !name.trim() || name.length > 128 || has(key) || typeof run !== 'function') throw Error('registration');
+      if (name.startsWith('$helia.')) throw Error('reserved-name');
       if (description !== undefined && (typeof description !== 'string' || !description.trim() || description.length > 1024)) throw Error('description');
       const info = {name,scriptId};
-      if (kind === 'action') info.arguments = copy(args);
+      if (kind === 'action' || kind === 'query') {info.arguments = copy(args);info.ai = definition.ai === true;}
       else {
         info.priority = definition.priority === undefined ? 0 : definition.priority;
         info.actions = definition.actions === undefined ? null : copy(definition.actions);
@@ -79,9 +80,11 @@ export const BOOTSTRAP = String.raw`
   };
   Object.defineProperty(globalThis, 'helia', {value: freeze({
     defineAction: definition => define('action',definition),
+    defineQuery: definition => define('query',definition),
     defineFilter: definition => define('filter',definition),
     defineHook: definition => define('hook',definition),
-    emit
+    emit,
+    requestAI: (text, options = {}) => emit('$helia.ai', {text, visible: options.visible === true})
   }), writable: false, configurable: false});
   return freeze({
     beginScript(id) {if (sealed) throw Error('registration'); scriptId = id;},

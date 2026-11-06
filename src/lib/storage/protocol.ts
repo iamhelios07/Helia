@@ -41,6 +41,7 @@ export type StorageRequest =
 			version: number;
 			records: StoredRecord[];
 			deleteSessions: string[];
+			aiLease?: string;
 	  };
 export interface StorageReply {
 	version: number;
@@ -126,7 +127,8 @@ export function parseRequest(value: unknown): StorageRequest {
 			gameId,
 			version: counter(input.version),
 			records,
-			deleteSessions: input.deleteSessions.map(identifier)
+			deleteSessions: input.deleteSessions.map(identifier),
+			...(input.aiLease === undefined ? {} : { aiLease: identifier(input.aiLease) })
 		};
 	throw new Error('지원하지 않는 저장 요청이에요.');
 }

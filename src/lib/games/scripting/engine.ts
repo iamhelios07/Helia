@@ -123,7 +123,7 @@ export async function evaluateAction(value: ActionRequest): Promise<ActionResult
 							call(
 								invoke,
 								[kind, definition.name, JSON.stringify(context)],
-								kind === 'action' ? 'execution' : kind,
+								kind === 'action' || kind === 'query' ? 'execution' : kind,
 								definition
 							)
 						)

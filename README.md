@@ -16,6 +16,8 @@ Group code by the feature it belongs to, and keep shared storage and platform su
 
 See the [game UI guide](./src/lib/games/ui/README.md) for packaged Preact panels, the sandbox bridge and player layout behavior.
 
+See the [AI execution guide](./src/lib/games/ai/README.md) for supported provider APIs, prompt configuration, read-only Queries, tool exposure and atomic generation.
+
 | Location                                                         | Responsibility                                                                 |
 | ---------------------------------------------------------------- | ------------------------------------------------------------------------------ |
 | [app](./src/lib/app/)                                            | App-wide navigation, sidebar control and device preferences                    |

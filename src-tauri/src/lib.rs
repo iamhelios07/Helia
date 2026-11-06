@@ -12,14 +12,26 @@ pub fn run() {
             app.manage(storage::StoragePath(directory.join("helia.sqlite")));
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![storage::storage_request])
+        .invoke_handler(tauri::generate_handler![
+            storage::storage_request,
+            credentials::credential_request,
+            generation::ai_request
+        ])
         .run(tauri::generate_context!())
         .expect("error while running Helia");
 }
 #[cfg(any(feature = "desktop", test))]
+mod credential_store;
+#[cfg(any(feature = "desktop", test))]
+mod credentials;
+#[cfg(any(feature = "desktop", test))]
+mod generation;
+#[cfg(any(feature = "desktop", test))]
 mod state_schema;
 #[cfg(any(feature = "desktop", test))]
 mod storage;
+#[cfg(any(feature = "desktop", test))]
+mod vertex;
 
 #[cfg(feature = "desktop")]
 use tauri::Manager;

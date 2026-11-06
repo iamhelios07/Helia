@@ -22,6 +22,27 @@ When deployed behind a reverse proxy, `HELIA_ORIGIN` is the public origin visibl
 
 Desktop development uses `pnpm desktop:dev`. A browser preview of the desktop build cannot access the native database.
 
+## API credential storage policy
+
+The application settings use separate trusted-host credential storage and model-list requests. Credentials are independent of game storage and exports. [AI execution](../games/ai/README.md) reuses these credentials for host-mediated generation and enforces per-session generation leases on state writes.
+
+- **Tauri:** keep API keys in the operating system's credential store, accessed by the trusted native host. SQLite may hold non-secret provider settings and credential references, but not the API keys themselves.
+- **Node.js:** encrypt API keys before storing them in SQLite. On first use, automatically generate a cryptographically random master key and retain it in a separate file restricted to the server's operating-system account. Reuse it after restarts; external secret-manager setup and a user-entered master password are not required.
+- Master-key creation must be safe under concurrent startup. A missing, unreadable or invalid key for existing encrypted credentials must produce an explicit error without silently generating a replacement or destroying the stored ciphertext. Recovery requires restoring the correct key or explicitly replacing the affected API credentials.
+- Keep secret access and provider requests inside the trusted host. Do not return stored API keys or the master key to creator code or include them in game state, snapshots, logs, diagnostics, game packages or play-data exports. Do not silently fall back to plaintext storage when the selected store is unavailable.
+
+The [Node.js credential host](../server/credentials.ts) uses AES-256-GCM with fresh nonces and the connection ID as authenticated data. Its separate database is `credentials.sqlite` under `HELIA_DATA_DIR` (default `data`), and its 32-byte master key is `secrets/master.key` under the same directory. The private directory is created before the key, with POSIX permissions `0700`/`0600` or a Windows ACL restricted to the current OS account. The key is published atomically without overwriting an existing file. Existing ciphertext is validated before replacement. Losing the master key requires restoring the correct key or explicitly deleting all affected credentials and entering them again. Persistent installations must retain both files across restarts; a database backup alone cannot restore credentials.
+
+The [Tauri credential host](../../../src-tauri/src/credentials.rs) uses the `keyring` crate with Windows Credential Manager, macOS Keychain or Linux Secret Service. The service name is `com.helia.desktop.api`; each connection ID identifies an entry. An unavailable or locked OS store returns an error. The native command requires the existing main-frame-only per-process token, and no general credential-reading API is exposed to game frames.
+
+Service-account JSON follows the same secret-storage policy as API keys. Only project ID, region and the generated Vertex endpoint belong to ordinary settings metadata. The [native credential record store](../../../src-tauri/src/credential_store.rs) splits secret records into binary entries of at most 2,000 bytes to accommodate Windows credential limits. A small manifest records a random generation, chunk count, length and SHA-256 digest. New chunks are written before publishing the manifest; a failed write preserves the active generation. Successful replacement and deletion remove the previous generation's entries. A process crash during a write can leave unreachable chunks in the OS store, but no plaintext file fallback is used.
+
+Service-account RSA keys are independently validated on each host. OAuth JWT grants are signed inside the host and sent only to the fixed Google token endpoint. Access tokens remain in a bounded in-memory cache, are renewed before expiry and are invalidated on credential writes or deletion. No access token is persisted in SQLite, OS credential entries or browser storage. Authentication verification returns only a boolean result. It does not validate Vertex IAM roles, model access or generation permissions.
+
+Both hosts bind a stored key to the saved connection ID, URL and API format. Model listing rejects a changed endpoint until its key is explicitly saved. The web endpoint checks the request origin and accepts JSON only; it follows the same single-user hosting model as game storage. See [settings behavior](../app/settings/README.md) for connection management and model discovery.
+
+Node.js encryption protects a copied database when the master-key file is not copied with it. Possession of both the database and key file permits decryption; the separate file is not an independent OS credential store.
+
 ## Responsibilities
 
 - [Schema](./schema.ts): fixed application tables, ownership constraints and indexes. Game-specific state remains validated JSON.
@@ -150,7 +171,7 @@ Current host limits are 500 ms for interpreter execution, 16 MiB for its heap an
 
 This game-logic runtime provides Actions, Filters, included/independent Hook chains and commit-dependent UI event delivery. The [Preact UI and workbench](../games/ui/README.md) connect panels to these validated operations and publish successful session changes to live views. Arbitrary synchronous nested calls from inside an Action, asynchronous creator logic APIs and authoring controls are not part of this runtime. Self-contained external bundles use the same registrations and permission boundary; importing package files is a later stage. Existing sessions continue using their content snapshot until the Apply stage. No internal storage migration or compatibility path was added.
 
-Native storage calls use a main-frame-only JavaScript closure carrying a random per-process credential. The Rust command checks the credential before accessing the database. Application command ACLs grant only storage access to the main application and do not grant general core commands; opaque game UI frames receive no credential. This avoids relying on iframe-origin reporting, which differs between native WebViews.
+Native storage, API-connection and AI-generation calls use main-frame-only JavaScript closures carrying a random per-process credential. The Rust commands check the credential before accessing storage or starting provider requests. Application command ACLs grant only these three application commands and do not grant general core commands; opaque game UI frames receive no credential. This avoids relying on iframe-origin reporting, which differs between native WebViews.
 
 ## Development checks
 

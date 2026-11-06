@@ -15,6 +15,7 @@ import {
 import type { Game, Session } from '#lib/games/model.js';
 
 vi.mock('$app/navigation', () => ({ goto: vi.fn() }));
+vi.mock('#lib/games/ai/browser.js', () => ({ invokeSessionAI: vi.fn() }));
 vi.mock('#lib/games/repository.js', () => ({
 	listGames: vi.fn(),
 	createGame: vi.fn(),

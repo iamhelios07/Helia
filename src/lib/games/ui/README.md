@@ -64,7 +64,7 @@ export default function () {
 };
 ```
 
-The example expects a declared `hp` state field and a registered `rest` Action in the game's logic scripts. UI rendering, resizing and local UI State do not call AI or create game transactions. The UI editor and AI invocation are separate later integrations.
+The example expects a declared `hp` state field and a registered `rest` Action in the game's logic scripts. UI rendering, resizing and local UI State do not call AI or create game transactions. Explicit [AI invocation](../ai/README.md) is available through `ai(text, { visible })`; the UI editor belongs to the later authoring stage.
 
 Import `preact`, `preact/hooks`, `@helia/ui` or another packaged relative module (`./Status`, `./Status.tsx`). Static exports and circular packaged imports are supported. External packages, network imports, dynamic imports, `require`, `import.meta` and top-level `await` are unavailable. The optional default entry initializer is synchronous and may return a disposer. Registering panels at module scope is also supported. Imports do not grant access to the application's modules.
 
@@ -80,6 +80,7 @@ The same interface is available as global `helia` and as named exports from `@he
 | `getState()` / `subscribeState(listener)`                | Read deeply frozen committed state; subscribe returns an unsubscribe function.                                              |
 | `useGameState()`                                         | Preact subscription with automatic cleanup when its component unmounts.                                                     |
 | `action(name, args)`                                     | Request a registered game Action; the host applies schema, Filter, Hook and revision checks.                                |
+| `ai(text, { visible })`                                  | Explicitly invoke the player's default AI model; defaults to an internal event.                                             |
 | `transaction({ name, args }, nextState)`                 | Submit one complete state proposal through the same validated commit path.                                                  |
 | `onEvent(name, listener)` / `useUIEvent(name, listener)` | Observe committed UI event payloads. The first returns an unsubscribe function; the hook cleans up on unmount.              |
 | `useUIState(key, initialValue)`                          | Shared transient JSON state; returns `[value, setter]` and supports functional setters.                                     |
@@ -109,7 +110,7 @@ Limits: 16 creator panels, 32 modules, 512 KiB total authored source, creator la
 
 Browser DOM execution has different limits from the QuickJS game-logic sandbox: iframe code has no guaranteed CPU/memory quota, and a non-yielding loop may stall its browser process. CSP does not reliably prevent a frame initiating its own navigation; the navigation handler terminates the bridge after the load, not the initial network request. This implementation isolates host data and privileges, but does not claim the iframe provides process-level isolation or an absolute network boundary. Do not weaken the sandbox by adding `allow-same-origin`.
 
-Some desktop WebViews inject Tauri's IPC machinery into subframes or cannot reliably distinguish an iframe's origin. Native storage therefore requires a random per-process credential held in a **main-frame-only closure**. Only `window.__HELIA_STORAGE__(request)` in the trusted host can attach that credential; UI modules and MessageChannel data never receive it. The Rust command checks it before database access, and the application capability grants only `allow-storage-request` with no general core permissions. This complements [Tauri's command capability checks](https://tauri.app/security/capabilities/) rather than relying on the iframe origin alone.
+Some desktop WebViews inject Tauri's IPC machinery into subframes or cannot reliably distinguish an iframe's origin. Native storage therefore requires a random per-process credential held in a **main-frame-only closure**. Only `window.__HELIA_STORAGE__(request)` in the trusted host can attach that credential; UI modules and MessageChannel data never receive it. The Rust command checks it before database access. Application capabilities grant only the storage, credential and AI-generation commands, with no general core permissions; each command checks the same private main-frame access boundary. This complements [Tauri's command capability checks](https://tauri.app/security/capabilities/) rather than relying on the iframe origin alone.
 
 ## Verification
 

@@ -17,6 +17,9 @@ pub struct StorageAccess {
     token: String,
 }
 impl StorageAccess {
+    pub fn permits(&self, token: &str) -> bool {
+        self.token == token
+    }
     pub fn new() -> Result<Self, String> {
         let mut bytes = [0u8; 32];
         getrandom::fill(&mut bytes)
@@ -33,6 +36,14 @@ impl StorageAccess {
             const invoke = window.__TAURI_INTERNALS__.invoke;
             Object.defineProperty(window, '__HELIA_STORAGE__', {{
                 value: request => invoke('storage_request', {{ request, token }}),
+                writable: false, configurable: false
+            }});
+            Object.defineProperty(window, '__HELIA_CREDENTIALS__', {{
+                value: request => invoke('credential_request', {{ request, token }}),
+                writable: false, configurable: false
+            }});
+            Object.defineProperty(window, '__HELIA_AI__', {{
+                value: (request, onChunk) => invoke('ai_request', {{ request, onChunk, token }}),
                 writable: false, configurable: false
             }});
         }})();"#,
@@ -602,6 +613,11 @@ fn write_row(connection: &Connection, row: &StoredRecord, create: bool) -> Resul
 }
 
 pub(crate) fn execute_request(path: &Path, input: Value) -> Result<Value, String> {
+    let _lease_guard = crate::generation::guard_storage(&input)?;
+    let mut input = input;
+    if let Some(object) = input.as_object_mut() {
+        object.remove("aiLease");
+    }
     let request: Request =
         serde_json::from_value(input).map_err(|_| "저장 요청의 형식이 올바르지 않아요.")?;
     let mut connection = open(path)?;

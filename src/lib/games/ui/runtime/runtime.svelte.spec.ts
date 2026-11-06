@@ -1,12 +1,19 @@
-import { afterEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import {
 	createGame,
 	createSession,
 	getSessionHistory,
+	getSessionTimeline,
 	updateGameRules
 } from '#lib/games/repository.js';
 import { mountGameUI, type GameUIHandle, type MountOptions } from './bridge.js';
 import type { PanelInfo } from './model.js';
+import { invokeSessionAI } from '#lib/games/ai/browser.js';
+
+vi.mock('#lib/games/ai/browser.js', () => ({ invokeSessionAI: vi.fn() }));
+beforeEach(() => {
+	vi.mocked(invokeSessionAI).mockReset();
+});
 
 vi.mock('#lib/storage/transport.js', async () => {
 	const { memoryStorage } = await import('#lib/testing/memory-storage.js');
@@ -88,6 +95,63 @@ async function mount(gameId: string, sessionId: string, options: MountOptions = 
 		.toEqual({ ready: 1, error: [] });
 	return { iframe, dispose };
 }
+
+it('invokes AI only through the explicit custom UI API and resumes UI actions afterward', async () => {
+	const game = await setup(`
+import { action, registerPanel } from '@helia/ui';
+function Panel(){return <p>Explicit AI test</p>;}
+export default function(){
+ registerPanel({id:'main',title:'Main',component:Panel});
+ setTimeout(async()=>{
+  await action('increment');
+  await action('check',{label:'before-ai'});
+  await helia.ai('Inspect the room',{visible:true});
+  await action('check',{label:'after-ai:'+helia.getState().value});
+ },100);
+}`);
+	vi.mocked(invokeSessionAI).mockImplementation(async (gameId, sessionId) => {
+		const timeline = await getSessionTimeline(gameId, sessionId);
+		expect(timeline.history.progress.state).toEqual({ value: 1, checks: ['before-ai'] });
+		return timeline;
+	});
+	await mount(game.id, game.activeSessionId);
+	await expect
+		.poll(
+			async () => (await getSessionHistory(game.id, game.activeSessionId)).progress.state.checks,
+			{ timeout: 15_000 }
+		)
+		.toEqual(['before-ai', 'after-ai:1']);
+	expect(invokeSessionAI).toHaveBeenCalledExactlyOnceWith(
+		game.id,
+		game.activeSessionId,
+		{ text: 'Inspect the room', visible: true },
+		expect.objectContaining({ signal: expect.any(AbortSignal) })
+	);
+}, 20_000);
+
+it('aborts an explicit custom UI AI request when its runtime is disposed', async () => {
+	const game = await setup(`
+export default function(){setTimeout(()=>{void helia.ai('Wait for a response').catch(()=>{});},100);}
+`);
+	let signal: AbortSignal | undefined;
+	vi.mocked(invokeSessionAI).mockImplementation((_game, _session, _input, options) => {
+		signal = options?.signal;
+		return new Promise((_resolve, reject) =>
+			signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), {
+				once: true
+			})
+		);
+	});
+	const runtime = await mount(game.id, game.activeSessionId);
+	await expect
+		.poll(() => vi.mocked(invokeSessionAI).mock.calls.length, { timeout: 15_000 })
+		.toBe(1);
+	expect(signal?.aborted).toBe(false);
+	runtime.dispose();
+	expect(signal?.aborted).toBe(true);
+	expect((await getSessionHistory(game.id, game.activeSessionId)).transactions).toEqual([]);
+}, 20_000);
+
 it('positions and sizes each real iframe panel in the host-provided rectangle', async () => {
 	const game = await setup(`
 import { registerPanel, action } from '@helia/ui';

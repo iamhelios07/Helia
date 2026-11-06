@@ -1,6 +1,8 @@
 import { storageRequest } from '#lib/storage/transport.js';
 import { createGameRepository } from './repository-core.js';
 import { runCreatorAction } from '#lib/games/scripting/browser.js';
+import { invokeSessionAI } from './ai/browser.js';
+import { publishSessionAIEvent } from './ai/activity.js';
 
 export const {
 	listGames,
@@ -25,5 +27,17 @@ export const {
 	selectSessionBranch,
 	deleteSessionResponse,
 	saveSessionMemory,
-	listSessionMemories
-} = createGameRepository(storageRequest, { runAction: runCreatorAction });
+	listSessionMemories,
+	commitSessionAgent,
+	executeSessionAgentHook
+} = createGameRepository(storageRequest, {
+	runAction: runCreatorAction,
+	requestAI: (gameId, sessionId, input) => {
+		void invokeSessionAI(gameId, sessionId, input).catch((error) =>
+			publishSessionAIEvent(gameId, sessionId, {
+				type: 'error',
+				message: error instanceof Error ? error.message : 'AI 요청을 완료하지 못했어요.'
+			})
+		);
+	}
+});

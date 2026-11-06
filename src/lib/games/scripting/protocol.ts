@@ -1,6 +1,8 @@
 import { parseAction, identifier, type Action } from '#lib/games/state/model.js';
 import { parseObjectSchema, validateState, type ObjectSchema } from '#lib/games/state/schema.js';
 import { parseGameState, type GameState } from '#lib/games/state/value.js';
+import { parseStateValue, type StateValue } from '#lib/games/state/value.js';
+import type { ToolDefinition } from '#lib/games/ai/protocol.js';
 import { parseScripts, type Game } from '#lib/games/model.js';
 
 /** Host policy; creator code cannot override these ceilings. */
@@ -60,7 +62,10 @@ export interface ActionRequest {
 	state: GameState;
 	action: Action;
 	operation?:
-		{ kind: 'proposal'; state: GameState } | { kind: 'hook'; name: string; trigger: RuleTrigger };
+		| { kind: 'proposal' | 'validate'; state: GameState }
+		| { kind: 'hook'; name: string; trigger: RuleTrigger }
+		| { kind: 'catalog' }
+		| { kind: 'query'; name: string; args: GameState };
 }
 export interface RuleTrigger {
 	before: GameState;
@@ -73,12 +78,15 @@ export interface UIEvent {
 }
 export interface ActionResult {
 	state: GameState;
+	value?: StateValue;
+	tools?: ToolDefinition[];
 	description?: string;
 	events?: UIEvent[];
 	independentHooks?: string[];
 }
 export interface RunOptions {
 	signal?: AbortSignal;
+	lease?: string;
 }
 export type ActionRunner = (input: ActionRequest, options?: RunOptions) => Promise<ActionResult>;
 export type WorkerReply =
@@ -124,8 +132,11 @@ export function parseInput(value: unknown): ActionRequest {
 	let operation: ActionRequest['operation'];
 	if (input.operation !== undefined) {
 		const item = parseGameState(input.operation);
-		if (item.kind === 'proposal')
-			operation = { kind: 'proposal', state: validateState(schema, item.state, 'commit') };
+		if (item.kind === 'proposal' || item.kind === 'validate')
+			operation = { kind: item.kind, state: validateState(schema, item.state, 'commit') };
+		else if (item.kind === 'catalog') operation = { kind: 'catalog' };
+		else if (item.kind === 'query')
+			operation = { kind: 'query', name: shortName(item.name), args: parseGameState(item.args) };
 		else if (item.kind === 'hook') {
 			const trigger = parseGameState(item.trigger);
 			operation = {
@@ -156,12 +167,29 @@ export function parseResult(value: unknown, schema: ObjectSchema): ActionResult 
 		throw new CreatorRuntimeError('protocol');
 	return {
 		state: validateState(schema, result.state, 'commit'),
+		...(result.value === undefined ? {} : { value: parseStateValue(result.value) }),
+		...(result.tools === undefined ? {} : { tools: parseTools(result.tools) }),
 		...(result.description === undefined ? {} : { description: identifier(result.description) }),
 		...(result.events === undefined ? {} : { events: parseEvents(result.events) }),
 		...(result.independentHooks === undefined
 			? {}
 			: { independentHooks: parseNames(result.independentHooks) })
 	};
+}
+function parseTools(value: unknown): ToolDefinition[] {
+	if (!Array.isArray(value) || value.length > SANDBOX_LIMITS.actionCount)
+		throw new CreatorRuntimeError('protocol');
+	return value.map((item) => {
+		const row = parseGameState(item);
+		if (!['action', 'query'].includes(String(row.kind)) || typeof row.description !== 'string')
+			throw new CreatorRuntimeError('protocol');
+		return {
+			name: shortName(row.name),
+			kind: row.kind as ToolDefinition['kind'],
+			description: row.description,
+			arguments: parseObjectSchema(row.arguments)
+		};
+	});
 }
 export function shortName(value: unknown): string {
 	const name = identifier(value);

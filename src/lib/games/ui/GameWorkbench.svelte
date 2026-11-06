@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { untrack, type Snippet } from 'svelte';
+	import { isSessionBusy } from '#lib/games/ai/activity.js';
 	import type { GameUI, PanelInfo, PanelView, PanelLayout } from './runtime/model.js';
 	import {
 		CHAT_PANEL_ID,
@@ -43,7 +44,7 @@
 				const { mountGameUI } = await import('./runtime/bridge.js');
 				if (!alive) return;
 				const cleanup = await mountGameUI(frame, game, session, {
-					blocked: () => !alive || blocked,
+					blocked: () => !alive || blocked || isSessionBusy(game, session),
 					onpanels: (nextPanels) => {
 						if (!alive) return;
 						if (nextPanels.length) {
