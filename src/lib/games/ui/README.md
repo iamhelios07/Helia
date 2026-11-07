@@ -2,7 +2,21 @@
 
 Helia owns chat, history and authoritative game state. An optional `Game.ui` describes a **single Preact entry point with packaged JSX/TSX/JS/TS modules**. One opaque-origin iframe runs that entry once and renders its registered panel contents. Trusted Svelte headers, split handles and docking controls sit above that frame; the host sends only visible panel rectangles to the renderer. Creator code cannot access the host controls or write player layout through the bridge. Preact is pinned to 11.1.1. Source is transpiled using the existing TypeScript dependency; it is never executed in the host.
 
-Game UI is part of the session's content snapshot, alongside scripts and state schema. Updating the authoring game does not replace an existing session's UI. Applying content changes and the authoring editor belong to later stages. Games without UI retain the existing chat experience.
+Game UI is part of the session's content snapshot, alongside scripts and state schema. Updating the authoring game does not replace an existing session's UI. Applying compatible content changes to existing sessions belongs to the later content-update stage. Games without UI retain the existing chat experience.
+
+The play sidebar keeps its **Sessions / Game** switch. **Game** provides **Open game editor** and quick name/description editing. The separate game editor page returns to the same active play session without creating another session.
+
+## Authoring IDE
+
+The editor uses a project explorer, closable document tabs, a central form/source area, a collapsible draft preview and a bottom inspection area. Game information and instructions use forms; schema, initial state, script bundles, UI configuration and lorebook use source documents. Preview displays actual draft instructions and initial state. Problems report document validation failures, and the local execution log records editor operations. The assets view reports the current absence of an asset model; it does not simulate uploads or generate asset records.
+
+Raw document text, including incomplete or invalid JSON, autosaves independently under `helia:editor-draft:<gameId>` in the current device/browser profile. Drafts retain their original applied content for conflict detection. A failed draft load does not reset or overwrite its stored value; a failed save keeps the text visible for retry. Pending legacy text recovery is converted only when no editor draft exists, and is removed only after the replacement draft is safely saved.
+
+The explorer and preview widths and inspection panel height can be resized with pointer handles or arrow keys. Their preferred sizes persist per game/device under `helia:editor-layout:<gameId>`, independently of game content and drafts. Smaller viewports clamp the displayed sizes while preserving the preferred sizes. Collapsing the inspection panel preserves its expanded height. The central editor can also split horizontally to edit a second document alongside the main document. Scrollbars use a compact 6px track where supported.
+
+**Apply** validates the draft and commits all authored fields in one storage operation. Changes made elsewhere reject a stale apply, while switching the active play session alone does not invalidate a content draft. Apply preserves the latest active session and existing session snapshots; it does not perform session migration. Inputs lock while applying. Local draft cleanup failures cannot turn an already committed apply into a reported game-write failure. Player API credentials and global prompt presets are outside the authored documents.
+
+This is the initial IDE layout and draft/application workflow. Language-server completion, a visual schema editor, executing custom UI in live preview, dedicated test sessions and asset upload remain later authoring work.
 
 ## Workbench structure
 

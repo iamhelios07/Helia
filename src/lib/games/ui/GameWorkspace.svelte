@@ -511,7 +511,7 @@
 					tabindex="0"
 					hidden={selectedTab !== 'game'}
 				>
-					<GameSettingsPanel {game} onsave={saveSettings} />
+					<GameSettingsPanel {game} onsave={saveSettings} blocked={busy} />
 				</div>
 			</aside>
 			<div

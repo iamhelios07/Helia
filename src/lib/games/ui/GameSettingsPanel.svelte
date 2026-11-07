@@ -1,5 +1,7 @@
 <script lang="ts">
 	import { onMount, untrack } from 'svelte';
+	import { goto } from '$app/navigation';
+	import { resolve } from '$app/paths';
 	import {
 		clearSettingsDraft,
 		loadSettingsDraft,
@@ -13,16 +15,17 @@
 		type Game,
 		type UpdateGameSettings
 	} from '../model.js';
-	let { game, onsave }: { game: Game; onsave: (input: UpdateGameSettings) => Promise<Game> } =
-		$props();
-	const categories = [
-		{ id: 'basic', label: '기본 설정', icon: 'game' },
-		{ id: 'assets', label: '에셋', icon: 'image' },
-		{ id: 'lorebook', label: '로어북', icon: 'book' },
-		{ id: 'advanced', label: '고급 설정', icon: 'activity' }
-	] as const;
-	type Category = (typeof categories)[number]['id'];
-	let category = $state<Category>('basic');
+	let {
+		game,
+		onsave,
+		mode = 'sidebar',
+		blocked = false
+	}: {
+		game: Game;
+		onsave: (input: UpdateGameSettings) => Promise<Game>;
+		mode?: 'sidebar' | 'editor';
+		blocked?: boolean;
+	} = $props();
 	let saved = $state.raw<UpdateGameSettings>(
 		untrack(() => ({ title: game.title, ...game.settings }))
 	);
@@ -32,6 +35,7 @@
 	let authorNote = $state(untrack(() => saved.authorNote));
 	let saving = $state(false);
 	let error = $state('');
+	let openingEditor = $state(false);
 	const gameId = untrack(() => game.id);
 	let timer: ReturnType<typeof setTimeout> | undefined;
 	let activeSave: Promise<void> | null = null;
@@ -60,6 +64,30 @@
 
 	function currentInput(): UpdateGameSettings {
 		return { title, description, firstMessage, authorNote };
+	}
+
+	export async function flush(): Promise<boolean> {
+		await flushSave();
+		return !changed && !error && !composing;
+	}
+
+	async function openEditor(event: MouseEvent) {
+		if (openingEditor || blocked) {
+			event.preventDefault();
+			return;
+		}
+		if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey)
+			return;
+		event.preventDefault();
+		openingEditor = true;
+		error = '';
+		try {
+			if (await flush()) await goto(resolve('/games/[id]/edit', { id: gameId }));
+		} catch {
+			error = '게임 편집기를 열지 못했어요. 다시 시도해주세요.';
+		} finally {
+			openingEditor = false;
+		}
 	}
 
 	function stopTimer() {
@@ -122,23 +150,13 @@
 	function flushOnBlur(event: FocusEvent) {
 		const form = event.currentTarget as HTMLFormElement;
 		if (event.relatedTarget instanceof Node && form.contains(event.relatedTarget)) return;
+		// These links await flush themselves; a blur write would retry failures on the same click.
+		if (
+			event.relatedTarget instanceof Element &&
+			event.relatedTarget.closest('[data-settings-navigation]')
+		)
+			return;
 		void flushSave();
-	}
-
-	function moveCategory(event: KeyboardEvent) {
-		if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
-		event.preventDefault();
-		const index = categories.findIndex((item) => item.id === category);
-		const next =
-			event.key === 'Home'
-				? 0
-				: event.key === 'End'
-					? categories.length - 1
-					: (index + (event.key === 'ArrowRight' ? 1 : -1) + categories.length) % categories.length;
-		category = categories[next].id;
-		(event.currentTarget as HTMLElement).parentElement
-			?.querySelector<HTMLButtonElement>(`[data-category="${category}"]`)
-			?.focus();
 	}
 </script>
 
@@ -148,77 +166,62 @@
 	}}
 />
 
-<div class="settings-tabs" role="tablist" aria-label="게임 설정 분류">
-	{#each categories as item (item.id)}
-		<button
-			id={`settings-${item.id}-tab`}
-			data-category={item.id}
-			class={{ active: category === item.id }}
-			type="button"
-			role="tab"
-			aria-label={item.label}
-			title={item.label}
-			aria-selected={category === item.id}
-			aria-controls={`settings-${item.id}-panel`}
-			tabindex={category === item.id ? 0 : -1}
-			onkeydown={moveCategory}
-			onclick={() => (category = item.id)}><Icon name={item.icon} size={21} /></button
-		>
-	{/each}
-</div>
-
-<div
-	id="settings-basic-panel"
-	role="tabpanel"
-	aria-labelledby="settings-basic-tab"
-	hidden={category !== 'basic'}
-	tabindex="0"
->
-	<form
-		onsubmit={(event) => {
-			event.preventDefault();
-			void flushSave();
-		}}
-		onfocusout={flushOnBlur}
-		oncompositionstart={() => {
-			composing = true;
-			stopTimer();
-		}}
-		oncompositionend={() => {
-			composing = false;
-			scheduleSave();
-		}}
-		novalidate
-		aria-busy={saving}
+{#if mode === 'sidebar'}
+	<a
+		class="editor-link"
+		data-settings-navigation
+		href={resolve('/games/[id]/edit', { id: gameId })}
+		aria-disabled={openingEditor || blocked}
+		onclick={openEditor}
+		><Icon name="edit" size={18} />게임 편집기 열기<Icon name="arrow-right" size={16} /></a
 	>
-		<fieldset>
-			<label for="settings-title">이름</label>
-			<input
-				id="settings-title"
-				name="title"
-				bind:value={
-					() => title,
-					(value) => {
-						title = value;
-						scheduleSave();
-					}
+{/if}
+
+<form
+	onsubmit={(event) => {
+		event.preventDefault();
+		void flushSave();
+	}}
+	onfocusout={flushOnBlur}
+	oncompositionstart={() => {
+		composing = true;
+		stopTimer();
+	}}
+	oncompositionend={() => {
+		composing = false;
+		scheduleSave();
+	}}
+	novalidate
+	aria-busy={saving}
+>
+	<fieldset disabled={openingEditor || (mode === 'editor' && blocked)}>
+		<label for="settings-title">이름</label>
+		<input
+			id="settings-title"
+			name="title"
+			bind:value={
+				() => title,
+				(value) => {
+					title = value;
+					scheduleSave();
 				}
-				maxlength={GAME_TITLE_MAX_LENGTH}
-				required
-			/>
-			<label for="settings-description">설명</label>
-			<textarea
-				id="settings-description"
-				name="description"
-				bind:value={
-					() => description,
-					(value) => {
-						description = value;
-						scheduleSave();
-					}
+			}
+			maxlength={GAME_TITLE_MAX_LENGTH}
+			required
+		/>
+		<label for="settings-description">설명</label>
+		<textarea
+			id="settings-description"
+			name="description"
+			bind:value={
+				() => description,
+				(value) => {
+					description = value;
+					scheduleSave();
 				}
-				rows="7"></textarea>
-			<label for="settings-first-message">첫 메시지</label>
+			}
+			rows={mode === 'editor' ? 7 : 4}></textarea>
+		{#if mode === 'editor'}<label for="settings-first-message">첫 메시지</label>
 			<textarea
 				id="settings-first-message"
 				name="firstMessage"
@@ -241,55 +244,46 @@
 						scheduleSave();
 					}
 				}
-				rows="4"></textarea>
-		</fieldset>
-		{#if error}<div class="save-error">
-				<p class="error" role="alert">{error}</p>
-				<button
-					type="button"
-					onclick={() => {
-						void flushSave();
-					}}>다시 시도</button
-				>
-			</div>{/if}
-	</form>
-</div>
-
-{#each categories.slice(1) as item (item.id)}
-	<div
-		id={`settings-${item.id}-panel`}
-		role="tabpanel"
-		aria-labelledby={`settings-${item.id}-tab`}
-		hidden={category !== item.id}
-		tabindex="0"
-	></div>
-{/each}
+				rows="4"></textarea>{/if}
+	</fieldset>
+	{#if error}<div class="save-error">
+			<p class="error" role="alert">{error}</p>
+			<button
+				type="button"
+				onclick={() => {
+					void flushSave();
+				}}>다시 시도</button
+			>
+		</div>{/if}
+</form>
 
 <style>
-	.settings-tabs {
-		display: grid;
-		grid-template-columns: repeat(4, 1fr);
-		gap: 6px;
-		margin-bottom: 22px;
-	}
-	.settings-tabs button {
-		display: grid;
-		height: 40px;
-		place-items: center;
-		padding: 8px;
-		border: 1px solid transparent;
-		border-radius: 6px;
-		background: transparent;
-		color: var(--text-muted);
-	}
-	.settings-tabs button:hover {
-		background: var(--surface-hover);
-		color: var(--text-strong);
-	}
-	.settings-tabs button.active {
-		border-color: var(--border-strong);
+	.editor-link {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 10px;
+		min-height: 46px;
+		padding: 12px;
+		margin-bottom: 24px;
+		border: 1px solid var(--border-strong);
+		border-radius: 8px;
 		background: var(--surface-active);
 		color: var(--text-strong);
+		text-decoration: none;
+		font-size: 13px;
+		font-weight: 550;
+	}
+	.editor-link:hover {
+		background: var(--surface-hover);
+	}
+	.editor-link:focus-visible {
+		outline: 2px solid var(--accent);
+		outline-offset: 2px;
+	}
+	.editor-link[aria-disabled='true'] {
+		opacity: 0.5;
+		cursor: default;
 	}
 	fieldset {
 		display: flex;

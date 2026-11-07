@@ -10,6 +10,7 @@ export const {
 	getGameWorkspace,
 	updateGame,
 	updateGameSettings,
+	applyGameDraft,
 	updateGameRules,
 	createSession,
 	selectSession,

@@ -393,20 +393,23 @@ describe('session chat', () => {
 		expect(invokeSessionAI).not.toHaveBeenCalled();
 	});
 
-	it('shows an authored opening before existing messages after autosave without losing the draft', async () => {
+	it('keeps the authored opening and chat draft while basic sidebar settings autosave', async () => {
 		const existing = chatMessage('이미 진행한 행동');
 		const opening = chatMessage('  새로 설정한 첫 장면\n', 'assistant');
-		vi.mocked(getSessionConversation)
-			.mockResolvedValueOnce({ session: { ...session, messageCount: 1 }, messages: [existing] })
-			.mockResolvedValue({
-				session: { ...session, messageCount: 2 },
-				messages: [opening, { ...existing, sequence: 2 }]
-			});
+		vi.mocked(getGameWorkspace).mockResolvedValue({
+			game: { ...game, settings: { ...game.settings, firstMessage: opening.content } },
+			sessions: [session]
+		});
+		vi.mocked(getSessionConversation).mockResolvedValue({
+			session: { ...session, messageCount: 2 },
+			messages: [opening, { ...existing, sequence: 2 }]
+		});
 		render(GameWorkspace, { gameId: game.id });
 		await expect.element(page.getByRole('article', { name: '플레이어 메시지' })).toBeVisible();
 		await page.getByRole('textbox', { name: '메시지', exact: true }).fill('아직 작성 중인 행동');
 		await openSettings();
-		await page.getByRole('textbox', { name: '첫 메시지', exact: true }).fill(opening.content);
+		await page.getByRole('textbox', { name: '설명', exact: true }).fill('수정한 설명');
+		await expect.poll(() => vi.mocked(updateGameSettings).mock.calls.length).toBe(1);
 		await expect.element(page.getByRole('article', { name: '게임 메시지' })).toBeVisible();
 		expect(
 			Array.from(
@@ -417,36 +420,31 @@ describe('session chat', () => {
 		await expect
 			.element(page.getByRole('textbox', { name: '메시지', exact: true }))
 			.toHaveValue('아직 작성 중인 행동');
-		expect(getSessionConversation).toHaveBeenCalledTimes(2);
+		expect(getSessionConversation).toHaveBeenCalledTimes(1);
 	});
 
-	it('waits for an in-flight send before refreshing an authored opening', async () => {
+	it('blocks editor navigation while an AI request is in flight', async () => {
 		let finish!: (value: Awaited<ReturnType<typeof invokeSessionAI>>) => void;
 		const sent = chatMessage('전송하는 행동');
-		const opening = chatMessage('첫 장면', 'assistant');
 		vi.mocked(invokeSessionAI).mockReturnValue(new Promise((resolve) => (finish = resolve)));
-		vi.mocked(getSessionConversation)
-			.mockResolvedValueOnce({ session: { ...session, messageCount: 0 }, messages: [] })
-			.mockResolvedValue({
-				session: { ...session, messageCount: 2 },
-				messages: [opening, { ...sent, sequence: 2 }]
-			});
 		render(GameWorkspace, { gameId: game.id });
 		await expect.element(page.getByRole('log')).toBeVisible();
 		await page.getByRole('textbox', { name: '메시지', exact: true }).fill(sent.content);
 		await page.getByRole('button', { name: '메시지 전송' }).click();
 		await openSettings();
-		await page.getByRole('textbox', { name: '첫 메시지', exact: true }).fill(opening.content);
-		await expect.poll(() => vi.mocked(updateGameSettings).mock.calls.length).toBe(1);
+		const editor = page.getByRole('link', { name: '게임 편집기 열기', exact: true });
+		await expect.element(editor).toHaveAttribute('aria-disabled', 'true');
+		editor.element().dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+		expect(goto).not.toHaveBeenCalled();
 		expect(getSessionConversation).toHaveBeenCalledTimes(1);
 		finish(committedTimeline([sent], { ...session, messageCount: 1 }));
-		await expect.element(page.getByRole('article', { name: '게임 메시지' })).toBeVisible();
+		await expect.element(page.getByRole('article', { name: '플레이어 메시지' })).toBeVisible();
 		await expect
 			.element(page.getByRole('textbox', { name: '메시지', exact: true }))
 			.toHaveValue('');
-		expect(getSessionConversation).toHaveBeenCalledTimes(2);
-		await page.getByRole('tab', { name: '세션', exact: true }).click();
-		await expect.element(page.getByRole('button', { name: '새 세션', exact: true })).toBeEnabled();
+		await expect.element(editor).toHaveAttribute('aria-disabled', 'false');
+		await editor.click();
+		await expect.poll(() => vi.mocked(goto).mock.calls.length).toBe(1);
 	});
 
 	it('displays the saved opening as text and blocks blank submissions', async () => {
@@ -668,20 +666,24 @@ describe('new game creation', () => {
 });
 
 describe('game settings', () => {
-	it('autosaves long authoring text and updates the title only after commit', async () => {
+	it('autosaves sidebar text while preserving editor fields and committed title', async () => {
 		let finish!: (saved: Game) => void;
 		vi.mocked(updateGameSettings).mockReturnValue(new Promise((resolve) => (finish = resolve)));
+		const firstMessage = '  첫 줄\n\n둘째 줄  ';
+		const authorNote = '\n  작가 노트  \n';
+		vi.mocked(getGameWorkspace).mockResolvedValue({
+			game: { ...game, settings: { ...game.settings, firstMessage, authorNote } },
+			sessions: [session]
+		});
 		render(GameWorkspace, { gameId: game.id });
 		await openSettings();
 		expect(page.getByRole('button', { name: '저장', exact: true }).query()).toBeNull();
 		expect(updateGameSettings).not.toHaveBeenCalled();
 		const description = '  ' + '긴 설명 '.repeat(1000) + '\n\n';
-		const firstMessage = '  첫 줄\n\n둘째 줄  ';
-		const authorNote = '\n  작가 노트  \n';
 		await page.getByRole('textbox', { name: '이름', exact: true }).fill('내 게임 이름');
 		await page.getByRole('textbox', { name: '설명', exact: true }).fill(description);
-		await page.getByRole('textbox', { name: '첫 메시지', exact: true }).fill(firstMessage);
-		await page.getByRole('textbox', { name: '작가 노트', exact: true }).fill(authorNote);
+		expect(page.getByRole('textbox', { name: '첫 메시지', exact: true }).query()).toBeNull();
+		expect(page.getByRole('textbox', { name: '작가 노트', exact: true }).query()).toBeNull();
 		await expect.poll(() => vi.mocked(updateGameSettings).mock.calls.length).toBe(1);
 		await expect.element(page.getByRole('textbox', { name: '설명', exact: true })).toBeEnabled();
 		await expect.element(page.getByRole('heading', { name: '새 게임' })).toBeVisible();
@@ -693,24 +695,25 @@ describe('game settings', () => {
 		});
 		finish({ ...game, title: '내 게임 이름', settings: { description, firstMessage, authorNote } });
 		await expect.element(page.getByRole('heading', { name: '내 게임 이름' })).toBeVisible();
-		expect(page.getByRole('button', { name: '저장', exact: true }).query()).toBeNull();
 		expect(loadSettingsDraft(game.id)).toBeNull();
 		await expect
 			.element(page.getByRole('textbox', { name: '설명', exact: true }))
 			.toHaveValue(description);
 	});
-	it('retains edits across the four icon categories and sidebar tabs', async () => {
+	it('keeps the simple sidebar form across sidebar tabs', async () => {
 		render(GameWorkspace, { gameId: game.id });
 		await openSettings();
+		await expect
+			.element(page.getByRole('link', { name: '게임 편집기 열기' }))
+			.toHaveAttribute('href', '/games/game-one/edit');
+		for (const label of ['기본 설정', '에셋', '로어북', '고급 설정'])
+			expect(page.getByRole('tab', { name: label, exact: true }).query()).toBeNull();
+		expect(page.getByRole('textbox', { name: '첫 메시지', exact: true }).query()).toBeNull();
+		expect(page.getByRole('textbox', { name: '작가 노트', exact: true }).query()).toBeNull();
+		await expect
+			.element(page.getByRole('textbox', { name: '설명', exact: true }))
+			.toHaveAttribute('rows', '4');
 		await page.getByRole('textbox', { name: '설명', exact: true }).fill('수정한 설명');
-		for (const label of ['에셋', '로어북', '고급 설정']) {
-			await page.getByRole('tab', { name: label, exact: true }).click();
-			await expect
-				.element(page.getByRole('tab', { name: label, exact: true }))
-				.toHaveAttribute('aria-selected', 'true');
-		}
-		await userEvent.keyboard('{Home}');
-		await expect.element(page.getByRole('tab', { name: '기본 설정', exact: true })).toHaveFocus();
 		await page.getByRole('tab', { name: '세션', exact: true }).click();
 		await openSettings();
 		await expect
@@ -718,18 +721,35 @@ describe('game settings', () => {
 			.toHaveValue('수정한 설명');
 		await expect.poll(() => vi.mocked(updateGameSettings).mock.calls.length).toBe(1);
 	});
+	it('flushes edits before opening the editor and retries navigation failures', async () => {
+		let finish!: (saved: Game) => void;
+		vi.mocked(updateGameSettings).mockReturnValueOnce(new Promise((resolve) => (finish = resolve)));
+		vi.mocked(goto).mockRejectedValueOnce(new Error('Navigation failed'));
+		render(GameWorkspace, { gameId: game.id });
+		await openSettings();
+		await page.getByRole('textbox', { name: '이름', exact: true }).fill('편집할 게임');
+		await page.getByRole('link', { name: '게임 편집기 열기' }).click();
+		await expect.poll(() => vi.mocked(updateGameSettings).mock.calls.length).toBe(1);
+		expect(goto).not.toHaveBeenCalled();
+		finish({ ...game, title: '편집할 게임' });
+		await expect.element(page.getByRole('alert')).toHaveTextContent('게임 편집기를 열지 못했어요');
+		await page.getByRole('link', { name: '게임 편집기 열기' }).click();
+		await expect.poll(() => vi.mocked(goto).mock.calls.length).toBe(2);
+		expect(goto).toHaveBeenLastCalledWith('/games/game-one/edit');
+		expect(loadSettingsDraft(game.id)).toBeNull();
+	});
 	it('preserves inputs and the previous header on save failure, then retries', async () => {
 		vi.mocked(updateGameSettings).mockRejectedValueOnce(new Error('Write failed'));
 		render(GameWorkspace, { gameId: game.id });
 		await openSettings();
 		await page.getByRole('textbox', { name: '이름', exact: true }).fill('수정한 이름');
-		await page.getByRole('textbox', { name: '작가 노트', exact: true }).fill('  유지할 내용\n');
+		await page.getByRole('textbox', { name: '설명', exact: true }).fill('  유지할 내용\n');
 		await expect.element(page.getByRole('alert')).toHaveTextContent('설정을 저장하지 못했어요');
 		await expect.element(page.getByRole('heading', { name: '새 게임' })).toBeVisible();
 		await expect
-			.element(page.getByRole('textbox', { name: '작가 노트', exact: true }))
+			.element(page.getByRole('textbox', { name: '설명', exact: true }))
 			.toHaveValue('  유지할 내용\n');
-		expect(loadSettingsDraft(game.id)?.authorNote).toBe('  유지할 내용\n');
+		expect(loadSettingsDraft(game.id)?.description).toBe('  유지할 내용\n');
 		await page.getByRole('button', { name: '다시 시도', exact: true }).click();
 		await expect.element(page.getByRole('heading', { name: '수정한 이름' })).toBeVisible();
 	});

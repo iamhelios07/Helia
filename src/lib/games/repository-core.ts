@@ -53,6 +53,7 @@ import { isSessionBusy } from './ai/activity.js';
 import { aiError } from './ai/protocol.js';
 import type { AgentWorkspaceResult } from './ai/loop.js';
 import type { RuleTrigger } from './scripting/protocol.js';
+import { editorContent, type GameEditorContent } from './editor.js';
 
 function makeSession(gameId: string): Session {
 	const now = new Date().toISOString();
@@ -546,6 +547,40 @@ export function createGameRepository(
 					settings,
 					updatedAt: new Date().toISOString()
 				};
+				unit.put('games', game);
+				return game;
+			});
+		},
+		applyGameDraft(
+			gameId: string,
+			input: { baseContent: GameEditorContent; content: GameEditorContent }
+		) {
+			return withGame(gameId, (unit) => {
+				const previous = gameIn(unit, gameId);
+				const base = parseGame({
+					...previous,
+					...input.baseContent,
+					ui: input.baseContent.ui,
+					ai: input.baseContent.ai,
+					id: previous.id,
+					activeSessionId: previous.activeSessionId
+				});
+				if (
+					!sameValue(parseGameState(editorContent(previous)), parseGameState(editorContent(base)))
+				)
+					throw new Error(
+						'다른 화면에서 게임이 변경되었어요. 초안을 보존한 뒤 최신 게임을 다시 불러와주세요.'
+					);
+				const game = parseGame({
+					...previous,
+					...input.content,
+					ui: input.content.ui,
+					ai: input.content.ai,
+					id: previous.id,
+					activeSessionId: previous.activeSessionId,
+					createdAt: previous.createdAt,
+					updatedAt: new Date().toISOString()
+				});
 				unit.put('games', game);
 				return game;
 			});
