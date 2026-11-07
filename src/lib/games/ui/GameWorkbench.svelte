@@ -20,7 +20,7 @@
 	}: {
 		gameId: string;
 		sessionId: string;
-		ui: GameUI;
+		ui?: GameUI;
 		blocked?: boolean;
 		onsavingchange: (busy: boolean) => void;
 		children: Snippet<[GameUI['chatStyle']]>;
@@ -45,6 +45,9 @@
 				if (!alive) return;
 				const cleanup = await mountGameUI(frame, game, session, {
 					blocked: () => !alive || blocked || isSessionBusy(game, session),
+					oncontentchange: () => {
+						if (alive) reload();
+					},
 					onpanels: (nextPanels) => {
 						if (!alive) return;
 						if (nextPanels.length) {
@@ -104,6 +107,15 @@
 		latestViews = views;
 		runtimeHandle?.setViews(views);
 	}
+	function reload() {
+		loading = true;
+		error = '';
+		panels = [];
+		defaultTree = undefined;
+		latestViews = [];
+		runtimeHandle = undefined;
+		attempt += 1;
+	}
 </script>
 
 <div class="workbench" aria-label="게임 워크벤치">
@@ -111,6 +123,7 @@
 		{#snippet chat()}{@render children(currentUI?.chatStyle)}{/snippet}
 		{#key attempt}<iframe
 				title="게임 패널"
+				hidden={!currentUI}
 				sandbox="allow-scripts"
 				referrerpolicy="no-referrer"
 				{@attach attachFrame}
@@ -119,16 +132,7 @@
 	{#if loading}<p class="status" role="status">게임 화면을 불러오는 중…</p>{/if}
 	{#if error}<div class="error">
 			<p role="alert">{error}</p>
-			<button
-				type="button"
-				onclick={() => {
-					loading = true;
-					error = '';
-					panels = [];
-					latestViews = [];
-					attempt += 1;
-				}}>다시 불러오기</button
-			>
+			<button type="button" onclick={reload}>다시 불러오기</button>
 		</div>{/if}
 </div>
 
@@ -146,6 +150,9 @@
 		height: 100%;
 		border: 0;
 		background: var(--background);
+	}
+	iframe[hidden] {
+		display: none;
 	}
 	.status,
 	.error {

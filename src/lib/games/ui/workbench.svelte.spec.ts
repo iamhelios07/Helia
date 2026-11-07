@@ -121,12 +121,22 @@ async function dock(title: string, target: string, edge: 'left' | 'right' | 'top
 		.toBe(edge);
 	window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 9 }));
 }
-it('keeps ordinary games on the existing chat without starting the UI bridge', async () => {
+it('keeps ordinary games on chat with an inert hidden frame ready for later authored UI', async () => {
+	vi.mocked(mountGameUI).mockImplementation(async (_frame, _game, _session, options) => {
+		options?.onui?.(undefined);
+		options?.onpanels?.([]);
+		options?.onready?.();
+		return handle();
+	});
 	const game = await createGame();
 	const screen = render(AppFixture, { view: 'game', gameId: game.id });
 	await expect.element(page.getByRole('textbox', { name: '메시지', exact: true })).toBeVisible();
-	expect(document.querySelector('iframe[title="게임 패널"]')).toBeNull();
-	expect(mountGameUI).not.toHaveBeenCalled();
+	await expect.poll(() => vi.mocked(mountGameUI).mock.calls.length).toBe(1);
+	const frame = document.querySelector<HTMLIFrameElement>('iframe[title="게임 패널"]');
+	await expect.poll(() => frame?.hidden).toBe(true);
+	expect(frame?.hasAttribute('srcdoc')).toBe(false);
+	expect(mountGameUI).toHaveBeenCalledOnce();
+	expect(options().oncontentchange).toEqual(expect.any(Function));
 	await screen.unmount();
 });
 it('starts with one main chat, right sidebar and bottom panel, with only compact header controls', async () => {

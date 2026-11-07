@@ -55,7 +55,29 @@ export function pruneRecords(
 		storedRecord('games', { ...game, updatedAt: now }),
 		storedRecord('sessions', { ...session, messageCount: messages.length, updatedAt: now }),
 		storedRecord('progress', history.progress),
-		...messages.map((message) => storedRecord('messages', message))
+		...messages.map((message) => storedRecord('messages', message)),
+		...owned
+			.filter((row) => row.table === 'snapshots')
+			.flatMap((row) => {
+				const snapshot = parseGameSnapshot(row.value);
+				if (
+					!snapshot.restoredStates ||
+					!Object.keys(snapshot.restoredStates).some((id) => removedIds.has(id))
+				)
+					return [];
+				return [
+					storedRecord(
+						'snapshots',
+						{
+							...snapshot,
+							restoredStates: Object.fromEntries(
+								Object.entries(snapshot.restoredStates).filter(([id]) => !removedIds.has(id))
+							)
+						},
+						sessionId
+					)
+				];
+			})
 	];
 	return { deleted, updates };
 }

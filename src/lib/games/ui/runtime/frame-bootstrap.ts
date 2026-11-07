@@ -54,7 +54,7 @@ function Panel({id,x,y,width,height}){
 function start(initial){
   latest=freeze(initial.state);uiValues=initial.uiState??{};
   preact=load('preact');hooks=load('preact/hooks');
-  Boundary=class extends preact.Component{constructor(){super();this.state={failed:false};}componentDidCatch(){this.setState({failed:true});}render(){return this.state.failed?preact.h('p',{role:'alert'},'패널을 표시하지 못했어요.'):this.props.children;}};
+  Boundary=class extends preact.Component{constructor(){super();this.state={failed:false};}componentDidCatch(error){this.setState({failed:true});send({kind:'diagnostic',message:'게임 패널 렌더링에 실패했어요.',detail:error instanceof Error?String(error.stack??error.message).slice(0,4000):'Creator UI error'});}render(){return this.state.failed?preact.h('p',{role:'alert'},'패널을 표시하지 못했어요.'):this.props.children;}};
   const subscribeState=listener=>{stateListeners.add(listener);listener(latest);return ()=>stateListeners.delete(listener);};
   const onEvent=(event,listener)=>{if(typeof event!=='string'||!event.trim()||event.length>128||typeof listener!=='function')throw Error('Invalid event subscription');const entries=eventListeners.get(event)??new Set();entries.add(listener);eventListeners.set(event,entries);return ()=>{entries.delete(listener);if(!entries.size)eventListeners.delete(event);};};
   const registerPanel=definition=>{
@@ -78,7 +78,7 @@ function start(initial){
   const Inventory=({items=[],renderItem=item=>String(item),label='인벤토리'})=>h('ul',{'aria-label':label},items.map((item,index)=>h('li',{key:index},renderItem(item,index))));
   const Stats=({items=[],label='스탯'})=>h('dl',{'aria-label':label},items.map(item=>h(preact.Fragment,{},h('dt',{},item.label),h('dd',{},String(item.value)))));
   const QuestList=({items=[],renderItem=item=>String(item),label='퀘스트'})=>h(Inventory,{items,renderItem,label});
-  api={registerPanel,subscribeState,useGameState,useUIState,useUIEvent,onEvent,onDispose:fn=>{disposers.add(fn);return ()=>disposers.delete(fn);},getState:()=>latest,action:(action,args={})=>request('action',{action:{name:action,args}}),transaction:(action,state)=>request('transaction',{action,state}),ai:(text,options={})=>request('ai',{text,visible:options.visible===true}),Button,Text,Progress,Inventory,Stats,QuestList};
+  api={asset:id=>{if(typeof id!=='string'||!Object.hasOwn(resources,id))throw Error('리소스를 찾을 수 없어요.');return resources[id];},registerPanel,subscribeState,useGameState,useUIState,useUIEvent,onEvent,onDispose:fn=>{disposers.add(fn);return ()=>disposers.delete(fn);},getState:()=>latest,action:(action,args={})=>request('action',{action:{name:action,args}}),transaction:(action,state)=>request('transaction',{action,state}),ai:(text,options={})=>request('ai',{text,visible:options.visible===true}),Button,Text,Progress,Inventory,Stats,QuestList};
   api.helia=api;Object.freeze(api);Object.defineProperty(globalThis,'helia',{value:api,writable:false,configurable:false});
   try{const module=load(entry);if(typeof module.default==='function'){const dispose=module.default(api);if(dispose!==undefined&&typeof dispose!=='function'){if(dispose&&typeof dispose.then==='function')Promise.resolve(dispose).catch(()=>{});throw Error('Entry must initialize synchronously');}if(typeof dispose==='function')disposers.add(dispose);}booting=false;publishPanels();redraw();send({kind:'ready'});}
   catch{send({kind:'error',message:'게임 UI를 시작하지 못했어요.'});}

@@ -15,7 +15,7 @@
 		getGameWorkspace,
 		createSession,
 		selectSession,
-		updateGameSettings,
+		updateGame,
 		renameSession,
 		deleteSession,
 		listGames,
@@ -26,7 +26,7 @@
 		validateSessionTitle,
 		type Game,
 		type Session,
-		type UpdateGameSettings
+		type GameMetadata
 	} from '../model.js';
 	import {
 		DEFAULT_SIDEBAR_WIDTH,
@@ -47,8 +47,6 @@
 	let chatSaving = $state(false);
 	let uiSaving = $state(false);
 	let chatDrafts = $state<Record<string, string>>({});
-	let conversationRevision = $state(0);
-	let refreshOpeningAfterSend = false;
 	let sessionActivity = $derived.by(() => {
 		const sessionId = game?.activeSessionId;
 		const currentGameId = gameId;
@@ -317,20 +315,16 @@
 		}
 	}
 
-	async function saveSettings(input: UpdateGameSettings): Promise<Game> {
+	async function saveSettings(input: GameMetadata): Promise<Game> {
 		if (!game) throw new Error('Game is unavailable');
-		const updated = await updateGameSettings(game.id, input);
-		const openingChanged = game.settings.firstMessage !== updated.settings.firstMessage;
+		const updated = await updateGame(game.id, input);
 		game = {
 			...game,
 			title: updated.title,
-			settings: updated.settings,
+			genre: updated.genre,
+			description: updated.description,
 			updatedAt: updated.updatedAt > game.updatedAt ? updated.updatedAt : game.updatedAt
 		};
-		if (openingChanged) {
-			if (chatSaving) refreshOpeningAfterSend = true;
-			else conversationRevision += 1;
-		}
 		const current = toLibraryGame(game);
 		railGames = railGames.map((item) => (item.id === updated.id ? current : item));
 		return updated;
@@ -551,7 +545,7 @@
 						<h2>{activeSession.title}</h2>
 					</div>
 					{#snippet chat(theme?: GameUI['chatStyle'])}
-						{#key `${currentSessionId}:${conversationRevision}`}
+						{#key currentSessionId}
 							<SessionChat
 								gameId={currentGame.id}
 								sessionId={currentSessionId}
@@ -567,31 +561,21 @@
 										session.id === updated.id ? updated : session
 									);
 								}}
-								onsavingchange={(saving) => {
-									chatSaving = saving;
-									if (!saving && refreshOpeningAfterSend) {
-										refreshOpeningAfterSend = false;
-										conversationRevision += 1;
-									}
-								}}
+								onsavingchange={(saving) => (chatSaving = saving)}
 							/>
 						{/key}
 					{/snippet}
-					{#if game.ui}
-						{#key currentSessionId}
-							<GameWorkbench
-								gameId={game.id}
-								sessionId={currentSessionId}
-								ui={game.ui}
-								blocked={sessionBusy || chatSaving}
-								onsavingchange={(saving) => (uiSaving = saving)}
-							>
-								{#snippet children(theme)}{@render chat(theme)}{/snippet}
-							</GameWorkbench>
-						{/key}
-					{:else}
-						{@render chat()}
-					{/if}
+					{#key currentSessionId}
+						<GameWorkbench
+							gameId={game.id}
+							sessionId={currentSessionId}
+							ui={game.ui}
+							blocked={sessionBusy || chatSaving}
+							onsavingchange={(saving) => (uiSaving = saving)}
+						>
+							{#snippet children(theme)}{@render chat(theme)}{/snippet}
+						</GameWorkbench>
+					{/key}
 				{/if}
 			</main>
 		</div>

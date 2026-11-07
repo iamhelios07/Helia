@@ -2,10 +2,16 @@ import preactSource from 'preact?raw';
 import hooksSource from 'preact/hooks?raw';
 import { FRAME_BOOTSTRAP, FRAME_STYLES } from './frame-bootstrap.js';
 import { parseGameUI, type GameUI } from './model.js';
+import { parseResources, type GameResources } from '../../resources.js';
 
 /** Compile without executing creator code in the host. Only packaged modules can be resolved. */
-export async function compileGameUI(value: GameUI, token: string): Promise<string> {
+export async function compileGameUI(
+	value: GameUI,
+	token: string,
+	inputResources: GameResources = {}
+): Promise<string> {
 	const ui = parseGameUI(value);
+	const resources = parseResources(inputResources);
 	const { default: ts } = await import('typescript');
 	const factories: string[] = [];
 	const dependencies = new Map<string, Record<string, string>>();
@@ -101,6 +107,6 @@ export async function compileGameUI(value: GameUI, token: string): Promise<strin
 	// Escape closing script tags in every source, including authored JSX/string literals.
 	// Creator factories are born outside the runtime closure: free variables cannot
 	// reach its private MessagePort, state listeners, or lifecycle handles.
-	const code = `((run) => {const factories={${factories.join(',')}};run(factories,${JSON.stringify(Object.fromEntries(dependencies))},${JSON.stringify(ui.entry)},${JSON.stringify(token)});})(function(factories,dependencies,entry,token){${FRAME_BOOTSTRAP}\n})`;
-	return `<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; connect-src 'none'; frame-src 'none'; form-action 'none'; base-uri 'none'"><meta name="referrer" content="no-referrer"><style>${FRAME_STYLES}</style></head><body><div id="workbench"></div><script>${code.replace(/<\/script/gi, '<\\/script')}</script></body></html>`;
+	const code = `((run) => {const factories={${factories.join(',')}};run(factories,${JSON.stringify(Object.fromEntries(dependencies))},${JSON.stringify(ui.entry)},${JSON.stringify(token)},${JSON.stringify(Object.fromEntries(Object.entries(resources).map(([id, resource]) => [id, resource.data])))});})(function(factories,dependencies,entry,token,resources){${FRAME_BOOTSTRAP}\n})`;
+	return `<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; media-src data:; connect-src 'none'; frame-src 'none'; form-action 'none'; base-uri 'none'"><meta name="referrer" content="no-referrer"><style>${FRAME_STYLES}</style></head><body><div id="workbench"></div><script>${code.replace(/<\/script/gi, '<\\/script')}</script></body></html>`;
 }

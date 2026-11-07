@@ -15,7 +15,7 @@
 		"build": "pnpm build:web",
 		"build:web": "vite build",
 		"build:desktop": "vite build --mode desktop",
-		"start": "node build/web",
+		"start": "node scripts/start-web.mjs",
 		"preview": "vite preview",
 		"tauri": "tauri",
 		"desktop:dev": "tauri dev",

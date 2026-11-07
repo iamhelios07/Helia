@@ -52,6 +52,7 @@ export function memoryStorage(): StorageTransport {
 						row.gameId === request.gameId &&
 						(row.table === 'games' ||
 							row.table === 'sessions' ||
+							request.includeHistory === true ||
 							(request.sessionId !== undefined && row.sessionId === request.sessionId))
 				)
 			});

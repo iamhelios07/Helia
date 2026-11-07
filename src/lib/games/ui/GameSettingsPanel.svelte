@@ -3,36 +3,34 @@
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import {
-		clearSettingsDraft,
-		loadSettingsDraft,
-		sameSettings,
-		storeSettingsDraft
-	} from '../settings-draft.js';
+		clearMetadataDraft,
+		loadMetadataDraft,
+		sameMetadata,
+		storeMetadataDraft,
+		type MetadataDraft
+	} from '../metadata-draft.js';
 	import Icon from '#lib/components/Icon.svelte';
 	import {
 		GAME_TITLE_MAX_LENGTH,
-		validateGameSettings,
+		GAME_DESCRIPTION_MAX_LENGTH,
+		validateGameMetadata,
 		type Game,
-		type UpdateGameSettings
+		type GameMetadata
 	} from '../model.js';
 	let {
 		game,
 		onsave,
-		mode = 'sidebar',
 		blocked = false
 	}: {
 		game: Game;
-		onsave: (input: UpdateGameSettings) => Promise<Game>;
-		mode?: 'sidebar' | 'editor';
+		onsave: (input: GameMetadata) => Promise<Game>;
 		blocked?: boolean;
 	} = $props();
-	let saved = $state.raw<UpdateGameSettings>(
-		untrack(() => ({ title: game.title, ...game.settings }))
+	let saved = $state.raw<MetadataDraft>(
+		untrack(() => ({ title: game.title, description: game.description }))
 	);
 	let title = $state(untrack(() => saved.title));
 	let description = $state(untrack(() => saved.description));
-	let firstMessage = $state(untrack(() => saved.firstMessage));
-	let authorNote = $state(untrack(() => saved.authorNote));
 	let saving = $state(false);
 	let error = $state('');
 	let openingEditor = $state(false);
@@ -40,30 +38,23 @@
 	let timer: ReturnType<typeof setTimeout> | undefined;
 	let activeSave: Promise<void> | null = null;
 	let composing = false;
-	let changed = $derived(
-		title !== saved.title ||
-			description !== saved.description ||
-			firstMessage !== saved.firstMessage ||
-			authorNote !== saved.authorNote
-	);
+	let changed = $derived(title !== saved.title || description !== saved.description);
 
 	onMount(() => {
-		const recovered = loadSettingsDraft(gameId);
+		const recovered = loadMetadataDraft(gameId);
 		if (recovered) {
 			title = recovered.title;
 			description = recovered.description;
-			firstMessage = recovered.firstMessage;
-			authorNote = recovered.authorNote;
 			if (changed) scheduleSave();
-			else clearSettingsDraft(gameId, recovered);
+			else clearMetadataDraft(gameId, recovered);
 		}
 		return () => {
 			void flushSave();
 		};
 	});
 
-	function currentInput(): UpdateGameSettings {
-		return { title, description, firstMessage, authorNote };
+	function currentInput(): GameMetadata {
+		return { title, description, genre: game.genre };
 	}
 
 	export async function flush(): Promise<boolean> {
@@ -97,7 +88,7 @@
 
 	function scheduleSave() {
 		error = '';
-		storeSettingsDraft(gameId, currentInput());
+		storeMetadataDraft(gameId, currentInput());
 		stopTimer();
 		if (!composing)
 			timer = setTimeout(() => {
@@ -109,7 +100,7 @@
 		stopTimer();
 		if (activeSave) return activeSave;
 		if (!changed) {
-			clearSettingsDraft(gameId, currentInput());
+			clearMetadataDraft(gameId, currentInput());
 			return Promise.resolve();
 		}
 		if (composing) return Promise.resolve();
@@ -125,20 +116,21 @@
 		try {
 			while (changed && !composing) {
 				const snapshot = currentInput();
-				let input: UpdateGameSettings;
+				let input: GameMetadata;
 				try {
-					input = validateGameSettings(snapshot);
+					input = validateGameMetadata(snapshot);
 				} catch (cause) {
 					error = cause instanceof Error ? cause.message : '입력값을 확인해주세요.';
 					return;
 				}
-				if (!sameSettings(input, saved)) {
+				if (!sameMetadata(input, saved)) {
 					const updated = await onsave(input);
-					saved = { title: updated.title, ...updated.settings };
+					saved = { title: updated.title, description: updated.description };
 				}
 				// A completed write must never replace text entered while it was in flight.
 				if (title === snapshot.title) title = saved.title;
-				if (!changed) clearSettingsDraft(gameId, snapshot);
+				if (description === snapshot.description) description = saved.description;
+				if (!changed) clearMetadataDraft(gameId, snapshot);
 			}
 		} catch {
 			error = '설정을 저장하지 못했어요.';
@@ -166,16 +158,14 @@
 	}}
 />
 
-{#if mode === 'sidebar'}
-	<a
-		class="editor-link"
-		data-settings-navigation
-		href={resolve('/games/[id]/edit', { id: gameId })}
-		aria-disabled={openingEditor || blocked}
-		onclick={openEditor}
-		><Icon name="edit" size={18} />게임 편집기 열기<Icon name="arrow-right" size={16} /></a
-	>
-{/if}
+<a
+	class="editor-link"
+	data-settings-navigation
+	href={resolve('/games/[id]/edit', { id: gameId })}
+	aria-disabled={openingEditor || blocked}
+	onclick={openEditor}
+	><Icon name="edit" size={18} />게임 편집기 열기<Icon name="arrow-right" size={16} /></a
+>
 
 <form
 	onsubmit={(event) => {
@@ -194,7 +184,7 @@
 	novalidate
 	aria-busy={saving}
 >
-	<fieldset disabled={openingEditor || (mode === 'editor' && blocked)}>
+	<fieldset disabled={openingEditor}>
 		<label for="settings-title">이름</label>
 		<input
 			id="settings-title"
@@ -213,6 +203,7 @@
 		<textarea
 			id="settings-description"
 			name="description"
+			maxlength={GAME_DESCRIPTION_MAX_LENGTH}
 			bind:value={
 				() => description,
 				(value) => {
@@ -220,31 +211,7 @@
 					scheduleSave();
 				}
 			}
-			rows={mode === 'editor' ? 7 : 4}></textarea>
-		{#if mode === 'editor'}<label for="settings-first-message">첫 메시지</label>
-			<textarea
-				id="settings-first-message"
-				name="firstMessage"
-				bind:value={
-					() => firstMessage,
-					(value) => {
-						firstMessage = value;
-						scheduleSave();
-					}
-				}
-				rows="5"></textarea>
-			<label for="settings-author-note">작가 노트</label>
-			<textarea
-				id="settings-author-note"
-				name="authorNote"
-				bind:value={
-					() => authorNote,
-					(value) => {
-						authorNote = value;
-						scheduleSave();
-					}
-				}
-				rows="4"></textarea>{/if}
+			rows="4"></textarea>
 	</fieldset>
 	{#if error}<div class="save-error">
 			<p class="error" role="alert">{error}</p>

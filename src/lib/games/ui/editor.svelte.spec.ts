@@ -2,21 +2,43 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
 import { render } from 'vitest-browser-svelte';
-import { goto } from '$app/navigation';
+import { beforeNavigate, goto } from '$app/navigation';
 import GameEditor from './GameEditor.svelte';
 import { createGame, createSession, getGameWorkspace, updateGameSettings } from '../repository.js';
 import { loadEditorDraft } from '../editor.js';
+import type { EditorDraft } from '../editor.js';
+import { loadAuthoringDraft, saveAuthoringDraft } from '../editor-draft-storage.js';
 import { loadEditorLayout } from '../editor-layout.js';
 import { loadSettingsDraft, storeSettingsDraft } from '../settings-draft.js';
 
 vi.mock('$app/navigation', () => ({ goto: vi.fn(), beforeNavigate: vi.fn() }));
+vi.mock('../editor-draft-storage.js', () => ({
+	loadAuthoringDraft: vi.fn(),
+	saveAuthoringDraft: vi.fn()
+}));
 vi.mock('#lib/storage/transport.js', async () => {
 	const { memoryStorage } = await import('#lib/testing/memory-storage.js');
 	return { storageRequest: vi.fn(memoryStorage()) };
 });
 
+const durableDrafts = new Map<string, { version: number; draft: EditorDraft | null }>();
 beforeEach(async () => {
 	vi.clearAllMocks();
+	durableDrafts.clear();
+	vi.mocked(loadAuthoringDraft)
+		.mockReset()
+		.mockImplementation(async (gameId) =>
+			structuredClone(durableDrafts.get(gameId) ?? { version: 0, draft: null })
+		);
+	vi.mocked(saveAuthoringDraft)
+		.mockReset()
+		.mockImplementation(async (gameId, draft, version) => {
+			const previous = durableDrafts.get(gameId) ?? { version: 0, draft: null };
+			if (previous.version !== version) throw new Error('다른 편집기에서 초안이 변경되었어요.');
+			const next = structuredClone({ version: version + 1, draft });
+			durableDrafts.set(gameId, next);
+			return next;
+		});
 	localStorage.clear();
 	await page.viewport(1200, 800);
 });
@@ -62,42 +84,201 @@ it('restores unfinished source across remounts, reports errors, and permits leav
 	const game = await createGame();
 	const screen = render(GameEditor, { gameId: game.id });
 	await expect.element(nameInput()).toBeVisible();
-	await page.getByRole('button', { name: /schema\.json/ }).click();
-	const source = page.getByRole('textbox', { name: '상태 스키마 소스', exact: true });
+	await page.getByRole('button', { name: /state\.json/ }).click();
+	await page.getByRole('button', { name: 'JSON으로 편집', exact: true }).click();
+	const source = page.getByRole('textbox', { name: '상태 소스', exact: true });
 	await source.fill('{unfinished');
 	await expect.element(applyButton()).toBeDisabled();
 	await expect
 		.element(page.getByRole('tabpanel', { name: '문제', exact: true }))
 		.toHaveTextContent('JSON');
-	await expect.poll(() => loadEditorDraft(game.id)?.documents.schema).toBe('{unfinished');
+	await expect.poll(() => durableDrafts.get(game.id)?.draft?.documents.state).toBe('{unfinished');
 	await screen.unmount();
+	localStorage.clear();
 	render(GameEditor, { gameId: game.id });
 	await expect.element(nameInput()).toBeVisible();
-	await page.getByRole('button', { name: /schema\.json/ }).click();
+	await page.getByRole('button', { name: /state\.json/ }).click();
+	await page.getByRole('button', { name: 'JSON으로 편집', exact: true }).click();
 	await expect.element(source).toHaveValue('{unfinished');
 	await returnLink().click();
 	expect(goto).toHaveBeenCalledWith(`/games/${game.id}`);
 	expect((await getGameWorkspace(game.id))?.game.schema).toEqual(game.schema);
 });
 
-it('retains edits and blocks return when local draft storage fails, then retries', async () => {
+it('retains edits and blocks return when durable draft storage fails, then retries', async () => {
 	const game = await createGame();
 	render(GameEditor, { gameId: game.id });
 	await expect.element(nameInput()).toBeVisible();
-	const storage = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
-		throw new Error('Storage unavailable');
-	});
+	vi.mocked(saveAuthoringDraft).mockRejectedValueOnce(new Error('Durable storage unavailable'));
 	await nameInput().fill('보존할 초안');
 	await returnLink().click();
 	await expect.element(page.getByRole('alert')).toBeVisible();
 	expect(goto).not.toHaveBeenCalled();
 	await expect.element(nameInput()).toHaveValue('보존할 초안');
-	storage.mockRestore();
 	await page.getByRole('button', { name: '초안 저장 다시 시도' }).click();
-	await expect.poll(() => loadEditorDraft(game.id)?.documents.info).toContain('보존할 초안');
+	await expect
+		.poll(() => durableDrafts.get(game.id)?.draft?.documents.info)
+		.toContain('보존할 초안');
 	await returnLink().click();
 	expect(goto).toHaveBeenCalledWith(`/games/${game.id}`);
 	expect((await getGameWorkspace(game.id))?.game.title).toBe(game.title);
+});
+
+it('serializes pending saves and waits for the latest draft before returning to play', async () => {
+	const game = await createGame();
+	const save = vi.mocked(saveAuthoringDraft);
+	const normallySave = save.getMockImplementation()!;
+	let release: (() => void) | undefined;
+	save.mockImplementationOnce(async (...args) => {
+		await new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		return normallySave(...args);
+	});
+	render(GameEditor, { gameId: game.id });
+	await expect.element(nameInput()).toBeVisible();
+	await nameInput().fill('먼저 저장할 초안');
+	await expect.poll(() => save.mock.calls.length).toBe(1);
+	await nameInput().fill('마지막 초안');
+	await returnLink().click();
+	await expect.element(nameInput()).toBeDisabled();
+	expect(goto).not.toHaveBeenCalled();
+	release!();
+	await expect
+		.poll(() => durableDrafts.get(game.id)?.draft?.documents.info)
+		.toContain('마지막 초안');
+	await expect.poll(() => vi.mocked(goto).mock.calls.length).toBe(1);
+	expect(durableDrafts.get(game.id)?.version).toBe(2);
+	expect((await getGameWorkspace(game.id))?.game.title).toBe(game.title);
+});
+
+it('recovers an unsaved cache after a durable save failure and persists it on reopening', async () => {
+	const game = await createGame();
+	const save = vi.mocked(saveAuthoringDraft);
+	const normallySave = save.getMockImplementation()!;
+	save.mockRejectedValue(new Error('Durable storage unavailable'));
+	const screen = render(GameEditor, { gameId: game.id });
+	await expect.element(nameInput()).toBeVisible();
+	await nameInput().fill('저장 실패 후 복구할 내용');
+	await returnLink().click();
+	await expect.element(page.getByRole('alert')).toHaveTextContent('Durable storage unavailable');
+	await screen.unmount();
+	// Let the rejected final flush finish before simulating a new process.
+	await new Promise((resolve) => setTimeout(resolve, 0));
+	save.mockImplementation(normallySave);
+	render(GameEditor, { gameId: game.id });
+	await expect.element(nameInput()).toHaveValue('저장 실패 후 복구할 내용');
+	await expect
+		.poll(() => durableDrafts.get(game.id)?.draft?.documents.info)
+		.toContain('저장 실패 후 복구할 내용');
+	expect((await getGameWorkspace(game.id))?.game.title).toBe(game.title);
+});
+
+it('flushes edits before intercepted internal navigation and retains the destination query and hash', async () => {
+	const game = await createGame();
+	render(GameEditor, { gameId: game.id });
+	await expect.element(nameInput()).toBeVisible();
+	await nameInput().fill('이동하기 전 보존');
+	const callback = vi.mocked(beforeNavigate).mock.lastCall![0];
+	const cancel = vi.fn();
+	callback({
+		cancel,
+		type: 'goto',
+		shallow: false,
+		from: null,
+		to: {
+			url: new URL('http://localhost/?from=editor#latest'),
+			params: {},
+			route: { id: '/' },
+			scroll: null
+		},
+		willUnload: false,
+		complete: Promise.resolve()
+	});
+	expect(cancel).toHaveBeenCalledOnce();
+	await expect.poll(() => vi.mocked(goto).mock.calls.length).toBe(1);
+	expect(goto).toHaveBeenCalledWith('/?from=editor#latest');
+	expect(durableDrafts.get(game.id)?.draft?.documents.info).toContain('이동하기 전 보존');
+});
+
+it('edits schema and initial values bidirectionally through GUI and canonical JSON', async () => {
+	const game = await createGame();
+	render(GameEditor, { gameId: game.id });
+	await expect.element(nameInput()).toBeVisible();
+	await page.getByRole('button', { name: /state\.json/ }).click();
+	expect(page.getByRole('button', { name: /schema\.json|initial-state\.json/ }).query()).toBeNull();
+	await page.getByRole('textbox', { name: '상태 새 필드 이름', exact: true }).fill('hp');
+	await page.getByRole('button', { name: '필드 추가', exact: true }).click();
+	await page.getByRole('checkbox', { name: '상태.hp 필수', exact: true }).click();
+	await page.getByRole('combobox', { name: '상태.hp 타입', exact: true }).selectOptions('integer');
+	await page.getByRole('button', { name: '변경', exact: true }).click();
+	await page.getByRole('spinbutton', { name: '상태.hp 초기값', exact: true }).fill('9');
+	await expect.poll(() => durableDrafts.get(game.id)?.draft?.documents.state).toContain('9');
+	await page.getByRole('button', { name: 'JSON으로 편집', exact: true }).click();
+	const source = page.getByRole('textbox', { name: '상태 소스', exact: true });
+	const parsed = JSON.parse((source.element() as HTMLTextAreaElement).value);
+	expect(parsed.schema.properties.hp.type).toBe('integer');
+	expect(parsed.schema.required).toContain('hp');
+	expect(parsed.initialState.hp).toBe(9);
+	parsed.schema.properties.hp.title = '체력';
+	parsed.initialState.hp = 12;
+	await source.fill(JSON.stringify(parsed, null, 2));
+	await page.getByRole('button', { name: 'GUI로 편집', exact: true }).click();
+	await page.getByRole('button', { name: '상태.hp 상세 설정', exact: true }).click();
+	await expect
+		.element(page.getByRole('textbox', { name: '상태.hp 표시 이름', exact: true }))
+		.toHaveValue('체력');
+	await expect
+		.element(page.getByRole('spinbutton', { name: '상태.hp 초기값', exact: true }))
+		.toHaveValue(12);
+	expect((await getGameWorkspace(game.id))?.game.initialState).toEqual(game.initialState);
+});
+
+it('requires modal confirmation to discard and ignores stale cache after the durable draft is cleared', async () => {
+	const game = await createGame();
+	const screen = render(GameEditor, { gameId: game.id });
+	await expect.element(nameInput()).toBeVisible();
+	await nameInput().fill('버릴 초안');
+	await expect.poll(() => durableDrafts.get(game.id)?.draft?.documents.info).toContain('버릴 초안');
+	await page.getByRole('button', { name: '변경 취소', exact: true }).click();
+	await expect
+		.element(page.getByRole('dialog', { name: '초안 버리기', exact: true }))
+		.toBeVisible();
+	await page.getByRole('button', { name: '취소', exact: true }).click();
+	await expect.element(nameInput()).toHaveValue('버릴 초안');
+	const remove = vi.spyOn(Storage.prototype, 'removeItem').mockImplementation(() => {
+		throw new Error('Cache unavailable');
+	});
+	await page.getByRole('button', { name: '변경 취소', exact: true }).click();
+	await page.getByRole('button', { name: '초안 버리기', exact: true }).click();
+	await expect.element(nameInput()).toHaveValue(game.title);
+	expect(durableDrafts.get(game.id)?.draft).toBeNull();
+	expect(loadEditorDraft(game.id)?.documents.info).toContain('버릴 초안');
+	remove.mockRestore();
+	await screen.unmount();
+	render(GameEditor, { gameId: game.id });
+	await expect.element(nameInput()).toHaveValue(game.title);
+	await expect.element(applyButton()).toBeDisabled();
+});
+
+it('keeps the runtime playground mounted across preview visibility and mode changes', async () => {
+	const game = await createGame();
+	render(GameEditor, { gameId: game.id });
+	await expect.element(nameInput()).toBeVisible();
+	const playground = document.querySelector('.playground');
+	expect(playground).not.toBeNull();
+	await page.getByRole('button', { name: '테스트 플레이', exact: true }).click();
+	expect(document.querySelector('.playground')).toBe(playground);
+	await page.getByRole('button', { name: '미리보기', exact: true }).click();
+	await expect
+		.element(
+			page.getByRole('complementary', { name: '초안 미리보기', exact: true, includeHidden: true })
+		)
+		.not.toBeVisible();
+	expect(document.querySelector('.playground')).toBe(playground);
+	await page.getByRole('button', { name: '미리보기', exact: true }).click();
+	await page.getByRole('button', { name: '실행 미리보기', exact: true }).click();
+	expect(document.querySelector('.playground')).toBe(playground);
 });
 
 it('preserves the local draft when another screen changes the applied game', async () => {
@@ -157,6 +338,32 @@ it('restores pane sizes, keeps resize bounds usable, and preserves expanded heig
 	).toBeGreaterThanOrEqual(139);
 });
 
+it('scrolls the state GUI above the inspector even when the inspector is enlarged', async () => {
+	const game = await createGame();
+	render(GameEditor, { gameId: game.id });
+	await expect.element(nameInput()).toBeVisible();
+	await page.getByRole('button', { name: /state\.json/ }).click();
+	for (const height of [500, 400]) {
+		await page.viewport(1200, height);
+		heightHandle().element().focus();
+		await userEvent.keyboard('{End}');
+		const editor = document.querySelector<HTMLElement>('.state-editor')!;
+		await expect.poll(() => editor.clientHeight).toBeGreaterThan(0);
+		expect(getComputedStyle(editor).overflowY).toBe('auto');
+		expect(editor.scrollHeight).toBeGreaterThan(editor.clientHeight);
+		const inspector = page.getByRole('region', { name: '편집기 검사', exact: true }).element();
+		expect(editor.getBoundingClientRect().bottom).toBeLessThanOrEqual(
+			inspector.getBoundingClientRect().top
+		);
+		editor.scrollTop = editor.scrollHeight;
+		await expect.poll(() => editor.scrollTop).toBeGreaterThan(0);
+		const lastSection = editor.querySelector('section:last-of-type')!;
+		expect(lastSection.getBoundingClientRect().bottom).toBeLessThanOrEqual(
+			editor.getBoundingClientRect().bottom
+		);
+	}
+});
+
 it('edits an independent document in the secondary pane without replacing the main form', async () => {
 	const game = await createGame();
 	render(GameEditor, { gameId: game.id });
@@ -203,8 +410,15 @@ it('keeps panels reachable without horizontal overflow on a narrow screen', asyn
 	await expect.element(nameInput()).toBeVisible();
 	expect(page.getByRole('complementary', { name: '게임 탐색기', exact: true }).query()).toBeNull();
 	expect(
-		page.getByRole('complementary', { name: '초안 미리보기', exact: true }).query()
-	).toBeNull();
+		page
+			.getByRole('complementary', { name: '초안 미리보기', exact: true, includeHidden: true })
+			.query()
+	).not.toBeNull();
+	await expect
+		.element(
+			page.getByRole('complementary', { name: '초안 미리보기', exact: true, includeHidden: true })
+		)
+		.not.toBeVisible();
 	await page.getByRole('button', { name: '탐색기', exact: true }).click();
 	await expect
 		.element(page.getByRole('complementary', { name: '게임 탐색기', exact: true }))

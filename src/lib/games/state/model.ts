@@ -9,15 +9,19 @@ import { parseGameSettings, parseScripts, type Game } from '#lib/games/model.js'
 import { parseStateDocument } from './schema.js';
 import { parseGameUI } from '../ui/runtime/model.js';
 import { parseGameAIContent } from '../ai/prompts.js';
+import { parseResources } from '../resources.js';
 
 export interface GameSnapshot extends Pick<
 	Game,
-	'schema' | 'initialState' | 'scripts' | 'settings' | 'ui' | 'ai'
+	'schema' | 'initialState' | 'scripts' | 'settings' | 'ui' | 'ai' | 'resources'
 > {
 	schemaVersion: 1;
 	id: string;
 	gameId: string;
 	createdAt: string;
+	/** Validated restoration checkpoints produced by a content migration; recorded events stay immutable. */
+	restoredStates?: Record<string, GameState>;
+	migrationFrom?: string;
 }
 
 export type StateSlot = { exists: false } | { exists: true; value: StateValue };
@@ -112,6 +116,18 @@ export function parseGameSnapshot(value: unknown): GameSnapshot {
 		scripts: parseScripts(input.scripts),
 		...(input.ui === undefined ? {} : { ui: parseGameUI(input.ui) }),
 		...(input.ai === undefined ? {} : { ai: parseGameAIContent(input.ai) }),
+		...(input.resources === undefined ? {} : { resources: parseResources(input.resources) }),
+		...(input.restoredStates === undefined
+			? {}
+			: {
+					restoredStates: Object.fromEntries(
+						Object.entries(record(input.restoredStates)).map(([id, state]) => [
+							identifier(id),
+							parseGameState(state)
+						])
+					),
+					migrationFrom: identifier(input.migrationFrom)
+				}),
 		settings: parseGameSettings(input.settings)
 	};
 }

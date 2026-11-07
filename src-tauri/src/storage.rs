@@ -107,9 +107,19 @@ struct StoredRecord {
 )]
 enum Request {
     List,
+    ReadDraft {
+        game_id: String,
+    },
+    WriteDraft {
+        game_id: String,
+        version: u64,
+        draft: Value,
+    },
     Read {
         game_id: String,
         session_id: Option<String>,
+        #[serde(default)]
+        include_history: bool,
     },
     Create {
         game_id: String,
@@ -160,7 +170,76 @@ fn open(path: &Path) -> Result<Connection, String> {
     } else if version != 1 {
         return Err("지원하지 않는 DB 버전이에요.".into());
     }
+    connection.execute_batch("CREATE TABLE IF NOT EXISTS editor_drafts (game_id TEXT PRIMARY KEY REFERENCES games(id) ON DELETE CASCADE, version INTEGER NOT NULL, value TEXT)").map_err(db_error)?;
     Ok(connection)
+}
+fn read_draft(connection: &Connection, game_id: &str) -> Result<Value, String> {
+    let exists: i64 = connection
+        .query_row("SELECT count(*) FROM games WHERE id=?1", [game_id], |row| {
+            row.get(0)
+        })
+        .map_err(db_error)?;
+    if exists != 1 {
+        return Err("게임을 찾을 수 없어요.".into());
+    }
+    let saved: Option<(i64, Option<String>)> = connection
+        .query_row(
+            "SELECT version,value FROM editor_drafts WHERE game_id=?1",
+            [game_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()
+        .map_err(db_error)?;
+    match saved {
+        None => Ok(json!({"version":0,"draft":null})),
+        Some((version, text)) => Ok(
+            json!({"version":version,"draft":match text {Some(text)=>serde_json::from_str::<Value>(&text).map_err(|_|"편집 초안을 읽을 수 없어요.")?,None=>Value::Null}}),
+        ),
+    }
+}
+fn validate_draft(game_id: &str, draft: &Value) -> Result<(), String> {
+    if draft.is_null() {
+        return Ok(());
+    }
+    if (draft["version"] != 1 && draft["version"] != 2)
+        || draft["gameId"].as_str() != Some(game_id)
+        || !draft["documents"].is_object()
+        || serde_json::to_string(draft)
+            .map_err(|_| "잘못된 편집 초안")?
+            .encode_utf16()
+            .count()
+            > 16 * 1024 * 1024
+    {
+        return Err("편집 초안의 형식이 올바르지 않아요.".into());
+    }
+    for name in ["info", "instructions", "state", "scripts", "ui", "lorebook"] {
+        if !draft["documents"][name].is_string() {
+            return Err("편집 문서가 없어요.".into());
+        }
+    }
+    if draft["version"] == 1 && !draft["documents"]["schema"].is_string() {
+        return Err("편집 문서가 없어요.".into());
+    }
+    if draft["documents"]
+        .get("assets")
+        .is_some_and(|value| !value.is_string())
+    {
+        return Err("잘못된 에셋 문서예요.".into());
+    }
+    let mut base = draft["baseContent"].clone();
+    if !base.is_object() {
+        return Err("초안의 원본 콘텐츠가 없어요.".into());
+    }
+    base["schemaVersion"] = json!(2);
+    base["id"] = json!(game_id);
+    base["activeSessionId"] = json!("editor-base");
+    base["createdAt"] = json!("2000-01-01T00:00:00.000Z");
+    base["updatedAt"] = base["createdAt"].clone();
+    crate::state_schema::validate_document(&base)?;
+    if !valid_value(Table::Games, &base) {
+        return Err("초안의 원본 콘텐츠가 올바르지 않아요.".into());
+    }
+    Ok(())
 }
 fn db_error(_: rusqlite::Error) -> String {
     "게임 데이터를 저장하거나 읽을 수 없어요.".into()
@@ -439,6 +518,71 @@ fn game_ui(value: Option<&Value>) -> bool {
     }
     true
 }
+fn resources(value: Option<&Value>) -> bool {
+    use base64::Engine;
+    let Some(value) = value else {
+        return true;
+    };
+    let Some(entries) = value.as_object() else {
+        return false;
+    };
+    if entries.len() > 128 {
+        return false;
+    }
+    let mut total = 0;
+    for (id, row) in entries {
+        if id.is_empty()
+            || id.len() > 100
+            || !id
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || "_.-".contains(c))
+            || ["__proto__", "constructor", "prototype"].contains(&id.as_str())
+        {
+            return false;
+        }
+        let Some(name) = row["name"].as_str() else {
+            return false;
+        };
+        let Some(mime) = row["mime"].as_str() else {
+            return false;
+        };
+        let Some(data) = row["data"].as_str() else {
+            return false;
+        };
+        if name.trim().is_empty()
+            || name.encode_utf16().count() > 200
+            || ![
+                "image/png",
+                "image/jpeg",
+                "image/webp",
+                "image/gif",
+                "audio/mpeg",
+                "audio/wav",
+                "audio/ogg",
+                "video/mp4",
+                "video/webm",
+            ]
+            .contains(&mime)
+        {
+            return false;
+        }
+        let prefix = format!("data:{mime};base64,");
+        let Some(encoded) = data.strip_prefix(&prefix) else {
+            return false;
+        };
+        if encoded.len() > 1_398_104 || encoded.is_empty() {
+            return false;
+        }
+        let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(encoded) else {
+            return false;
+        };
+        total += bytes.len();
+        if bytes.len() > 1_048_576 || total > 3_145_728 {
+            return false;
+        }
+    }
+    true
+}
 fn valid_value(table: Table, value: &Value) -> bool {
     match table {
         Table::Games => {
@@ -458,6 +602,7 @@ fn valid_value(table: Table, value: &Value) -> bool {
                 && object_state(&value["initialState"])
                 && scripts(&value["scripts"])
                 && game_ui(value.get("ui"))
+                && resources(value.get("resources"))
         }
         Table::Sessions => {
             id(&value["title"])
@@ -484,6 +629,14 @@ fn valid_value(table: Table, value: &Value) -> bool {
                 && object_state(&value["initialState"])
                 && scripts(&value["scripts"])
                 && game_ui(value.get("ui"))
+                && resources(value.get("resources"))
+                && value.get("restoredStates").is_none_or(|states| {
+                    states.as_object().is_some_and(|states| {
+                        states
+                            .iter()
+                            .all(|(key, state)| !key.trim().is_empty() && object_state(state))
+                    }) && id(&value["migrationFrom"])
+                })
         }
         Table::Progress => {
             id(&value["snapshotId"])
@@ -621,7 +774,10 @@ pub(crate) fn execute_request(path: &Path, input: Value) -> Result<Value, String
     let request: Request =
         serde_json::from_value(input).map_err(|_| "저장 요청의 형식이 올바르지 않아요.")?;
     let mut connection = open(path)?;
-    let read = matches!(request, Request::Read { .. } | Request::List);
+    let read = matches!(
+        request,
+        Request::Read { .. } | Request::ReadDraft { .. } | Request::List
+    );
     let transaction = connection
         .transaction_with_behavior(if read {
             TransactionBehavior::Deferred
@@ -630,12 +786,32 @@ pub(crate) fn execute_request(path: &Path, input: Value) -> Result<Value, String
         })
         .map_err(db_error)?;
     let result = match request {
+        Request::ReadDraft { game_id } => read_draft(&transaction, &game_id)?,
+        Request::WriteDraft {
+            game_id,
+            version,
+            draft,
+        } => {
+            let previous = read_draft(&transaction, &game_id)?;
+            if version >= 9_007_199_254_740_991 || previous["version"].as_u64() != Some(version) {
+                return Err("다른 편집기에서 초안이 변경되었어요.".into());
+            }
+            validate_draft(&game_id, &draft)?;
+            let text = if draft.is_null() {
+                None
+            } else {
+                Some(serde_json::to_string(&draft).map_err(|_| "잘못된 편집 초안")?)
+            };
+            transaction.execute("INSERT INTO editor_drafts (game_id,version,value) VALUES (?1,?2,?3) ON CONFLICT(game_id) DO UPDATE SET version=excluded.version,value=excluded.value",params![game_id,(version+1) as i64,text]).map_err(db_error)?;
+            json!({"version":version+1,"draft":draft})
+        }
         Request::List => {
             json!({ "version": 0, "records": read_rows(&transaction, Table::Games, None, None)? })
         }
         Request::Read {
             game_id,
             session_id,
+            include_history,
         } => {
             let version: Option<i64> = transaction
                 .query_row("SELECT version FROM games WHERE id=?1", [&game_id], |row| {
@@ -651,8 +827,14 @@ pub(crate) fn execute_request(path: &Path, input: Value) -> Result<Value, String
                     Some(&game_id),
                     None,
                 )?);
-                if let Some(session) = session_id {
-                    validate_history(&transaction, &game_id, &session)?;
+                if session_id.is_some() || include_history {
+                    if let Some(session) = session_id.as_deref() {
+                        validate_history(&transaction, &game_id, session)?;
+                    } else {
+                        for row in records.iter().filter(|row| row.table == Table::Sessions) {
+                            validate_history(&transaction, &game_id, &row.id)?;
+                        }
+                    }
                     for table in [
                         Table::Messages,
                         Table::Snapshots,
@@ -664,7 +846,7 @@ pub(crate) fn execute_request(path: &Path, input: Value) -> Result<Value, String
                             &transaction,
                             table,
                             Some(&game_id),
-                            Some(&session),
+                            session_id.as_deref(),
                         )?);
                     }
                 }
@@ -753,8 +935,15 @@ fn restored_state<'a>(
             return Err("게임 진행 리비전이 올바르지 않아요.".into());
         }
         revision = next;
-        for change in node["changes"].as_array().unwrap() {
-            apply_recorded_change(&mut state, change)?;
+        if let Some(mapped) = snapshot
+            .get("restoredStates")
+            .and_then(|states| states.get(node["id"].as_str().unwrap()))
+        {
+            state = mapped.clone();
+        } else {
+            for change in node["changes"].as_array().unwrap() {
+                apply_recorded_change(&mut state, change)?;
+            }
         }
         crate::state_schema::validate_value(&snapshot["schema"], &state, "load")?;
     }
@@ -790,6 +979,22 @@ fn validate_history(
         .find(|row| Some(row.id.as_str()) == progress.value["snapshotId"].as_str())
         .ok_or("세션의 게임 정의가 일치하지 않아요.")?
         .value;
+    if let Some(states) = snapshot.get("restoredStates") {
+        let source = snapshot["migrationFrom"]
+            .as_str()
+            .ok_or("상태 변환 원본이 없어요.")?;
+        if source == snapshot["id"].as_str().unwrap_or("")
+            || !snapshots.iter().any(|row| row.id == source)
+        {
+            return Err("상태 변환 원본을 찾을 수 없어요.".into());
+        }
+        for (id, state) in states.as_object().ok_or("잘못된 상태 변환 기록이에요.")? {
+            if !transactions.iter().any(|row| row.id == *id) {
+                return Err("상태 변환의 기록을 찾을 수 없어요.".into());
+            }
+            crate::state_schema::validate_value(&snapshot["schema"], state, "load")?;
+        }
+    }
     crate::state_schema::validate_value(&snapshot["schema"], &progress.value["state"], "load")?;
     let mut nodes = std::collections::HashMap::new();
     let mut revisions = std::collections::HashSet::new();
@@ -962,6 +1167,26 @@ fn prune(
         .into_iter()
         .filter(|row| !removed_messages.contains(&row.id))
         .collect();
+    for mut row in snapshots {
+        if let Some(states) = row
+            .value
+            .get_mut("restoredStates")
+            .and_then(Value::as_object_mut)
+        {
+            states.retain(|id, _| !removed.contains(id));
+            connection
+                .execute(
+                    "UPDATE snapshots SET value=?1 WHERE id=?2 AND game_id=?3 AND session_id=?4",
+                    params![
+                        serde_json::to_string(&row.value).map_err(|_| "잘못된 복원 상태")?,
+                        row.id,
+                        game_id,
+                        session_id
+                    ],
+                )
+                .map_err(db_error)?;
+        }
+    }
     surviving.sort_by_key(|row| row.value["sequence"].as_u64().unwrap());
     session.value["messageCount"] = json!(surviving.len());
     for (index, row) in surviving.iter_mut().enumerate() {
@@ -1140,6 +1365,20 @@ mod tests {
         invalid["layout"] = json!({"kind":"split","axis":"horizontal","ratio":0.5,"first":{"kind":"panel","id":"same"},"second":{"kind":"panel","id":"same"}});
         assert!(!game_ui(Some(&invalid)));
     }
+    #[test]
+    fn validates_portable_media_resources() {
+        let valid = json!({"portrait":{"name":"Portrait","mime":"image/png","data":"data:image/png;base64,aGVsbG8="}});
+        assert!(resources(Some(&valid)));
+        assert!(!resources(Some(
+            &json!({"portrait":{"name":"Unsafe","mime":"image/svg+xml","data":"data:image/svg+xml;base64,aGVsbG8="}})
+        )));
+        assert!(!resources(Some(
+            &json!({"portrait":{"name":"Remote","mime":"image/png","data":"https://example.com/image.png"}})
+        )));
+        assert!(!resources(Some(
+            &json!({"constructor":{"name":"Portrait","mime":"image/png","data":"data:image/png;base64,aGVsbG8="}})
+        )));
+    }
     use std::sync::atomic::{AtomicUsize, Ordering};
     static NEXT: AtomicUsize = AtomicUsize::new(0);
     struct Fixture(PathBuf);
@@ -1185,6 +1424,58 @@ mod tests {
     fn create() -> Value {
         json!({ "kind": "create", "gameId": "game", "records": [row("games", "game", None, game("게임 🧪")), row("sessions", "session", Some("session"), session("session"))] })
     }
+    #[test]
+    fn validates_unified_state_authoring_drafts() {
+        let mut draft = json!({"version":2,"gameId":"game","baseContent":game("Original"),"documents":{"info":"{}","instructions":"{}","state":"{unfinished","scripts":"{}","ui":"null","lorebook":"{}","assets":"{}"}});
+        assert!(validate_draft("game", &draft).is_ok());
+        draft["version"] = json!(1);
+        assert!(validate_draft("game", &draft).is_err());
+        draft["documents"]["schema"] = json!("{unfinished-schema");
+        assert!(validate_draft("game", &draft).is_ok());
+        draft["version"] = json!(2);
+        draft["documents"].as_object_mut().unwrap().remove("state");
+        assert!(validate_draft("game", &draft).is_err());
+    }
+
+    #[test]
+    fn persists_large_unfinished_editor_drafts_with_revision_guards() {
+        let fixture = Fixture::new();
+        fixture.create();
+        let text = "x".repeat(6 * 1024 * 1024);
+        let draft = json!({"version":2,"gameId":"game","baseContent":game("Original"),"documents":{"info":"{}","instructions":"{}","state":text,"scripts":"{}","ui":"null","lorebook":"{}","assets":"{}"}});
+        let saved = fixture
+            .request(json!({"kind":"writeDraft","gameId":"game","version":0,"draft":draft}))
+            .unwrap();
+        assert_eq!(saved["version"], 1);
+        let read = fixture
+            .request(json!({"kind":"readDraft","gameId":"game"}))
+            .unwrap();
+        assert_eq!(
+            read["draft"]["documents"]["state"].as_str().unwrap().len(),
+            6 * 1024 * 1024
+        );
+        assert!(
+            fixture
+                .request(json!({"kind":"writeDraft","gameId":"game","version":0,"draft":null}))
+                .is_err()
+        );
+        let mut foreign = draft;
+        foreign["gameId"] = json!("other");
+        assert!(
+            fixture
+                .request(json!({"kind":"writeDraft","gameId":"game","version":1,"draft":foreign}))
+                .is_err()
+        );
+        let cleared = fixture
+            .request(json!({"kind":"writeDraft","gameId":"game","version":1,"draft":null}))
+            .unwrap();
+        assert_eq!(cleared, json!({"version":2,"draft":null}));
+        assert!(
+            fixture
+                .request(json!({"kind":"writeDraft","gameId":"game","version":1,"draft":null}))
+                .is_err()
+        );
+    }
     fn commit(version: u64, records: Vec<Value>) -> Value {
         json!({ "kind": "commit", "gameId": "game", "version": version, "records": records, "deleteSessions": [] })
     }
@@ -1224,6 +1515,66 @@ mod tests {
     }
     fn prune_request(event: &str, revision: u64) -> Value {
         json!({"kind":"prune","gameId":"game","sessionId":"session","eventId":event,"expectedRevision":revision})
+    }
+    #[test]
+    fn applies_migrated_checkpoints_without_rewriting_events_and_prunes_their_owned_data() {
+        let fixture = branched_fixture();
+        let before = fixture.read();
+        let rows = before["records"].as_array().unwrap();
+        let original =
+            rows.iter().find(|row| row["table"] == "snapshots").unwrap()["value"].clone();
+        let mut snapshot = original.clone();
+        snapshot["id"] = json!("updated-content");
+        snapshot["schema"] = json!({"type":"object","properties":{"gold":{"type":"string"},"score":{"type":"integer"}},"required":["gold","score"],"additionalProperties":false});
+        snapshot["initialState"] = json!({"gold":"100","score":0});
+        snapshot["migrationFrom"] = json!("snapshot");
+        snapshot["restoredStates"] = json!({});
+        for (id, gold) in [
+            ("A", "90"),
+            ("B", "80"),
+            ("C", "70"),
+            ("D", "60"),
+            ("E", "50"),
+            ("F", "40"),
+        ] {
+            snapshot["restoredStates"][id] = json!({"gold":gold,"score":0});
+        }
+        let mut progress =
+            rows.iter().find(|row| row["table"] == "progress").unwrap()["value"].clone();
+        progress["snapshotId"] = json!("updated-content");
+        progress["revision"] = json!(7);
+        progress["state"] = json!({"gold":"40","score":0});
+        fixture
+            .request(commit(
+                1,
+                vec![
+                    row("snapshots", "updated-content", Some("session"), snapshot),
+                    row("progress", "session", Some("session"), progress),
+                ],
+            ))
+            .unwrap();
+        let all = fixture
+            .request(json!({"kind":"read","gameId":"game","includeHistory":true}))
+            .unwrap();
+        assert!(
+            all["records"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|row| row["table"] == "transactions")
+        );
+        let after = fixture.read();
+        let saved = after["records"].as_array().unwrap();
+        for event in rows.iter().filter(|row| row["table"] == "transactions") {
+            assert!(saved.contains(event));
+        }
+        let pruned = fixture.request(prune_request("B", 7)).unwrap();
+        let saved = pruned["records"].as_array().unwrap();
+        let progress = &saved.iter().find(|row| row["table"] == "progress").unwrap()["value"];
+        assert_eq!(progress["state"], json!({"gold":"90","score":0}));
+        for snapshot in saved.iter().filter(|row| row["table"] == "snapshots") {
+            assert!(snapshot["value"]["restoredStates"].get("F").is_none());
+        }
     }
     #[test]
     fn prunes_subtrees_and_restores_logged_state_and_messages_after_reopening() {

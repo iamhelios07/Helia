@@ -54,6 +54,7 @@ import { aiError } from './ai/protocol.js';
 import type { AgentWorkspaceResult } from './ai/loop.js';
 import type { RuleTrigger } from './scripting/protocol.js';
 import { editorContent, type GameEditorContent } from './editor.js';
+import { migrateState } from './state/migration.js';
 
 function makeSession(gameId: string): Session {
 	const now = new Date().toISOString();
@@ -146,7 +147,8 @@ function initialize(unit: StorageUnit, gameId: string, sessionId: string) {
 			schema: game.schema,
 			scripts: game.scripts,
 			...(game.ui ? { ui: game.ui } : {}),
-			...(game.ai ? { ai: game.ai } : {})
+			...(game.ai ? { ai: game.ai } : {}),
+			...(game.resources ? { resources: game.resources } : {})
 		});
 		const progress = createSessionState(snapshot, session.id);
 		unit.put('snapshots', snapshot, session.id);
@@ -555,35 +557,82 @@ export function createGameRepository(
 			gameId: string,
 			input: { baseContent: GameEditorContent; content: GameEditorContent }
 		) {
-			return withGame(gameId, (unit) => {
-				const previous = gameIn(unit, gameId);
-				const base = parseGame({
-					...previous,
-					...input.baseContent,
-					ui: input.baseContent.ui,
-					ai: input.baseContent.ai,
-					id: previous.id,
-					activeSessionId: previous.activeSessionId
-				});
-				if (
-					!sameValue(parseGameState(editorContent(previous)), parseGameState(editorContent(base)))
-				)
-					throw new Error(
-						'다른 화면에서 게임이 변경되었어요. 초안을 보존한 뒤 최신 게임을 다시 불러와주세요.'
-					);
-				const game = parseGame({
-					...previous,
-					...input.content,
-					ui: input.content.ui,
-					ai: input.content.ai,
-					id: previous.id,
-					activeSessionId: previous.activeSessionId,
-					createdAt: previous.createdAt,
-					updatedAt: new Date().toISOString()
-				});
-				unit.put('games', game);
-				return game;
-			});
+			return useStorage(
+				(request) =>
+					transport(request.kind === 'read' ? { ...request, includeHistory: true } : request),
+				gameId,
+				undefined,
+				(unit) => {
+					const previous = gameIn(unit, gameId);
+					const base = parseGame({
+						...previous,
+						...input.baseContent,
+						ui: input.baseContent.ui,
+						ai: input.baseContent.ai,
+						resources: input.baseContent.resources,
+						id: previous.id,
+						activeSessionId: previous.activeSessionId
+					});
+					if (
+						!sameValue(parseGameState(editorContent(previous)), parseGameState(editorContent(base)))
+					)
+						throw new Error(
+							'다른 화면에서 게임이 변경되었어요. 초안을 보존한 뒤 최신 게임을 다시 불러와주세요.'
+						);
+					const game = parseGame({
+						...previous,
+						...input.content,
+						ui: input.content.ui,
+						ai: input.content.ai,
+						resources: input.content.resources,
+						id: previous.id,
+						activeSessionId: previous.activeSessionId,
+						createdAt: previous.createdAt,
+						updatedAt: new Date().toISOString()
+					});
+					for (const raw of unit.all('sessions')) {
+						const session = parseSession(raw);
+						const saved = unit.get('progress', session.id);
+						if (saved === undefined) continue;
+						if (isSessionBusy(gameId, session.id))
+							throw Error('실행 중인 작업이 끝난 뒤 적용해주세요.');
+						const progress = parseSessionState(saved);
+						const snapshot = parseGameSnapshot(unit.get('snapshots', progress.snapshotId));
+						const transactions = unit
+							.all('transactions')
+							.map(parseTransaction)
+							.filter((node) => node.sessionId === session.id);
+						const history = { snapshot, progress, transactions };
+						const transform = (state: import('./state/value.js').GameState) =>
+							migrateState(state, snapshot.schema, game.schema, game.initialState);
+						const nextSnapshot = parseGameSnapshot({
+							...snapshot,
+							id: crypto.randomUUID(),
+							createdAt: new Date().toISOString(),
+							schema: game.schema,
+							initialState: transform(snapshot.initialState),
+							settings: game.settings,
+							scripts: game.scripts,
+							ui: game.ui,
+							ai: game.ai,
+							resources: game.resources,
+							migrationFrom: snapshot.id,
+							restoredStates: Object.fromEntries(
+								transactions.map((node) => [node.id, transform(stateAt(history, node.id))])
+							)
+						});
+						unit.put('snapshots', nextSnapshot, session.id);
+						unit.put('progress', {
+							...progress,
+							snapshotId: nextSnapshot.id,
+							revision: counter(progress.revision + 1),
+							state: transform(stateAt(history))
+						});
+					}
+					unit.put('games', game);
+					return game;
+				}
+			);
 		},
 		updateGameRules(
 			gameId: string,

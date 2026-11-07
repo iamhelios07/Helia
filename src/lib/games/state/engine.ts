@@ -66,9 +66,12 @@ export function stateAt(history: SessionHistory, headId = history.progress.headI
 		)
 			throw new Error('게임 진행 리비전이 올바르지 않아요.');
 		revision = transaction.createdRevision;
+		const checkpoints = history.snapshot.restoredStates;
 		state = validateState(
 			history.snapshot.schema,
-			applyChanges(state, transaction.changes),
+			checkpoints && Object.hasOwn(checkpoints, transaction.id)
+				? checkpoints[transaction.id]
+				: applyChanges(state, transaction.changes),
 			'load'
 		);
 	}

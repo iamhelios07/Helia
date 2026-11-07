@@ -7,6 +7,7 @@ import {
 	clearEditorDraft,
 	editorContent,
 	loadEditorDraft,
+	readEditorDraft,
 	storeEditorDraft,
 	validateEditorDraft
 } from './editor.js';
@@ -30,7 +31,7 @@ describe('IDE authoring drafts', () => {
 		const other = await repo.createGame();
 		const draft = createEditorDraft(game);
 		expect(changedEditorDraft(draft)).toBe(false);
-		draft.documents.schema = '{unfinished';
+		draft.documents.state = '{unfinished';
 		storeEditorDraft(draft);
 		expect(loadEditorDraft(game.id)).toEqual(draft);
 		expect(loadEditorDraft(other.id)).toBeNull();
@@ -38,21 +39,21 @@ describe('IDE authoring drafts', () => {
 		expect((await repo.getGameWorkspace(game.id))?.game).toEqual(game);
 		expect(validateEditorDraft(game, draft)).toMatchObject({
 			game: null,
-			problems: [{ documentId: 'schema' }]
+			problems: [{ documentId: 'state' }]
 		});
 	});
 	it('reports document errors and validates initial state against the edited schema', async () => {
 		const game = await repository().createGame();
 		const draft = createEditorDraft(game);
-		draft.documents.schema = JSON.stringify({
+		const schema = {
 			type: 'object',
 			properties: { hp: { type: 'integer' } },
 			required: ['hp'],
 			additionalProperties: false
-		});
-		draft.documents.state = JSON.stringify({ hp: 'wrong' });
+		};
+		draft.documents.state = JSON.stringify({ schema, initialState: { hp: 'wrong' } });
 		expect(validateEditorDraft(game, draft).problems[0].documentId).toBe('state');
-		draft.documents.state = JSON.stringify({ hp: 20 });
+		draft.documents.state = JSON.stringify({ schema, initialState: { hp: 20 } });
 		expect(validateEditorDraft(game, draft).game?.initialState).toEqual({ hp: 20 });
 	});
 	it('does not erase a newer draft when an older apply completes', async () => {
@@ -82,7 +83,7 @@ describe('IDE authoring drafts', () => {
 		});
 		expect(() => storeEditorDraft(draft)).toThrow('저장하지 못했어요');
 	});
-	it('atomically applies all authored content, retaining active session and existing snapshots', async () => {
+	it('atomically applies authored content to existing sessions, retaining active session and history', async () => {
 		const repo = repository();
 		const game = await repo.createGame();
 		const history = await repo.getSessionHistory(game.id, game.activeSessionId);
@@ -97,7 +98,7 @@ describe('IDE authoring drafts', () => {
 			firstMessage: 'Opening',
 			authorNote: 'Note'
 		});
-		draft.documents.state = JSON.stringify({});
+		draft.documents.state = JSON.stringify({ schema: game.schema, initialState: {} });
 		const validated = validateEditorDraft(game, draft);
 		expect(validated.problems).toEqual([]);
 		const other = await repo.createSession(game.id);
@@ -108,9 +109,49 @@ describe('IDE authoring drafts', () => {
 		expect(saved.title).toBe('Edited game');
 		expect(saved.settings.firstMessage).toBe('Opening');
 		expect(saved.activeSessionId).toBe(other.id);
-		expect((await repo.getSessionHistory(game.id, game.activeSessionId)).snapshot).toEqual(
-			history.snapshot
-		);
+		const refreshed = await repo.getSessionHistory(game.id, game.activeSessionId);
+		expect(refreshed.snapshot.settings).toEqual(saved.settings);
+		expect(refreshed.snapshot.migrationFrom).toBe(history.snapshot.id);
+		expect(refreshed.transactions).toEqual(history.transactions);
+	});
+	it('uses one canonical state document and migrates separate legacy sources without losing edits', async () => {
+		const game = await repository().createGame();
+		const draft = createEditorDraft(game);
+		expect(JSON.parse(draft.documents.state)).toEqual({
+			schema: game.schema,
+			initialState: game.initialState
+		});
+		expect(draft.documents).not.toHaveProperty('schema');
+		const legacy = {
+			...draft,
+			version: 1,
+			documents: {
+				...draft.documents,
+				schema: JSON.stringify(game.schema),
+				state: JSON.stringify(game.initialState)
+			}
+		};
+		const migrated = readEditorDraft(JSON.stringify(legacy), game.id);
+		expect(migrated).toEqual(draft);
+		expect(changedEditorDraft(migrated)).toBe(false);
+		legacy.documents.schema = JSON.stringify({
+			type: 'object',
+			properties: { hp: { type: 'integer' } },
+			required: ['hp'],
+			additionalProperties: false
+		});
+		legacy.documents.state = '{"hp":42}';
+		const edited = readEditorDraft(JSON.stringify(legacy), game.id);
+		expect(changedEditorDraft(edited)).toBe(true);
+		expect(validateEditorDraft(game, edited).game?.initialState).toEqual({ hp: 42 });
+		legacy.documents.schema = '{unfinished-schema';
+		legacy.documents.state = '{unfinished-state';
+		const unfinished = readEditorDraft(JSON.stringify(legacy), game.id);
+		expect(unfinished.documents.state).toContain(legacy.documents.schema);
+		expect(unfinished.documents.state).toContain(legacy.documents.state);
+		storeEditorDraft(unfinished);
+		expect(loadEditorDraft(game.id)).toEqual(unfinished);
+		expect(validateEditorDraft(game, unfinished).game).toBeNull();
 	});
 	it('rejects stale content and invalid new content without partial updates', async () => {
 		const repo = repository();

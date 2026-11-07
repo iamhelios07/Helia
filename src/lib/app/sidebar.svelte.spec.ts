@@ -10,12 +10,19 @@ import {
 	getGameWorkspace,
 	getSessionConversation,
 	createGame,
-	updateGameSettings
+	updateGame
 } from '#lib/games/repository.js';
 import type { Game, Session } from '#lib/games/model.js';
 
 vi.mock('$app/navigation', () => ({ goto: vi.fn() }));
 vi.mock('#lib/games/ai/browser.js', () => ({ invokeSessionAI: vi.fn() }));
+vi.mock('#lib/games/ui/runtime/bridge.js', () => ({
+	mountGameUI: vi.fn(async (_frame, _game, _session, options) => {
+		options?.onui?.(undefined);
+		options?.onready?.();
+		return Object.assign(() => {}, { setViews: () => {} });
+	})
+}));
 vi.mock('#lib/games/repository.js', () => ({
 	listGames: vi.fn(),
 	createGame: vi.fn(),
@@ -23,7 +30,7 @@ vi.mock('#lib/games/repository.js', () => ({
 	getSessionConversation: vi.fn(),
 	createSession: vi.fn(),
 	selectSession: vi.fn(),
-	updateGameSettings: vi.fn(),
+	updateGame: vi.fn(),
 	renameSession: vi.fn(),
 	deleteSession: vi.fn(),
 	getSessionTimeline: vi.fn(),
@@ -68,14 +75,9 @@ beforeEach(async () => {
 	vi.mocked(getGameWorkspace).mockResolvedValue({ game, sessions: [session] });
 	vi.mocked(getSessionConversation).mockResolvedValue({ session, messages: [] });
 	vi.mocked(createGame).mockResolvedValue({ ...game, id: 'created-game' });
-	vi.mocked(updateGameSettings).mockImplementation(async (_id, input) => ({
+	vi.mocked(updateGame).mockImplementation(async (_id, input) => ({
 		...game,
-		title: input.title,
-		settings: {
-			description: input.description,
-			firstMessage: input.firstMessage,
-			authorNote: input.authorNote
-		}
+		...input
 	}));
 });
 

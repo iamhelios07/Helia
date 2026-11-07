@@ -30,6 +30,18 @@ export function validateStoredHistory(records: readonly StoredRecord[]): void {
 			.filter((row) => row.table === 'transactions')
 			.map((row) => parseTransaction(row.value));
 		const history = { snapshot, progress, transactions };
+		if (snapshot.restoredStates) {
+			if (
+				snapshot.migrationFrom === snapshot.id ||
+				!owned.some((row) => row.table === 'snapshots' && row.id === snapshot.migrationFrom)
+			)
+				throw Error('상태 변환의 원본을 찾을 수 없어요.');
+			for (const [id, state] of Object.entries(snapshot.restoredStates)) {
+				if (!transactions.some((node) => node.id === id))
+					throw Error('상태 변환의 기록을 찾을 수 없어요.');
+				validateState(snapshot.schema, state, 'load');
+			}
+		}
 		const messageRows = owned.filter((row) => row.table === 'messages');
 		const sessionRow = owned.find((row) => row.table === 'sessions');
 		if (sessionRow) {

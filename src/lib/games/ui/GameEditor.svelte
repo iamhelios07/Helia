@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import { beforeNavigate, goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
+	import type { PathnameWithSearchOrHash } from '$app/types';
 	import Icon from '#lib/components/Icon.svelte';
 	import { getGameWorkspace, applyGameDraft } from '../repository.js';
 	import {
@@ -21,12 +22,37 @@
 	import EditorTabs from './editor/EditorTabs.svelte';
 	import SourceEditor from './editor/SourceEditor.svelte';
 	import { EDITOR_LAYOUT_LIMITS, loadEditorLayout, storeEditorLayout } from '../editor-layout.js';
+	import StateEditor from './editor/StateEditor.svelte';
+	import BundleEditor from './editor/BundleEditor.svelte';
+	import AssetEditor from './editor/AssetEditor.svelte';
+	import EditorPlayground from './editor/EditorPlayground.svelte';
+	import ConfirmDialog from '#lib/components/ConfirmDialog.svelte';
+	import { generateStateTypes } from '../state/schema.js';
+	import type { GameState } from '../state/value.js';
+	import { loadAuthoringDraft, saveAuthoringDraft } from '../editor-draft-storage.js';
+	import { isDesktopBuild } from '#lib/platform/index.js';
 
 	type DocumentId = EditorDocumentId | 'assets';
 	type BottomPanel = 'problems' | 'logs' | 'state';
 	let { gameId }: { gameId: string } = $props();
 	let game = $state.raw<Game | null>(null);
 	let draft = $state.raw<EditorDraft | null>(null);
+	let previewContent = $state.raw<Game | null>(null);
+	let previewMode = $state<'preview' | 'test'>('preview');
+	let runtimeState = $state.raw<GameState | null>(null);
+	let draftVersion = 0;
+	let persistedSource = '';
+	let saveQueue: Promise<unknown> = Promise.resolve();
+	let allowNavigation = false;
+	let loadGeneration = 0;
+	let draftLoaded = false;
+	let stateTypes = $derived.by(() => {
+		try {
+			return draft ? generateStateTypes(JSON.parse(draft.documents.state).schema) : '';
+		} catch {
+			return '';
+		}
+	});
 	let loading = $state(true);
 	let missing = $state(false);
 	let loadError = $state('');
@@ -35,7 +61,9 @@
 	let applyError = $state('');
 	let navigationError = $state('');
 	let applying = $state(false);
+	let discarding = $state(false);
 	let leaving = $state(false);
+	let editingBlocked = $derived(applying || discarding || leaving);
 	let saving = $state(false);
 	let savedLocally = $state(false);
 	let explorerOpen = $state(true);
@@ -101,14 +129,12 @@
 		openDocuments.map((id) => ({
 			id,
 			title: documentLabel(id),
-			dirty: id !== 'assets' && !!draft && draft.documents[id] !== baseDocuments?.[id]
+			dirty: !!draft && draft.documents[id] !== baseDocuments?.[id]
 		}))
 	);
-	let documentSource = $derived(
-		activeDocument && activeDocument !== 'assets' ? (draft?.documents[activeDocument] ?? '') : ''
-	);
+	let documentSource = $derived(activeDocument ? (draft?.documents[activeDocument] ?? '') : '');
 	let problems = $derived(validation?.problems ?? []);
-	let canApply = $derived(changed && !!validation?.game && !applying && !leaving);
+	let canApply = $derived(changed && !!validation?.game && !editingBlocked);
 	let draftStatus = $derived(
 		saveError
 			? '초안 저장 실패'
@@ -132,15 +158,12 @@
 		{
 			title: '상태',
 			icon: 'activity',
-			documents: [
-				{ id: 'schema', file: 'schema.json' },
-				{ id: 'state', file: 'initial-state.json' }
-			]
+			documents: [{ id: 'state', file: 'state.json' }]
 		},
 		{ title: '로직', icon: 'tool', documents: [{ id: 'scripts', file: 'scripts.json' }] },
 		{ title: '화면', icon: 'grid', documents: [{ id: 'ui', file: 'ui.json' }] },
 		{ title: '로어북', icon: 'book', documents: [{ id: 'lorebook', file: 'lorebook.json' }] },
-		{ title: '에셋', icon: 'image', documents: [{ id: 'assets', file: '참조 안내' }] }
+		{ title: '에셋', icon: 'image', documents: [{ id: 'assets', file: 'resources.json' }] }
 	];
 	const panels = [
 		{ id: 'problems', label: '문제' },
@@ -166,12 +189,45 @@
 		void load();
 		return () => {
 			clearTimeout(timer);
-			if (draft && changed) persistDraft();
+			if (draft && changed && !editingBlocked && JSON.stringify(draft) !== persistedSource)
+				void persistDraft();
 			disposed = true;
 		};
 	});
 	beforeNavigate((navigation) => {
-		if (applying || (draft && changed && !persistDraft())) navigation.cancel();
+		if (allowNavigation) {
+			allowNavigation = false;
+			return;
+		}
+		if (applying || discarding) {
+			navigation.cancel();
+			return;
+		}
+		if (!draft || !changed || JSON.stringify(draft) === persistedSource) return;
+		navigation.cancel();
+		if (leaving) return;
+		const target = navigation.to?.url;
+		leaving = true;
+		void (async () => {
+			try {
+				if (!(await persistDraft()) || !target || disposed) return;
+				allowNavigation = true;
+				if (navigation.willUnload) window.location.assign(target.href);
+				else {
+					const root = resolve('/').replace(/\/$/, '');
+					await goto(
+						resolve(
+							`${target.pathname.slice(root.length)}${target.search}${target.hash}` as PathnameWithSearchOrHash
+						)
+					);
+				}
+			} catch {
+				navigationError = '화면을 열지 못했어요. 초안은 유지됩니다.';
+			} finally {
+				allowNavigation = false;
+				if (!disposed) leaving = false;
+			}
+		})();
 	});
 	function readFields(source: string | undefined): Record<string, string> | null {
 		if (!source) return null;
@@ -209,23 +265,49 @@
 		];
 	}
 	async function load() {
+		const generation = ++loadGeneration;
 		loading = true;
 		missing = false;
 		loadError = '';
 		recoveryError = '';
 		try {
 			const workspace = await getGameWorkspace(gameId);
-			if (disposed) return;
+			if (disposed || generation !== loadGeneration) return;
 			if (!workspace) {
 				missing = true;
 				return;
 			}
 			game = workspace.game;
 			try {
-				const recovered = loadEditorDraft(gameId);
+				const remote = await loadAuthoringDraft(gameId);
+				if (disposed || generation !== loadGeneration) return;
+				draftVersion = remote.version;
+				draftLoaded = true;
+				persistedSource = JSON.stringify(remote.draft ?? createEditorDraft(game));
+				let cache: EditorDraft | null = null;
+				let cachedRevision: string | null = null;
+				let cachedText: string | null = null;
+				try {
+					cachedText = localStorage.getItem('helia:editor-draft:' + gameId);
+				} catch {
+					/* The durable store does not depend on localStorage access. */
+				}
+				if (cachedText !== null) {
+					try {
+						cache = loadEditorDraft(gameId);
+						cachedRevision = localStorage.getItem('helia:editor-draft-revision:' + gameId);
+					} catch (error) {
+						if (!remote.draft) throw error;
+					}
+				}
+				const cacheMatches =
+					cachedRevision === String(remote.version) ||
+					(remote.version === 0 && cachedRevision === null && !remote.draft);
+				const recovered = cache && cacheMatches ? cache : remote.draft;
 				let next = recovered ?? createEditorDraft(game);
-				if (!recovered) {
-					const legacy = loadSettingsDraft(gameId);
+				let legacy: ReturnType<typeof loadSettingsDraft> = null;
+				if (!recovered && remote.version === 0) {
+					legacy = loadSettingsDraft(gameId);
 					if (legacy) {
 						next = {
 							...next,
@@ -247,49 +329,92 @@
 								)
 							}
 						};
-						storeEditorDraft(next);
-						clearSettingsDraft(gameId, legacy);
 					}
 				}
 				draft = next;
-				savedLocally = !!recovered || changedEditorDraft(next);
-				log(savedLocally ? '저장된 편집 초안을 복구했어요.' : '게임 콘텐츠를 불러왔어요.');
+				previewContent = validateEditorDraft(game, next).game ?? game;
+				savedLocally = changedEditorDraft(next) && JSON.stringify(next) === persistedSource;
+				log(recovered || legacy ? '저장된 편집 초안을 복구했어요.' : '게임 콘텐츠를 불러왔어요.');
+				if (JSON.stringify(next) !== persistedSource) {
+					const saved = await persistDraft();
+					if (saved && legacy) {
+						try {
+							clearSettingsDraft(gameId, legacy);
+						} catch {
+							/* Durable copy is already saved. */
+						}
+					}
+				}
 			} catch (error) {
-				recoveryError = error instanceof Error ? error.message : '편집 초안을 불러오지 못했어요.';
+				if (!disposed && generation === loadGeneration)
+					recoveryError = error instanceof Error ? error.message : '편집 초안을 불러오지 못했어요.';
 			}
 		} catch {
 			if (!disposed) loadError = '게임을 불러오지 못했어요. 다시 시도해주세요.';
 		} finally {
-			if (!disposed) loading = false;
+			if (!disposed && generation === loadGeneration) loading = false;
 		}
 	}
 	function changeDocument(id: EditorDocumentId, value: string) {
-		if (!draft || applying) return;
+		if (!draft || editingBlocked) return;
 		draft = { ...draft, documents: { ...draft.documents, [id]: value } };
+		if (game) {
+			const checked = validateEditorDraft(game, draft);
+			if (checked.game) previewContent = checked.game;
+		}
 		saveError = '';
 		applyError = '';
 		saving = true;
 		discardRequested = false;
 		clearTimeout(timer);
-		timer = setTimeout(persistDraft, 250);
+		timer = setTimeout(() => {
+			timer = undefined;
+			void persistDraft();
+		}, 250);
 	}
 	function changeField(id: 'info' | 'instructions', key: string, value: string) {
 		const fields = readFields(draft?.documents[id]);
 		if (fields) changeDocument(id, JSON.stringify({ ...fields, [key]: value }, null, 2));
 	}
-	function persistDraft(): boolean {
+	async function persistDraft(): Promise<boolean> {
 		clearTimeout(timer);
+		timer = undefined;
 		if (!draft) return true;
+		const snapshot = draft;
+		const source = JSON.stringify(snapshot);
+		cacheDraft(snapshot);
+		if (!disposed) saving = true;
+		const operation = saveQueue.then(async () => {
+			try {
+				if (source !== persistedSource) {
+					const saved = await saveAuthoringDraft(gameId, snapshot, draftVersion);
+					draftVersion = saved.version;
+					persistedSource = source;
+				}
+				// The latest local edit descends from this revision even if another save is queued.
+				if (draft) cacheDraft(draft);
+				if (!disposed) {
+					saveError = '';
+					savedLocally = changed && JSON.stringify(draft) === persistedSource;
+				}
+				return true;
+			} catch (error) {
+				if (!disposed)
+					saveError = error instanceof Error ? error.message : '초안을 저장하지 못했어요.';
+				return false;
+			}
+		});
+		saveQueue = operation;
+		const result = await operation;
+		if (!disposed && saveQueue === operation) saving = timer !== undefined;
+		return result;
+	}
+	function cacheDraft(snapshot: EditorDraft) {
 		try {
-			storeEditorDraft(draft);
-			saveError = '';
-			saving = false;
-			savedLocally = true;
-			return true;
-		} catch (error) {
-			saveError = error instanceof Error ? error.message : '편집 초안을 저장하지 못했어요.';
-			saving = false;
-			return false;
+			storeEditorDraft(snapshot);
+			localStorage.setItem('helia:editor-draft-revision:' + gameId, String(draftVersion));
+		} catch {
+			/* Recovery cache is secondary to the durable store. */
 		}
 	}
 	function openDocument(id: DocumentId) {
@@ -308,18 +433,18 @@
 			: [...sourceDocuments, id];
 	}
 	async function apply() {
-		if (!draft || !game || applying || !changed) return;
-		if (!persistDraft()) return;
-		const checked = validateEditorDraft(game, draft);
-		if (!checked.game) {
-			bottomOpen = true;
-			bottomPanel = 'problems';
-			return;
-		}
-		const snapshot = draft;
+		if (!draft || !game || editingBlocked || !changed) return;
 		applying = true;
 		applyError = '';
 		try {
+			if (!(await persistDraft()) || disposed) return;
+			const snapshot = draft;
+			const checked = validateEditorDraft(game, snapshot);
+			if (!checked.game) {
+				bottomOpen = true;
+				bottomPanel = 'problems';
+				return;
+			}
 			const updated = await applyGameDraft(gameId, {
 				baseContent: snapshot.baseContent,
 				content: editorContent(checked.game)
@@ -327,9 +452,17 @@
 			if (disposed) return;
 			game = updated;
 			draft = createEditorDraft(updated);
+			previewContent = updated;
 			savedLocally = false;
 			try {
-				clearEditorDraft(gameId, snapshot);
+				const saved = await saveAuthoringDraft(gameId, null, draftVersion);
+				draftVersion = saved.version;
+				persistedSource = JSON.stringify(draft);
+				try {
+					clearEditorDraft(gameId, snapshot);
+				} catch {
+					/* Old cache revisions cannot replace a cleared durable draft. */
+				}
 			} catch {
 				saveError = '적용은 완료됐지만 저장된 초안을 정리하지 못했어요.';
 			}
@@ -344,12 +477,29 @@
 			if (!disposed) applying = false;
 		}
 	}
-	function discard() {
-		if (!game || applying) return;
+	async function discard() {
+		if (!game || editingBlocked) return;
+		discarding = true;
 		try {
 			clearTimeout(timer);
-			clearEditorDraft(gameId);
+			timer = undefined;
+			await saveQueue;
+			if (!draftLoaded) {
+				const remote = await loadAuthoringDraft(gameId);
+				draftVersion = remote.version;
+				draftLoaded = true;
+			}
+			const saved = await saveAuthoringDraft(gameId, null, draftVersion);
+			draftVersion = saved.version;
+			try {
+				clearEditorDraft(gameId);
+			} catch {
+				/* The durable tombstone takes priority over an old cache. */
+			}
+			if (disposed) return;
 			draft = createEditorDraft(game);
+			persistedSource = JSON.stringify(draft);
+			previewContent = game;
 			savedLocally = false;
 			saving = false;
 			saveError = '';
@@ -357,12 +507,18 @@
 			recoveryError = '';
 			discardRequested = false;
 			log('미적용 초안을 버리고 적용된 콘텐츠로 돌아왔어요.');
-		} catch {
-			saveError = '저장된 초안을 정리하지 못했어요. 다시 시도해주세요.';
+		} catch (error) {
+			if (!disposed)
+				saveError =
+					error instanceof Error
+						? error.message
+						: '저장된 초안을 정리하지 못했어요. 다시 시도해주세요.';
+		} finally {
+			if (!disposed) discarding = false;
 		}
 	}
 	async function returnToPlay(event: MouseEvent) {
-		if (applying || leaving) {
+		if (editingBlocked) {
 			event.preventDefault();
 			return;
 		}
@@ -370,9 +526,9 @@
 			return;
 		event.preventDefault();
 		navigationError = '';
-		if (draft && changed && !persistDraft()) return;
 		leaving = true;
 		try {
+			if ((draft && changed && !(await persistDraft())) || disposed) return;
 			await goto(resolve('/games/[id]', { id: gameId }));
 		} catch {
 			navigationError = '플레이 화면을 열지 못했어요. 다시 시도해주세요.';
@@ -381,7 +537,7 @@
 		}
 	}
 	function shortcuts(event: KeyboardEvent) {
-		if (!draft || !(event.ctrlKey || event.metaKey)) return;
+		if (!draft || editingBlocked || !(event.ctrlKey || event.metaKey)) return;
 		if (event.key.toLowerCase() === 's') {
 			event.preventDefault();
 			persistDraft();
@@ -492,7 +648,7 @@
 <svelte:window
 	onkeydown={shortcuts}
 	onpagehide={() => {
-		if (draft && changed) persistDraft();
+		if (draft && changed && !editingBlocked) void persistDraft();
 	}}
 />
 <main class="game-editor" aria-label="게임 편집기">
@@ -546,11 +702,19 @@
 				class="return-link"
 				aria-label="플레이로 돌아가기"
 				href={resolve('/games/[id]', { id: gameId })}
-				aria-disabled={applying || leaving}
+				aria-disabled={editingBlocked}
 				onclick={returnToPlay}><Icon name="arrow-left" size={15} /><span>플레이로 돌아가기</span></a
 			>
 		</div>
 	</header>
+	{#if discardRequested}<ConfirmDialog
+			title="초안 버리기"
+			message="저장된 미적용 초안을 모두 버리고 적용된 콘텐츠로 돌아갈까요?"
+			confirmLabel="초안 버리기"
+			disabled={editingBlocked}
+			onconfirm={discard}
+			oncancel={() => (discardRequested = false)}
+		/>{/if}
 	{#if navigationError}<div class="error-banner" role="alert">{navigationError}</div>{/if}
 	{#if loading}<div class="load-state" role="status">게임을 불러오는 중…</div>
 	{:else if loadError}<div class="load-state">
@@ -560,26 +724,19 @@
 	{:else if missing}<div class="load-state"><h2>게임을 찾을 수 없어요</h2></div>
 	{:else if recoveryError}<div class="load-state">
 			<p role="alert">{recoveryError}</p>
+			{#if saveError}<p role="alert">{saveError}</p>{/if}
 			<div>
 				<button type="button" onclick={load}>초안 다시 읽기</button><button
 					type="button"
 					onclick={() => (discardRequested = true)}>적용된 콘텐츠로 다시 시작</button
 				>
 			</div>
-			{#if discardRequested}<p>저장된 초안을 버릴까요?</p>
-				<button type="button" onclick={discard}>초안 버리기</button>{/if}
 		</div>
 	{:else if draft && game}
 		{#if saveError}<div class="error-banner" role="alert">
 				{saveError}<button type="button" onclick={persistDraft}>초안 저장 다시 시도</button>
 			</div>{/if}
 		{#if applyError}<div class="error-banner" role="alert">{applyError}</div>{/if}
-		{#if discardRequested}<div class="discard-banner" role="alert">
-				<span>미적용 초안을 버리고 적용된 콘텐츠로 돌아갈까요?</span><button
-					type="button"
-					onclick={discard}>초안 버리기</button
-				><button type="button" onclick={() => (discardRequested = false)}>계속 편집</button>
-			</div>{/if}
 		<div
 			class="workspace"
 			bind:clientWidth={workspaceWidth}
@@ -588,7 +745,9 @@
 		>
 			{#if explorerOpen}<aside class="explorer" aria-label="게임 탐색기">
 					<div class="section-heading">
-						<span>탐색기</span><span class="local-label">로컬 초안</span>
+						<span>탐색기</span><span class="local-label"
+							>{isDesktopBuild ? '기기 저장' : '서버 저장'}</span
+						>
 					</div>
 					<div class="project-title">
 						<Icon name="folder" size={14} /><span>{info?.title ?? game.title}</span>
@@ -603,7 +762,7 @@
 										onclick={() => openDocument(document.id)}
 										><span class="file-mark">{document.id === 'assets' ? '↗' : '{}'}</span><span
 											>{document.file}</span
-										>{#if document.id !== 'assets' && draft.documents[document.id] !== baseDocuments?.[document.id]}<span
+										>{#if draft.documents[document.id] !== baseDocuments?.[document.id]}<span
 												class="modified-dot"
 												aria-label="미적용 변경">●</span
 											>{/if}</button
@@ -611,9 +770,9 @@
 							</section>{/each}
 					</nav>
 					<div class="explorer-note">
-						<span>적용 전 변경은 이 기기에 초안으로 저장돼요.</span>{#if changed}<button
+						<span>변경은 초안으로 저장되며 적용을 눌러야 게임에 반영돼요.</span>{#if changed}<button
 								type="button"
-								disabled={applying}
+								disabled={editingBlocked}
 								onclick={() => (discardRequested = true)}>변경 취소</button
 							>{/if}
 					</div>
@@ -649,13 +808,12 @@
 							<span>게임</span><Icon name="arrow-right" size={11} /><span
 								>{documentLabel(activeDocument)}</span
 							><span class="breadcrumb-file">{documentFile(activeDocument)}</span
-							>{#if activeDocument === 'info' || activeDocument === 'instructions'}<button
+							>{#if activeDocument}<button
 									type="button"
 									aria-pressed={sourceDocuments.includes(activeDocument)}
-									onclick={() =>
-										activeDocument && activeDocument !== 'assets' && toggleSource(activeDocument)}
+									onclick={() => activeDocument && toggleSource(activeDocument)}
 									>{sourceDocuments.includes(activeDocument)
-										? '폼으로 편집'
+										? 'GUI로 편집'
 										: 'JSON으로 편집'}</button
 								>{/if}
 						</div>{/if}
@@ -672,23 +830,32 @@
 									<h2>편집할 문서를 열어주세요</h2>
 									<p>왼쪽 탐색기에서 문서를 선택하세요.<br />문서를 닫아도 초안은 유지돼요.</p>
 								</div>
-							{:else if activeDocument === 'assets'}<div class="form-document">
-									<p class="eyebrow">에셋</p>
-									<h2>게임의 미디어 참조</h2>
-									<p class="document-help">
-										현재 게임 형식에는 별도의 에셋 목록이 없어요. 화면에서 사용하는 이미지와 미디어
-										경로는 화면 소스에서 관리할 수 있어요.
-									</p>
-									<button type="button" class="inline-action" onclick={() => openDocument('ui')}
-										>화면 문서 열기<Icon name="arrow-right" size={13} /></button
-									>
-								</div>
+							{:else if activeDocument === 'assets' && !sourceDocuments.includes('assets')}
+								<AssetEditor
+									source={draft.documents.assets}
+									disabled={editingBlocked}
+									onchange={(value) => changeDocument('assets', value)}
+								/>
+							{:else if activeDocument === 'state' && !sourceDocuments.includes('state')}
+								<StateEditor
+									source={draft.documents.state}
+									disabled={editingBlocked}
+									onchange={(value) => changeDocument('state', value)}
+								/>
+							{:else if (activeDocument === 'scripts' || activeDocument === 'ui') && !sourceDocuments.includes(activeDocument)}
+								<BundleEditor
+									source={draft.documents[activeDocument]}
+									kind={activeDocument}
+									{stateTypes}
+									disabled={editingBlocked}
+									onchange={(value) => activeDocument && changeDocument(activeDocument, value)}
+								/>
 							{:else if activeDocument === 'info' && !sourceDocuments.includes('info') && info}<div
 									class="form-document"
 								>
 									<h2>게임 정보</h2>
 									<p class="document-help">라이브러리에 표시되는 게임의 기본 정보예요.</p>
-									<fieldset disabled={applying}>
+									<fieldset disabled={editingBlocked}>
 										<label for="editor-name">이름</label><input
 											id="editor-name"
 											value={info.title ?? ''}
@@ -719,7 +886,7 @@
 								>
 									<h2>게임 지침</h2>
 									<p class="document-help">AI가 사용하는 게임 설명과 대화의 시작을 작성해요.</p>
-									<fieldset disabled={applying}>
+									<fieldset disabled={editingBlocked}>
 										<label for="editor-description">게임 설명</label><textarea
 											id="editor-description"
 											rows="6"
@@ -746,11 +913,8 @@
 							{:else}<SourceEditor
 									value={documentSource}
 									label="{documentLabel(activeDocument)} 소스"
-									disabled={applying}
-									onchange={(value) =>
-										activeDocument &&
-										activeDocument !== 'assets' &&
-										changeDocument(activeDocument, value)}
+									disabled={editingBlocked}
+									onchange={(value) => activeDocument && changeDocument(activeDocument, value)}
 								/>{/if}
 						</div>
 						{#if splitOpen}
@@ -785,7 +949,7 @@
 								<SourceEditor
 									value={draft.documents[secondaryDocument]}
 									label="보조 {documentLabel(secondaryDocument)} 소스"
-									disabled={applying}
+									disabled={editingBlocked}
 									onchange={(value) => changeDocument(secondaryDocument, value)}
 								/>
 							</section>
@@ -868,7 +1032,11 @@
 											<time>{entry.time}</time><span>{entry.message}</span>
 										</li>{/each}
 								</ul>
-							{:else}<pre class="state-inspection">{draft.documents.state}</pre>{/if}
+							{:else}<pre class="state-inspection">{JSON.stringify(
+										runtimeState ?? previewContent?.initialState,
+										null,
+										2
+									)}</pre>{/if}
 						</div>{/if}
 				</section>
 			</div>
@@ -886,48 +1054,52 @@
 					onpointerup={saveLayout}
 					onpointercancel={saveLayout}
 					onkeydown={(event) => resizeEdgeKey(event, 'preview')}
-				></div>
-				<aside class="preview" aria-label="초안 미리보기">
-					<div class="section-heading">
-						<span>미리보기</span><button
-							type="button"
-							class="icon-button"
-							aria-label="미리보기 닫기"
-							onclick={() => (previewOpen = false)}><Icon name="close" size={14} /></button
-						>
-					</div>
-					<div class="preview-body">
-						<p class="preview-caption">
-							<span class="status-dot"></span>현재 초안 · 콘텐츠 미리보기
-						</p>
-						<div class="preview-game">
-							<span class="preview-genre">{info?.genre || '장르 미지정'}</span>
-							<h2>{info?.title || '이름 없는 게임'}</h2>
-							{#if info?.description}<p class="preview-introduction">{info.description}</p>{/if}
-						</div>
-						<div class="preview-divider">첫 메시지</div>
-						{#if instructions?.firstMessage}<div class="opening-preview">
-								{instructions.firstMessage}
-							</div>{:else}<p class="preview-empty">
-								첫 메시지를 작성하면 여기에 표시돼요.
-							</p>{/if}{#if instructions?.description}<details>
-								<summary>게임 설명</summary>
-								<p class="preview-text">{instructions.description}</p>
-							</details>{/if}{#if instructions?.authorNote}<details>
-								<summary>작가 노트</summary>
-								<p class="preview-text">{instructions.authorNote}</p>
-							</details>{/if}
-						<div class="preview-bottom">
-							<Icon name="info" size={13} /><span
-								>입력한 콘텐츠만 표시해요. 게임 로직과 화면 소스는 실행하지 않아요.</span
-							>
-						</div>
-					</div>
-				</aside>{/if}
+				></div>{/if}
+			<aside
+				class="preview"
+				aria-label="초안 미리보기"
+				style:display={previewOpen ? undefined : 'none'}
+			>
+				<div class="section-heading">
+					<span>미리보기</span><button
+						type="button"
+						class="icon-button"
+						aria-label="미리보기 닫기"
+						onclick={() => (previewOpen = false)}><Icon name="close" size={14} /></button
+					>
+				</div>
+				<div class="playground-tabs">
+					<button
+						type="button"
+						aria-pressed={previewMode === 'preview'}
+						onclick={() => (previewMode = 'preview')}>실행 미리보기</button
+					>
+					<button
+						type="button"
+						aria-pressed={previewMode === 'test'}
+						onclick={() => (previewMode = 'test')}>테스트 플레이</button
+					>
+				</div>
+				{#if problems.length}<p class="preview-error">
+						입력 오류를 수정하면 미리보기에 반영돼요. 마지막 정상 콘텐츠를 표시합니다.
+					</p>{/if}
+				<div class="preview-body">
+					{#if previewContent}<EditorPlayground
+							game={previewContent}
+							mode={previewMode}
+							ondiagnostic={(entry) =>
+								log(
+									entry.detail ? entry.message + '\n' + entry.detail : entry.message,
+									entry.failed
+								)}
+							onstate={(state) => (runtimeState = state)}
+						/>{/if}
+				</div>
+			</aside>
 		</div>
 		<footer class="status-bar">
 			{#if layoutWarning}<span title={layoutWarning}>패널 크기 저장 안 됨</span>{/if}
-			<span><Icon name="edit" size={11} />로컬 편집</span><span
+			<span><Icon name="edit" size={11} />{isDesktopBuild ? '기기 저장' : '서버 저장'}</span><span
 				>{changed ? '게임에 적용되지 않은 변경이 있어요' : '적용된 콘텐츠와 일치해요'}</span
 			><span class="status-right"
 				>{activeDocument && activeDocument !== 'assets'
@@ -1335,13 +1507,6 @@
 		overflow: auto;
 		padding: 24px clamp(20px, 3vw, 32px) 35px;
 	}
-	.eyebrow {
-		font-size: 10px;
-		letter-spacing: 0.12em;
-		color: var(--text-muted);
-		margin-bottom: 10px;
-		opacity: 0.7;
-	}
 	.form-document h2 {
 		font-size: 19px;
 		font-weight: 550;
@@ -1401,14 +1566,6 @@
 		font-size: 11px;
 		color: var(--text-muted);
 		max-width: 700px;
-	}
-	.inline-action {
-		display: inline-flex;
-		align-items: center;
-		gap: 8px;
-		padding: 8px 10px;
-		border: 1px solid var(--border-strong);
-		font-size: 11px;
 	}
 	.empty-editor {
 		height: 100%;
@@ -1564,6 +1721,8 @@
 	}
 	.preview {
 		width: var(--preview-width);
+		min-width: 0;
+		min-height: 0;
 		flex-shrink: 0;
 		border-left: 1px solid var(--border);
 		display: flex;
@@ -1572,94 +1731,31 @@
 	}
 	.preview-body {
 		overflow: auto;
-		padding: 18px;
+		min-height: 0;
 		flex: 1;
 	}
-	.preview-caption {
+	.playground-tabs {
 		display: flex;
-		gap: 6px;
-		align-items: center;
-		font-size: 10px;
-		color: var(--text-muted);
-		margin-bottom: 22px;
+		gap: 4px;
+		padding: 6px 8px;
+		border-bottom: 1px solid var(--border);
+		flex-shrink: 0;
 	}
-	.preview-game {
-		padding-bottom: 22px;
-	}
-	.preview-genre {
+	.playground-tabs button {
+		flex: 1;
+		padding: 7px 4px;
 		font-size: 11px;
-		color: var(--text-muted);
 	}
-	.preview-game h2 {
-		font-size: 20px;
-		font-weight: 550;
-		line-height: 1.5;
-		margin-top: 7px;
-		overflow-wrap: anywhere;
+	.playground-tabs button[aria-pressed='true'] {
+		background: var(--surface-hover);
 		color: var(--text-strong);
 	}
-	.preview-introduction {
-		margin-top: 10px;
-		white-space: pre-wrap;
+	.preview-error {
+		padding: 9px 12px;
 		font-size: 11px;
-		color: var(--text-muted);
-		line-height: 1.9;
-		overflow-wrap: anywhere;
-	}
-	.preview-divider {
-		font-size: 11px;
-		color: var(--text-muted);
-		border-top: 1px solid var(--border);
-		padding-top: 17px;
-		margin-bottom: 11px;
-	}
-	.opening-preview {
-		padding: 13px;
-		border: 1px solid var(--border);
-		border-radius: 6px;
-		background: var(--background);
-		font-size: 11px;
-		line-height: 1.95;
-		white-space: pre-wrap;
-		overflow-wrap: anywhere;
-	}
-	.preview-empty {
-		font-size: 11px;
-		color: var(--text-muted);
-		line-height: 1.8;
-		padding: 8px 0 16px;
-	}
-	.preview details {
-		border-top: 1px solid var(--border);
-		margin-top: 18px;
-		padding-top: 13px;
-		font-size: 11px;
-		color: var(--text-muted);
-	}
-	.preview summary {
-		cursor: pointer;
-	}
-	.preview-text {
-		font-size: 11px;
-		line-height: 1.9;
-		white-space: pre-wrap;
-		overflow-wrap: anywhere;
-		margin-top: 12px;
-	}
-	.preview-bottom {
-		display: flex;
-		align-items: flex-start;
-		gap: 7px;
-		color: var(--text-muted);
-		font-size: 11px;
-		line-height: 1.8;
-		border-top: 1px solid var(--border);
-		margin-top: 22px;
-		padding-top: 14px;
-	}
-	.preview-bottom :global(svg) {
-		margin-top: 2px;
-		flex-shrink: 0;
+		line-height: 1.6;
+		color: #eab4ae;
+		border-bottom: 1px solid var(--border);
 	}
 	.status-bar {
 		min-height: 25px;
@@ -1680,8 +1776,7 @@
 	.status-right {
 		margin-left: auto;
 	}
-	.error-banner,
-	.discard-banner {
+	.error-banner {
 		display: flex;
 		align-items: center;
 		gap: 14px;
@@ -1695,7 +1790,6 @@
 		color: #eab4ae;
 	}
 	.error-banner button,
-	.discard-banner button,
 	.load-state button {
 		border: 1px solid var(--border-strong);
 		padding: 5px 8px;

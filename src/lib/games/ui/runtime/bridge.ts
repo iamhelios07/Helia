@@ -14,13 +14,38 @@ import { invokeSessionAI } from '#lib/games/ai/browser.js';
 // UI State lasts only for this application execution, scoped to a game and session.
 const transient = new Map<string, GameState>();
 export type GameUIHandle = (() => void) & { setViews(views: PanelView[]): void };
+export interface GameUIRuntime {
+	getSessionHistory: typeof getSessionHistory;
+	executeSessionAction: typeof executeSessionAction;
+	commitSessionTransaction: typeof commitSessionTransaction;
+	subscribeSessionChanges: typeof subscribeSessionChanges;
+	subscribeSessionEvents: typeof subscribeSessionEvents;
+	invokeSessionAI: typeof invokeSessionAI;
+}
+function defaultRuntime(): GameUIRuntime {
+	return {
+		getSessionHistory,
+		executeSessionAction,
+		commitSessionTransaction,
+		subscribeSessionChanges,
+		subscribeSessionEvents,
+		invokeSessionAI
+	};
+}
 export interface MountOptions {
 	onerror?: (message: string) => void;
 	onready?: () => void;
 	onui?: (ui: GameUI | undefined) => void;
 	onbusy?: (busy: boolean) => void;
 	onpanels?: (panels: PanelInfo[]) => void;
+	/** The current iframe must be remounted when an applied authoring snapshot changes. */
+	oncontentchange?: () => void;
 	blocked?: () => boolean;
+	/** An isolated authoring runtime; omitted during normal play. */
+	runtime?: GameUIRuntime;
+	ondiagnostic?: (message: string, detail?: unknown) => void;
+	/** Isolated previews must not retain transient UI state after disposal. */
+	ephemeral?: boolean;
 }
 
 /** The iframe has no origin/storage/native privileges; the host owns validation and all commits. */
@@ -30,15 +55,37 @@ export async function mountGameUI(
 	sessionId: string,
 	options: MountOptions = {}
 ): Promise<GameUIHandle> {
-	let history = await getSessionHistory(gameId, sessionId);
+	const runtime = options.runtime ?? defaultRuntime();
+	let history = await runtime.getSessionHistory(gameId, sessionId);
 	const ui = history.snapshot.ui;
 	options.onui?.(ui);
 	if (!ui) {
 		options.onready?.();
-		return Object.assign(() => {}, { setViews: () => {} });
+		let disposed = false;
+		const unsubscribe = options.oncontentchange
+			? runtime.subscribeSessionChanges(gameId, sessionId, () => {
+					void runtime
+						.getSessionHistory(gameId, sessionId)
+						.then((next) => {
+							if (!disposed && next.snapshot.id !== history.snapshot.id) {
+								cleanup();
+								options.oncontentchange?.();
+							}
+						})
+						.catch(() => {
+							if (!disposed) options.onerror?.('게임 상태를 새로 불러오지 못했어요.');
+						});
+				})
+			: () => {};
+		function cleanup() {
+			if (disposed) return;
+			disposed = true;
+			unsubscribe();
+		}
+		return Object.assign(cleanup, { setViews: () => {} });
 	}
 	const token = crypto.randomUUID();
-	const document = await compileGameUI(ui, token);
+	const document = await compileGameUI(ui, token, history.snapshot.resources);
 	const channel = new MessageChannel();
 	const abort = new AbortController();
 	const stateKey = JSON.stringify([gameId, sessionId]);
@@ -63,7 +110,12 @@ export async function mountGameUI(
 				try {
 					while (dirty && !disposed) {
 						dirty = false;
-						const next = await getSessionHistory(gameId, sessionId);
+						const next = await runtime.getSessionHistory(gameId, sessionId);
+						if (!disposed && next.snapshot.id !== history.snapshot.id) {
+							dispose();
+							options.oncontentchange?.();
+							return;
+						}
 						if (!disposed && next.progress.revision >= history.progress.revision) {
 							history = next;
 							sendState();
@@ -78,10 +130,10 @@ export async function mountGameUI(
 			})();
 		return refreshing;
 	}
-	const unsubscribeChanges = subscribeSessionChanges(gameId, sessionId, () => {
+	const unsubscribeChanges = runtime.subscribeSessionChanges(gameId, sessionId, () => {
 		void refresh();
 	});
-	const unsubscribeEvents = subscribeSessionEvents(gameId, sessionId, (event) => {
+	const unsubscribeEvents = runtime.subscribeSessionEvents(gameId, sessionId, (event) => {
 		if (queuedEvents.length < 128) queuedEvents.push(parseGameState(event));
 		void refresh();
 	});
@@ -101,9 +153,14 @@ export async function mountGameUI(
 				return;
 			}
 			if (message.kind === 'error') {
+				options.ondiagnostic?.('게임 UI 실행 오류', message);
 				clearTimeout(timeout);
 				options.onerror?.('게임 UI를 실행하지 못했어요. 다시 시도해주세요.');
 				dispose();
+				return;
+			}
+			if (message.kind === 'diagnostic') {
+				options.ondiagnostic?.('게임 UI 패널 오류', message);
 				return;
 			}
 			if (message.kind === 'panels') {
@@ -149,7 +206,7 @@ export async function mountGameUI(
 				if (message.kind === 'ai') {
 					if (typeof message.text !== 'string') throw Error('Invalid AI request');
 					result = (
-						await invokeSessionAI(
+						await runtime.invokeSessionAI(
 							gameId,
 							sessionId,
 							{ text: message.text, visible: message.visible === true },
@@ -157,14 +214,14 @@ export async function mountGameUI(
 						)
 					).history;
 				} else if (message.kind === 'action')
-					result = await executeSessionAction(
+					result = await runtime.executeSessionAction(
 						gameId,
 						sessionId,
 						{ expectedRevision: history.progress.revision, action: action! },
 						{ signal: abort.signal }
 					);
 				else
-					result = await commitSessionTransaction(
+					result = await runtime.commitSessionTransaction(
 						gameId,
 						sessionId,
 						{
@@ -184,7 +241,8 @@ export async function mountGameUI(
 				if (!disposed) options.onbusy?.(false);
 			}
 			send({ kind: 'response', id, ok: true, result: { revision: history.progress.revision } });
-		} catch {
+		} catch (error) {
+			options.ondiagnostic?.('게임 UI 요청 실패', error);
 			if (id)
 				send({
 					kind: 'response',
@@ -227,6 +285,7 @@ export async function mountGameUI(
 		frame.removeEventListener('load', navigation);
 		channel.port1.close();
 		channel.port2.close();
+		if (options.ephemeral) transient.delete(stateKey);
 		frame.removeAttribute('srcdoc');
 		if (busy) options.onbusy?.(false);
 	}

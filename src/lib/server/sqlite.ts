@@ -139,7 +139,13 @@ export function openStorage(filename: string) {
 							throw new Error('삭제할 기록을 찾을 수 없어요.');
 					}
 					// Deletion shifts surviving sequence numbers down, so update messages forwards.
-					for (const row of plan.updates) writeRow(row, false);
+					for (const row of plan.updates) {
+						if (row.table === 'snapshots')
+							db.run(
+								sql`update snapshots set value=${JSON.stringify(row.value)} where id=${row.id} and game_id=${command.gameId} and session_id=${command.sessionId}`
+							);
+						else writeRow(row, false);
+					}
 					db.run(sql`update games set version=version+1 where id=${command.gameId}`);
 					const records = read();
 					validateStoredHistory(records);
@@ -155,7 +161,7 @@ export function openStorage(filename: string) {
 						...readRows('games', command.gameId),
 						...readRows('sessions', command.gameId)
 					];
-					if (command.sessionId !== undefined) {
+					if (command.sessionId !== undefined || command.includeHistory) {
 						for (const table of [
 							'messages',
 							'snapshots',

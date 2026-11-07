@@ -13,11 +13,28 @@ import { aiError, AI_LIMITS, type AgentOptions } from './protocol.js';
 import { runAgentWorkspace } from './loop.js';
 import { beginGeneration } from './transport.js';
 
+/** A separate repository lets authoring playthroughs use the same BYOK loop without live writes. */
+export interface SessionAIRuntime {
+	getSessionTimeline: typeof getSessionTimeline;
+	commitSessionAgent: typeof commitSessionAgent;
+	executeSessionAgentHook: typeof executeSessionAgentHook;
+	runAction: typeof runCreatorAction;
+}
+function defaultRuntime(): SessionAIRuntime {
+	return {
+		getSessionTimeline,
+		commitSessionAgent,
+		executeSessionAgentHook,
+		runAction: runCreatorAction
+	};
+}
+
 export async function invokeSessionAI(
 	gameId: string,
 	sessionId: string,
 	input: { text: string; visible?: boolean; modelId?: string },
-	options: AgentOptions = {}
+	options: AgentOptions = {},
+	runtime: SessionAIRuntime = defaultRuntime()
 ) {
 	const text = validateMessageContent(input.text),
 		settings = loadAISettings(),
@@ -27,7 +44,7 @@ export async function invokeSessionAI(
 	const provider = settings.providers.find((p) => p.id === model.providerId);
 	if (!provider) throw new Error('모델의 API 연결을 확인해주세요.');
 	if (options.signal?.aborted) throw aiError('canceled');
-	const timeline = await getSessionTimeline(gameId, sessionId),
+	const timeline = await runtime.getSessionTimeline(gameId, sessionId),
 		idle = beginSessionActivity(gameId, sessionId);
 	const signal = AbortSignal.any([
 		AbortSignal.timeout(AI_LIMITS.timeoutMs),
@@ -55,14 +72,14 @@ export async function invokeSessionAI(
 				text,
 				{ provider: providerAddress(provider), model: model.modelId },
 				scope.generate,
-				runCreatorAction,
+				runtime.runAction,
 				signal,
 				emit,
 				prompt
 			);
 			if (signal.aborted) throw aiError('canceled');
 			emit({ type: 'status', status: 'committing' });
-			const committed = await commitSessionAgent(
+			const committed = await runtime.commitSessionAgent(
 				gameId,
 				sessionId,
 				{
@@ -79,7 +96,7 @@ export async function invokeSessionAI(
 			for (const job of result.hooks) {
 				if (signal.aborted) break;
 				try {
-					await executeSessionAgentHook(gameId, sessionId, job.name, job.trigger, {
+					await runtime.executeSessionAgentHook(gameId, sessionId, job.name, job.trigger, {
 						signal,
 						lease: scope.lease
 					});
@@ -87,7 +104,7 @@ export async function invokeSessionAI(
 					emit({ type: 'tool', name: job.name, status: 'failed' });
 				}
 			}
-			return await getSessionTimeline(gameId, sessionId).catch(() => committed);
+			return await runtime.getSessionTimeline(gameId, sessionId).catch(() => committed);
 		} finally {
 			signal.removeEventListener('abort', cancel);
 		}

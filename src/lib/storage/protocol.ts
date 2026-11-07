@@ -32,7 +32,7 @@ export interface StorageView {
 }
 export type StorageRequest =
 	| { kind: 'list' }
-	| { kind: 'read'; gameId: string; sessionId?: string }
+	| { kind: 'read'; gameId: string; sessionId?: string; includeHistory?: boolean }
 	| { kind: 'create'; gameId: string; records: StoredRecord[] }
 	| { kind: 'prune'; gameId: string; sessionId: string; eventId: string; expectedRevision: number }
 	| {
@@ -109,6 +109,7 @@ export function parseRequest(value: unknown): StorageRequest {
 		return {
 			kind: 'read',
 			gameId,
+			...(input.includeHistory === true ? { includeHistory: true } : {}),
 			...(input.sessionId === undefined ? {} : { sessionId: identifier(input.sessionId) })
 		};
 	const records = parseRecords(input.records, gameId);

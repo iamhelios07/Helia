@@ -5,18 +5,19 @@ import {
 	validateGameMetadata,
 	type Game
 } from './model.js';
-import { parseObjectSchema, parseStateDocument } from './state/schema.js';
+import { parseStateDocument } from './state/schema.js';
 import { parseGameUI } from './ui/runtime/model.js';
 import { parseGameAIContent } from './ai/prompts.js';
+import { parseResources } from './resources.js';
 
 export const EDITOR_DOCUMENTS = [
 	{ id: 'info', label: '게임 정보' },
 	{ id: 'instructions', label: '게임 지침' },
-	{ id: 'schema', label: '상태 스키마' },
-	{ id: 'state', label: '초기 상태' },
+	{ id: 'state', label: '상태' },
 	{ id: 'scripts', label: '로직' },
 	{ id: 'ui', label: '화면' },
-	{ id: 'lorebook', label: '로어북' }
+	{ id: 'lorebook', label: '로어북' },
+	{ id: 'assets', label: '에셋' }
 ] as const;
 export type EditorDocumentId = (typeof EDITOR_DOCUMENTS)[number]['id'];
 export type GameEditorContent = Pick<
@@ -30,9 +31,10 @@ export type GameEditorContent = Pick<
 	| 'scripts'
 	| 'ui'
 	| 'ai'
+	| 'resources'
 >;
 export interface EditorDraft {
-	version: 1;
+	version: 2;
 	gameId: string;
 	baseContent: GameEditorContent;
 	documents: Record<EditorDocumentId, string>;
@@ -43,7 +45,7 @@ export interface EditorProblem {
 }
 
 const prefix = 'helia:editor-draft:';
-const MAX_DRAFT_LENGTH = 4 * 1024 * 1024;
+const MAX_DRAFT_LENGTH = 16 * 1024 * 1024;
 const format = (value: unknown) => JSON.stringify(value, null, 2);
 
 /** Content comparison intentionally excludes active session and timestamps. */
@@ -57,7 +59,8 @@ export function editorContent(game: Game): GameEditorContent {
 		initialState: game.initialState,
 		scripts: game.scripts,
 		...(game.ui ? { ui: game.ui } : {}),
-		...(game.ai ? { ai: game.ai } : {})
+		...(game.ai ? { ai: game.ai } : {}),
+		...(game.resources ? { resources: game.resources } : {})
 	});
 }
 
@@ -65,29 +68,29 @@ function documents(content: GameEditorContent): EditorDraft['documents'] {
 	return {
 		info: format({ title: content.title, genre: content.genre, description: content.description }),
 		instructions: format(content.settings),
-		schema: format(content.schema),
-		state: format(content.initialState),
+		state: format({ schema: content.schema, initialState: content.initialState }),
 		scripts: format(content.scripts),
 		ui: format(content.ui ?? null),
-		lorebook: format(content.ai ?? { version: 1, lorebook: [] })
+		lorebook: format(content.ai ?? { version: 1, lorebook: [] }),
+		assets: format(content.resources ?? {})
 	};
 }
 export function createEditorDraft(game: Game): EditorDraft {
 	const baseContent = editorContent(game);
-	return { version: 1, gameId: game.id, baseContent, documents: documents(baseContent) };
+	return { version: 2, gameId: game.id, baseContent, documents: documents(baseContent) };
 }
 export function changedEditorDraft(draft: EditorDraft): boolean {
 	const initial = documents(draft.baseContent);
 	return EDITOR_DOCUMENTS.some(({ id }) => draft.documents[id] !== initial[id]);
 }
 
-function readDraft(text: string, gameId: string): EditorDraft {
+export function readEditorDraft(text: string, gameId: string): EditorDraft {
 	if (text.length > MAX_DRAFT_LENGTH) throw new Error('편집 초안이 너무 커요.');
 	const value: unknown = JSON.parse(text);
 	if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('잘못된 초안');
 	const row = value as Record<string, unknown>;
 	if (
-		row.version !== 1 ||
+		(row.version !== 1 && row.version !== 2) ||
 		row.gameId !== gameId ||
 		!row.documents ||
 		typeof row.documents !== 'object' ||
@@ -95,6 +98,18 @@ function readDraft(text: string, gameId: string): EditorDraft {
 	)
 		throw new Error('잘못된 초안');
 	const source = row.documents as Record<string, unknown>;
+	if (row.version === 1) {
+		if (typeof source.schema !== 'string' || typeof source.state !== 'string')
+			throw new Error('잘못된 초안');
+		// Wrap unfinished text verbatim too: migration must never discard an incomplete edit.
+		const combined = `{\n"schema": ${source.schema},\n"initialState": ${source.state}\n}`;
+		try {
+			source.state = format(JSON.parse(combined));
+		} catch {
+			source.state = combined;
+		}
+	}
+	if (source.assets === undefined) source.assets = '{}';
 	if (EDITOR_DOCUMENTS.some(({ id }) => typeof source[id] !== 'string'))
 		throw new Error('잘못된 초안');
 	// Rebuild the stored base with the same runtime validators used by persisted games.
@@ -107,7 +122,7 @@ function readDraft(text: string, gameId: string): EditorDraft {
 		updatedAt: '2000-01-01T00:00:00.000Z'
 	});
 	return {
-		version: 1,
+		version: 2,
 		gameId,
 		baseContent: editorContent(base),
 		documents: Object.fromEntries(
@@ -118,7 +133,7 @@ function readDraft(text: string, gameId: string): EditorDraft {
 export function loadEditorDraft(gameId: string): EditorDraft | null {
 	try {
 		const text = localStorage.getItem(prefix + gameId);
-		return text === null ? null : readDraft(text, gameId);
+		return text === null ? null : readEditorDraft(text, gameId);
 	} catch {
 		throw new Error('편집 초안을 불러오지 못했어요. 저장된 초안은 유지됩니다.');
 	}
@@ -126,7 +141,7 @@ export function loadEditorDraft(gameId: string): EditorDraft | null {
 export function storeEditorDraft(draft: EditorDraft): void {
 	try {
 		const text = JSON.stringify(draft);
-		readDraft(text, draft.gameId);
+		readEditorDraft(text, draft.gameId);
 		localStorage.setItem(prefix + draft.gameId, text);
 	} catch {
 		throw new Error('편집 초안을 저장하지 못했어요. 입력 내용은 화면에 유지됩니다.');
@@ -162,22 +177,11 @@ export function validateEditorDraft(
 	}
 	const info = check('info', validateGameMetadata);
 	const settings = check('instructions', parseGameSettings);
-	const schema = check('schema', parseObjectSchema);
-	const state = check('state', (value) => value);
+	const stateDocument = check('state', parseStateDocument);
 	const scripts = check('scripts', parseScripts);
 	const ui = check('ui', (value) => (value === null ? null : parseGameUI(value)));
 	const ai = check('lorebook', parseGameAIContent);
-	let stateDocument: ReturnType<typeof parseStateDocument> | undefined;
-	if (schema !== undefined && state !== undefined) {
-		try {
-			stateDocument = parseStateDocument({ schema, initialState: state });
-		} catch (error) {
-			problems.push({
-				documentId: 'state',
-				message: error instanceof Error ? error.message : '스키마와 초기 상태를 확인해주세요.'
-			});
-		}
-	}
+	const resources = check('assets', parseResources);
 	if (
 		problems.length ||
 		!info ||
@@ -185,7 +189,8 @@ export function validateEditorDraft(
 		!stateDocument ||
 		!scripts ||
 		ui === undefined ||
-		!ai
+		!ai ||
+		!resources
 	)
 		return { game: null, problems };
 	return {
@@ -196,7 +201,8 @@ export function validateEditorDraft(
 			...stateDocument,
 			scripts,
 			ui: ui ?? undefined,
-			ai
+			ai,
+			resources
 		}),
 		problems
 	};
