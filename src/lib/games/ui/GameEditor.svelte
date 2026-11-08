@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onMount, onDestroy } from 'svelte';
 	import { beforeNavigate, goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import type { PathnameWithSearchOrHash } from '$app/types';
@@ -23,7 +23,11 @@
 	import SourceEditor from './editor/SourceEditor.svelte';
 	import { EDITOR_LAYOUT_LIMITS, loadEditorLayout, storeEditorLayout } from '../editor-layout.js';
 	import StateEditor from './editor/StateEditor.svelte';
-	import BundleEditor from './editor/BundleEditor.svelte';
+	import CodeExplorer from './editor/CodeExplorer.svelte';
+	import AssetExplorer from './editor/AssetExplorer.svelte';
+	import { parseCodeProject, compileAuthoringGame } from '../code-project.js';
+	import type { CodeDiagnostic } from '../code-authoring.js';
+	import { MonacoProject } from './editor/monaco-project.js';
 	import AssetEditor from './editor/AssetEditor.svelte';
 	import EditorPlayground from './editor/EditorPlayground.svelte';
 	import ConfirmDialog from '#lib/components/ConfirmDialog.svelte';
@@ -32,7 +36,11 @@
 	import { loadAuthoringDraft, saveAuthoringDraft } from '../editor-draft-storage.js';
 	import { isDesktopBuild } from '#lib/platform/index.js';
 
-	type DocumentId = EditorDocumentId | 'assets';
+	type DocumentId =
+		| Exclude<EditorDocumentId, 'code' | 'assets'>
+		| `code:${string}`
+		| `asset:${string}`
+		| 'types:GameState';
 	type BottomPanel = 'problems' | 'logs' | 'state';
 	let { gameId }: { gameId: string } = $props();
 	let game = $state.raw<Game | null>(null);
@@ -69,7 +77,7 @@
 	let explorerOpen = $state(true);
 	let previewOpen = $state(true);
 	let splitOpen = $state(false);
-	let secondaryDocument = $state<EditorDocumentId>('state');
+	let secondaryDocument = $state<DocumentId>('state');
 	let splitRatio = $state(50);
 	let workspaceWidth = $state(1100);
 	let explorerWidth = $state(200);
@@ -114,7 +122,45 @@
 	let bottomPanel = $state<BottomPanel>('problems');
 	let openDocuments = $state<DocumentId[]>(['info', 'instructions']);
 	let activeDocument = $state<DocumentId | null>('info');
-	let sourceDocuments = $state<EditorDocumentId[]>([]);
+	let sourceDocuments = $state<string[]>([]);
+	let codeSelection = $state<string | null>(null);
+	let codeProject = $derived.by(() => {
+		try {
+			return draft ? parseCodeProject(JSON.parse(draft.documents.code)) : null;
+		} catch {
+			return null;
+		}
+	});
+	let codeDiagnostics = $state<CodeDiagnostic[]>([]);
+	let buildError = $state<{
+		documentId: string;
+		message: string;
+		file?: string;
+		line?: number;
+		column?: number;
+	} | null>(null);
+	let previewTimer: ReturnType<typeof setTimeout> | undefined;
+	let previewGeneration = 0;
+	let codeLocation = $state<{ line: number; column: number; sequence: number } | undefined>();
+	const monacoProject = new MonacoProject();
+	function receiveDiagnostics(items: CodeDiagnostic[]) {
+		codeDiagnostics = items;
+	}
+	onDestroy(() => monacoProject.dispose());
+	$effect(() => {
+		monacoProject.update(
+			codeProject?.files ?? {},
+			stateTypes,
+			draft
+				? Object.fromEntries(
+						Object.entries(draft.documents)
+							.filter(([id]) => !['code', 'assets'].includes(id))
+							.map(([id, source]) => ['documents/' + id + '.json', source])
+					)
+				: {},
+			receiveDiagnostics
+		);
+	});
 	let discardRequested = $state(false);
 	let logs = $state<{ id: number; time: string; message: string; failed: boolean }[]>([]);
 	let timer: ReturnType<typeof setTimeout> | undefined;
@@ -129,12 +175,37 @@
 		openDocuments.map((id) => ({
 			id,
 			title: documentLabel(id),
-			dirty: !!draft && draft.documents[id] !== baseDocuments?.[id]
+			dirty: documentDirty(id)
 		}))
 	);
-	let documentSource = $derived(activeDocument ? (draft?.documents[activeDocument] ?? '') : '');
-	let problems = $derived(validation?.problems ?? []);
-	let canApply = $derived(changed && !!validation?.game && !editingBlocked);
+	let documentSource = $derived(activeDocument ? sourceFor(activeDocument) : '');
+	let problems = $derived.by(() => {
+		const items = [
+			...(validation?.problems ?? []),
+			...codeDiagnostics.map((item) => ({
+				documentId: 'code',
+				message: item.message,
+				file: item.module,
+				line: item.line,
+				column: item.column
+			})),
+			...(buildError ? [buildError] : [])
+		];
+		const unique: ((typeof items)[number] & { key: string })[] = [];
+		for (const problem of items) {
+			// Monaco and the build can report the same error. Keep one row per location/message.
+			const key = JSON.stringify([
+				problem.documentId,
+				'file' in problem ? problem.file : null,
+				'line' in problem ? problem.line : null,
+				'column' in problem ? problem.column : null,
+				problem.message
+			]);
+			if (!unique.some((item) => item.key === key)) unique.push({ ...problem, key });
+		}
+		return unique;
+	});
+	let canApply = $derived(changed && !!validation?.game && !buildError && !editingBlocked);
 	let draftStatus = $derived(
 		saveError
 			? '초안 저장 실패'
@@ -146,24 +217,25 @@
 	);
 	const categories: {
 		title: string;
-		icon: 'info' | 'book' | 'activity' | 'tool' | 'grid' | 'image';
+		icon: 'info' | 'book';
 		documents: { id: DocumentId; file: string }[];
 	}[] = [
-		{ title: '게임 정보', icon: 'info', documents: [{ id: 'info', file: 'game.json' }] },
 		{
-			title: '게임 지침',
+			title: '게임',
+			icon: 'info',
+			documents: [
+				{ id: 'info', file: 'game.json' },
+				{ id: 'instructions', file: 'instructions.json' }
+			]
+		},
+		{
+			title: '게임 데이터',
 			icon: 'book',
-			documents: [{ id: 'instructions', file: 'instructions.json' }]
-		},
-		{
-			title: '상태',
-			icon: 'activity',
-			documents: [{ id: 'state', file: 'state.json' }]
-		},
-		{ title: '로직', icon: 'tool', documents: [{ id: 'scripts', file: 'scripts.json' }] },
-		{ title: '화면', icon: 'grid', documents: [{ id: 'ui', file: 'ui.json' }] },
-		{ title: '로어북', icon: 'book', documents: [{ id: 'lorebook', file: 'lorebook.json' }] },
-		{ title: '에셋', icon: 'image', documents: [{ id: 'assets', file: 'resources.json' }] }
+			documents: [
+				{ id: 'state', file: 'state.json' },
+				{ id: 'lorebook', file: 'lorebook.json' }
+			]
+		}
 	];
 	const panels = [
 		{ id: 'problems', label: '문제' },
@@ -189,6 +261,8 @@
 		void load();
 		return () => {
 			clearTimeout(timer);
+			clearTimeout(previewTimer);
+			++previewGeneration;
 			if (draft && changed && !editingBlocked && JSON.stringify(draft) !== persistedSource)
 				void persistDraft();
 			disposed = true;
@@ -242,16 +316,127 @@
 			return null;
 		}
 	}
-	function documentLabel(id: DocumentId) {
-		return id === 'assets'
-			? '에셋'
-			: (EDITOR_DOCUMENTS.find((document) => document.id === id)?.label ?? id);
+	function documentLabel(id: string) {
+		if (id.startsWith('code:')) return id.slice(5).split('/').at(-1) ?? id;
+		if (id.startsWith('asset:')) {
+			try {
+				return (
+					JSON.parse(draft?.documents.assets ?? '{}')
+						[id.slice(6)]?.name?.split('/')
+						.at(-1) ?? '에셋'
+				);
+			} catch {
+				return '에셋';
+			}
+		}
+		if (id === 'types:GameState') return 'GameState.d.ts';
+		return EDITOR_DOCUMENTS.find((document) => document.id === id)?.label ?? id;
 	}
-	function documentFile(id: DocumentId) {
-		return (
-			categories.flatMap((category) => category.documents).find((document) => document.id === id)
-				?.file ?? ''
-		);
+	function documentFile(id: string) {
+		return id.startsWith('code:')
+			? id.slice(5)
+			: id === 'types:GameState'
+				? 'GameState.d.ts'
+				: (categories
+						.flatMap((category) => category.documents)
+						.find((document) => document.id === id)?.file ?? '');
+	}
+	function sourceFor(id: DocumentId): string {
+		if (id === 'types:GameState') return stateTypes;
+		if (id.startsWith('code:')) return codeProject?.files[id.slice(5)]?.source ?? '';
+		if (id.startsWith('asset:')) return '';
+		return draft?.documents[id as EditorDocumentId] ?? '';
+	}
+	function documentDirty(id: DocumentId): boolean {
+		if (!draft || !baseDocuments) return false;
+		if (id === 'types:GameState') return false;
+		if (id.startsWith('code:')) {
+			try {
+				return (
+					JSON.stringify(codeProject?.files[id.slice(5)]) !==
+					JSON.stringify(parseCodeProject(JSON.parse(baseDocuments.code)).files[id.slice(5)])
+				);
+			} catch {
+				return true;
+			}
+		}
+		if (id.startsWith('asset:')) return draft.documents.assets !== baseDocuments.assets;
+		return draft.documents[id as EditorDocumentId] !== baseDocuments[id as EditorDocumentId];
+	}
+	function updateSource(id: DocumentId, value: string) {
+		if (id.startsWith('code:')) {
+			const path = id.slice(5);
+			if (codeProject?.files[path])
+				changeDocument(
+					'code',
+					JSON.stringify(
+						{
+							...codeProject,
+							files: { ...codeProject.files, [path]: { ...codeProject.files[path], source: value } }
+						},
+						null,
+						2
+					)
+				);
+		} else if (id !== 'types:GameState' && !id.startsWith('asset:'))
+			changeDocument(id as EditorDocumentId, value);
+	}
+	function moveCode(before: string, after: string) {
+		const move = (id: DocumentId): DocumentId =>
+			id.startsWith('code:') && (id.slice(5) === before || id.slice(5).startsWith(before + '/'))
+				? (('code:' + after + id.slice(5 + before.length)) as DocumentId)
+				: id;
+		openDocuments = openDocuments.map(move);
+
+		if (codeSelection === before || codeSelection?.startsWith(before + '/'))
+			codeSelection = after + codeSelection.slice(before.length);
+		if (activeDocument) activeDocument = move(activeDocument);
+		secondaryDocument = move(secondaryDocument);
+	}
+	function removeCode(paths: string[]) {
+		for (const path of paths) closeDocument('code:' + path);
+	}
+	function showProblem(problem: {
+		documentId: string;
+		file?: string;
+		line?: number;
+		column?: number;
+	}) {
+		if (problem.file) {
+			openDocument(('code:' + problem.file) as DocumentId);
+			codeLocation = {
+				line: problem.line ?? 1,
+				column: problem.column ?? 1,
+				sequence: (codeLocation?.sequence ?? 0) + 1
+			};
+		} else if (problem.documentId === 'code') {
+			if (codeProject) openDocument(('code:' + codeProject.entry) as DocumentId);
+		} else if (problem.documentId === 'assets') {
+			const id = Object.keys(JSON.parse(draft?.documents.assets ?? '{}'))[0];
+			if (id) openDocument(('asset:' + id) as DocumentId);
+		} else openDocument(problem.documentId as DocumentId);
+	}
+	function schedulePreview(candidate: Game) {
+		clearTimeout(previewTimer);
+		const generation = ++previewGeneration;
+		buildError = null;
+		previewTimer = setTimeout(async () => {
+			try {
+				const compiled = await compileAuthoringGame(candidate);
+				if (disposed || generation !== previewGeneration) return;
+				previewContent = compiled;
+			} catch (error) {
+				if (disposed || generation !== previewGeneration) return;
+				const detail = error as { file?: string; line?: number; column?: number };
+				buildError = {
+					documentId: 'code',
+					message: error instanceof Error ? error.message : '코드를 빌드하지 못했어요.',
+					file: detail.file,
+					line: detail.line,
+					column: detail.column
+				};
+			}
+		}, 300);
 	}
 	function log(message: string, failed = false) {
 		logs = [
@@ -332,7 +517,9 @@
 					}
 				}
 				draft = next;
-				previewContent = validateEditorDraft(game, next).game ?? game;
+				previewContent = game;
+				const candidate = validateEditorDraft(game, next).game;
+				if (candidate) schedulePreview(candidate);
 				savedLocally = changedEditorDraft(next) && JSON.stringify(next) === persistedSource;
 				log(recovered || legacy ? '저장된 편집 초안을 복구했어요.' : '게임 콘텐츠를 불러왔어요.');
 				if (JSON.stringify(next) !== persistedSource) {
@@ -360,7 +547,11 @@
 		draft = { ...draft, documents: { ...draft.documents, [id]: value } };
 		if (game) {
 			const checked = validateEditorDraft(game, draft);
-			if (checked.game) previewContent = checked.game;
+			if (checked.game) schedulePreview(checked.game);
+			else {
+				clearTimeout(previewTimer);
+				++previewGeneration;
+			}
 		}
 		saveError = '';
 		applyError = '';
@@ -418,6 +609,12 @@
 		}
 	}
 	function openDocument(id: DocumentId) {
+		codeLocation = undefined;
+		codeSelection = id.startsWith('code:')
+			? id.slice(5)
+			: id === 'types:GameState'
+				? 'GameState.d.ts'
+				: null;
 		if (!openDocuments.includes(id)) openDocuments = [...openDocuments, id];
 		activeDocument = id;
 	}
@@ -427,7 +624,7 @@
 		if (activeDocument === id)
 			activeDocument = openDocuments[Math.min(index, openDocuments.length - 1)] ?? null;
 	}
-	function toggleSource(id: EditorDocumentId) {
+	function toggleSource(id: DocumentId) {
 		sourceDocuments = sourceDocuments.includes(id)
 			? sourceDocuments.filter((document) => document !== id)
 			: [...sourceDocuments, id];
@@ -498,6 +695,10 @@
 			}
 			if (disposed) return;
 			draft = createEditorDraft(game);
+			clearTimeout(previewTimer);
+			++previewGeneration;
+			codeDiagnostics = [];
+			buildError = null;
 			persistedSource = JSON.stringify(draft);
 			previewContent = game;
 			savedLocally = false;
@@ -760,14 +961,36 @@
 										class={['file', { selected: activeDocument === document.id }]}
 										aria-current={activeDocument === document.id ? 'page' : undefined}
 										onclick={() => openDocument(document.id)}
-										><span class="file-mark">{document.id === 'assets' ? '↗' : '{}'}</span><span
+										><span class="file-mark" aria-hidden="true">{'{}'}</span><span
 											>{document.file}</span
-										>{#if draft.documents[document.id] !== baseDocuments?.[document.id]}<span
+										>{#if documentDirty(document.id)}<span
 												class="modified-dot"
 												aria-label="미적용 변경">●</span
 											>{/if}</button
 									>{/each}
 							</section>{/each}
+						<AssetExplorer
+							source={draft.documents.assets}
+							active={activeDocument?.startsWith('asset:') ? activeDocument.slice(6) : null}
+							disabled={editingBlocked}
+							onselect={(id) => openDocument(('asset:' + id) as DocumentId)}
+							onchange={(value) => changeDocument('assets', value)}
+						/>
+						<CodeExplorer
+							source={draft.documents.code}
+							active={codeSelection}
+							disabled={editingBlocked}
+							onselect={(path) => {
+								if (path)
+									openDocument(
+										path === 'GameState.d.ts' ? 'types:GameState' : (('code:' + path) as DocumentId)
+									);
+								else codeSelection = null;
+							}}
+							onchange={(value) => changeDocument('code', value)}
+							onmove={moveCode}
+							onremove={removeCode}
+						/>
 					</nav>
 					<div class="explorer-note">
 						<span>변경은 초안으로 저장되며 적용을 눌러야 게임에 반영돼요.</span>{#if changed}<button
@@ -801,14 +1024,14 @@
 					<EditorTabs
 						{tabs}
 						active={activeDocument}
-						onselect={(id) => (activeDocument = id as DocumentId)}
+						onselect={(id) => openDocument(id as DocumentId)}
 						onclose={closeDocument}
 					/>
 					{#if activeDocument}<div class="document-breadcrumb">
 							<span>게임</span><Icon name="arrow-right" size={11} /><span
 								>{documentLabel(activeDocument)}</span
 							><span class="breadcrumb-file">{documentFile(activeDocument)}</span
-							>{#if activeDocument}<button
+							>{#if !activeDocument.startsWith('code:') && !activeDocument.startsWith('asset:') && activeDocument !== 'types:GameState'}<button
 									type="button"
 									aria-pressed={sourceDocuments.includes(activeDocument)}
 									onclick={() => activeDocument && toggleSource(activeDocument)}
@@ -830,9 +1053,10 @@
 									<h2>편집할 문서를 열어주세요</h2>
 									<p>왼쪽 탐색기에서 문서를 선택하세요.<br />문서를 닫아도 초안은 유지돼요.</p>
 								</div>
-							{:else if activeDocument === 'assets' && !sourceDocuments.includes('assets')}
+							{:else if activeDocument.startsWith('asset:')}
 								<AssetEditor
 									source={draft.documents.assets}
+									selectedId={activeDocument.slice(6)}
 									disabled={editingBlocked}
 									onchange={(value) => changeDocument('assets', value)}
 								/>
@@ -842,13 +1066,21 @@
 									disabled={editingBlocked}
 									onchange={(value) => changeDocument('state', value)}
 								/>
-							{:else if (activeDocument === 'scripts' || activeDocument === 'ui') && !sourceDocuments.includes(activeDocument)}
-								<BundleEditor
-									source={draft.documents[activeDocument]}
-									kind={activeDocument}
-									{stateTypes}
+							{:else if activeDocument.startsWith('code:') || activeDocument === 'types:GameState'}
+								<SourceEditor
+									project={monacoProject}
+									path={activeDocument === 'types:GameState'
+										? 'GameState.d.ts'
+										: activeDocument.slice(5)}
+									value={documentSource}
+									label={documentFile(activeDocument) + ' 소스'}
+									language={activeDocument === 'types:GameState'
+										? 'TypeScript'
+										: (codeProject?.files[activeDocument.slice(5)]?.language ?? 'TypeScript')}
+									readonly={activeDocument === 'types:GameState'}
 									disabled={editingBlocked}
-									onchange={(value) => activeDocument && changeDocument(activeDocument, value)}
+									location={codeLocation}
+									onchange={(value) => activeDocument && updateSource(activeDocument, value)}
 								/>
 							{:else if activeDocument === 'info' && !sourceDocuments.includes('info') && info}<div
 									class="form-document"
@@ -911,10 +1143,12 @@
 									</fieldset>
 								</div>
 							{:else}<SourceEditor
+									project={monacoProject}
+									path={'documents/' + activeDocument + '.json'}
 									value={documentSource}
 									label="{documentLabel(activeDocument)} 소스"
 									disabled={editingBlocked}
-									onchange={(value) => activeDocument && changeDocument(activeDocument, value)}
+									onchange={(value) => activeDocument && updateSource(activeDocument, value)}
 								/>{/if}
 						</div>
 						{#if splitOpen}
@@ -936,8 +1170,10 @@
 									<label for="secondary-document">문서</label><select
 										id="secondary-document"
 										bind:value={secondaryDocument}
-										>{#each EDITOR_DOCUMENTS as document (document.id)}<option value={document.id}
-												>{document.label}</option
+										>{#each [...categories
+												.flatMap((category) => category.documents)
+												.map( (document) => ({ id: document.id, label: document.file }) ), ...Object.keys(codeProject?.files ?? {}).map( (path) => ({ id: 'code:' + path, label: path }) ), { id: 'types:GameState', label: 'GameState.d.ts' }] as document (document.id)}<option
+												value={document.id}>{document.label}</option
 											>{/each}</select
 									><button
 										class="icon-button"
@@ -947,10 +1183,21 @@
 									>
 								</div>
 								<SourceEditor
-									value={draft.documents[secondaryDocument]}
+									project={monacoProject}
+									viewId="secondary"
+									path={secondaryDocument === 'types:GameState'
+										? 'GameState.d.ts'
+										: secondaryDocument.startsWith('code:')
+											? secondaryDocument.slice(5)
+											: 'documents/' + secondaryDocument + '.json'}
+									value={sourceFor(secondaryDocument)}
+									readonly={secondaryDocument === 'types:GameState'}
+									language={secondaryDocument.startsWith('code:')
+										? codeProject?.files[secondaryDocument.slice(5)]?.language
+										: 'JSON'}
 									label="보조 {documentLabel(secondaryDocument)} 소스"
 									disabled={editingBlocked}
-									onchange={(value) => changeDocument(secondaryDocument, value)}
+									onchange={(value) => updateSource(secondaryDocument, value)}
 								/>
 							</section>
 						{/if}
@@ -1016,10 +1263,13 @@
 											>소스 실행은 이 검사에 포함되지 않아요.</span
 										>
 									</p>{:else}<ul class="problem-list">
-										{#each problems as problem (`${problem.documentId}:${problem.message}`)}<li>
-												<button type="button" onclick={() => openDocument(problem.documentId)}
+										{#each problems as problem (problem.key)}<li>
+												<button type="button" onclick={() => showProblem(problem)}
 													><span class="problem-marker">!</span><span>{problem.message}</span><span
-														class="problem-document">{documentLabel(problem.documentId)}</span
+														class="problem-document"
+														>{'file' in problem
+															? `${problem.file}:${problem.line}:${problem.column}`
+															: documentLabel(problem.documentId)}</span
 													></button
 												>
 											</li>{/each}
@@ -1102,8 +1352,8 @@
 			<span><Icon name="edit" size={11} />{isDesktopBuild ? '기기 저장' : '서버 저장'}</span><span
 				>{changed ? '게임에 적용되지 않은 변경이 있어요' : '적용된 콘텐츠와 일치해요'}</span
 			><span class="status-right"
-				>{activeDocument && activeDocument !== 'assets'
-					? `${documentSource.length.toLocaleString()}자 · JSON`
+				>{activeDocument && !activeDocument.startsWith('asset:')
+					? `${documentSource.length.toLocaleString()}자 · ${activeDocument.startsWith('code:') || activeDocument === 'types:GameState' ? '코드' : 'JSON'}`
 					: '게임 편집기'}</span
 			>
 		</footer>

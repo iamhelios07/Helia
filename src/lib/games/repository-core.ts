@@ -55,6 +55,7 @@ import type { AgentWorkspaceResult } from './ai/loop.js';
 import type { RuleTrigger } from './scripting/protocol.js';
 import { editorContent, type GameEditorContent } from './editor.js';
 import { migrateState } from './state/migration.js';
+import { compileCodeProject } from './code-project.js';
 
 function makeSession(gameId: string): Session {
 	const now = new Date().toISOString();
@@ -148,7 +149,8 @@ function initialize(unit: StorageUnit, gameId: string, sessionId: string) {
 			scripts: game.scripts,
 			...(game.ui ? { ui: game.ui } : {}),
 			...(game.ai ? { ai: game.ai } : {}),
-			...(game.resources ? { resources: game.resources } : {})
+			...(game.resources ? { resources: game.resources } : {}),
+			...(game.code ? { code: game.code } : {})
 		});
 		const progress = createSessionState(snapshot, session.id);
 		unit.put('snapshots', snapshot, session.id);
@@ -553,10 +555,17 @@ export function createGameRepository(
 				return game;
 			});
 		},
-		applyGameDraft(
+		async applyGameDraft(
 			gameId: string,
 			input: { baseContent: GameEditorContent; content: GameEditorContent }
 		) {
+			const content = input.content.code
+				? {
+						...input.content,
+						...(await compileCodeProject(input.content.code)),
+						code: input.content.code
+					}
+				: input.content;
 			return useStorage(
 				(request) =>
 					transport(request.kind === 'read' ? { ...request, includeHistory: true } : request),
@@ -570,6 +579,7 @@ export function createGameRepository(
 						ui: input.baseContent.ui,
 						ai: input.baseContent.ai,
 						resources: input.baseContent.resources,
+						code: input.baseContent.code,
 						id: previous.id,
 						activeSessionId: previous.activeSessionId
 					});
@@ -581,10 +591,11 @@ export function createGameRepository(
 						);
 					const game = parseGame({
 						...previous,
-						...input.content,
-						ui: input.content.ui,
-						ai: input.content.ai,
-						resources: input.content.resources,
+						...content,
+						ui: content.ui,
+						ai: content.ai,
+						resources: content.resources,
+						code: content.code,
 						id: previous.id,
 						activeSessionId: previous.activeSessionId,
 						createdAt: previous.createdAt,
@@ -616,6 +627,7 @@ export function createGameRepository(
 							ui: game.ui,
 							ai: game.ai,
 							resources: game.resources,
+							code: game.code,
 							migrationFrom: snapshot.id,
 							restoredStates: Object.fromEntries(
 								transactions.map((node) => [node.id, transform(stateAt(history, node.id))])

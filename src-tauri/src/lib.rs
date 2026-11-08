@@ -5,7 +5,13 @@ pub fn run() {
     let initialization = access.initialization_script();
     tauri::Builder::default()
         .manage(access)
-        .append_invoke_initialization_script(initialization)
+        // Invoke initialization runs before core.js defines invoke. Plugin scripts run
+        // after core.js and before application code, so the private bridge captures it safely.
+        .plugin(
+            tauri::plugin::Builder::<tauri::Wry, ()>::new("helia-host")
+                .js_init_script(initialization)
+                .build(),
+        )
         .setup(|app| {
             let directory = app.path().app_data_dir()?;
             std::fs::create_dir_all(&directory)?;

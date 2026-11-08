@@ -1,10 +1,12 @@
 <script lang="ts">
+	import { onDestroy } from 'svelte';
 	import ConfirmDialog from '#lib/components/ConfirmDialog.svelte';
 	import SourceEditor from './SourceEditor.svelte';
+	import { MonacoProject } from './monaco-project.js';
 	import {
-		diagnoseCode,
 		readAuthoringBundle,
 		writeAuthoringBundle,
+		type CodeDiagnostic,
 		type SourceModule
 	} from '../../code-authoring.js';
 	let {
@@ -41,7 +43,32 @@
 		Object.hasOwn(modules, selected) ? selected : (Object.keys(modules)[0] ?? '')
 	);
 	let active = $derived(modules[activeId]);
-	let diagnostics = $derived(bundle ? diagnoseCode(modules, stateTypes) : Promise.resolve([]));
+	function sourcePath(id: string, language: string) {
+		if (/\.(?:js|ts|jsx|tsx)$/.test(id)) return id;
+		const extension =
+			language === 'javascript' ? 'js' : language === 'typescript' ? 'ts' : language;
+		return `${id}.${extension}`;
+	}
+	let projectFiles = $derived(
+		Object.fromEntries(
+			Object.entries(modules).map(([id, file]) => [sourcePath(id, file.language), file])
+		)
+	);
+	const project = new MonacoProject();
+	let diagnostics = $state<CodeDiagnostic[]>([]);
+	function updateDiagnostics(items: CodeDiagnostic[]) {
+		diagnostics = items.map((item) => ({
+			...item,
+			module:
+				Object.entries(modules).find(
+					([id, file]) => sourcePath(id, file.language) === item.module
+				)?.[0] ?? item.module
+		}));
+	}
+	$effect(() => {
+		project.update(projectFiles, stateTypes, {}, updateDiagnostics);
+	});
+	onDestroy(() => project.dispose());
 	let languages = $derived(
 		kind === 'scripts' ? ['javascript', 'typescript'] : ['jsx', 'tsx', 'javascript', 'typescript']
 	);
@@ -195,6 +222,8 @@
 		{#if error}<p role="alert">{error}</p>{/if}
 		{#if showTypes}<div class="types">
 				<SourceEditor
+					{project}
+					path="GameState.d.ts"
 					value={stateTypes}
 					label="생성된 GameState 타입"
 					language="TypeScript"
@@ -203,6 +232,8 @@
 			</div>{/if}
 		{#if active}<div class="code">
 				<SourceEditor
+					{project}
+					path={sourcePath(activeId, active.language)}
 					value={active.source}
 					label={`${activeId} 코드`}
 					language={active.language}
@@ -212,16 +243,13 @@
 			</div>{:else}<p>첫 스크립트를 추가하세요.</p>{/if}
 		<details class="diagnostics" open>
 			<summary>코드 검사 · 스키마 기반 타입</summary>
-			{#await diagnostics}<p>코드를 검사하고 있어요.</p>{:then items}
-				{#if items.length}<ul>
-						{#each items as item, index (`${item.module}:${item.line}:${item.column}:${index}`)}<li>
-								<code>{item.module}:{item.line}:{item.column}</code>
-								{item.message}
-							</li>{/each}
-					</ul>{:else}<p>코드 검사에서 발견한 문제가 없어요.</p>{/if}
-			{:catch}<p role="alert">
-					코드 검사를 실행하지 못했어요. 문서와 입력한 코드는 유지됩니다.
-				</p>{/await}
+			{#if diagnostics.length}<ul>
+					{#each diagnostics as item, index (`${item.module}:${item.line}:${item.column}:${index}`)}<li
+						>
+							<code>{item.module}:{item.line}:{item.column}</code>
+							{item.message}
+						</li>{/each}
+				</ul>{:else}<p>코드 검사에서 발견한 문제가 없어요.</p>{/if}
 		</details>
 		<p class="hint">
 			GameState 타입은 import 없이 사용할 수 있어요.

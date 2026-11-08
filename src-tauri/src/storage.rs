@@ -201,7 +201,7 @@ fn validate_draft(game_id: &str, draft: &Value) -> Result<(), String> {
     if draft.is_null() {
         return Ok(());
     }
-    if (draft["version"] != 1 && draft["version"] != 2)
+    if (draft["version"] != 1 && draft["version"] != 2 && draft["version"] != 3)
         || draft["gameId"].as_str() != Some(game_id)
         || !draft["documents"].is_object()
         || serde_json::to_string(draft)
@@ -212,7 +212,16 @@ fn validate_draft(game_id: &str, draft: &Value) -> Result<(), String> {
     {
         return Err("편집 초안의 형식이 올바르지 않아요.".into());
     }
-    for name in ["info", "instructions", "state", "scripts", "ui", "lorebook"] {
+    for name in ["info", "instructions", "state", "lorebook"] {
+        if !draft["documents"][name].is_string() {
+            return Err("편집 문서가 없어요.".into());
+        }
+    }
+    for name in if draft["version"] == 3 {
+        vec!["code"]
+    } else {
+        vec!["scripts", "ui"]
+    } {
         if !draft["documents"][name].is_string() {
             return Err("편집 문서가 없어요.".into());
         }
@@ -518,6 +527,101 @@ fn game_ui(value: Option<&Value>) -> bool {
     }
     true
 }
+fn code_path(path: &str, folder: bool) -> bool {
+    !path.is_empty()
+        && path.len() <= 128
+        && path
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_alphanumeric() || c == '_')
+        && path
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "_./-".contains(c))
+        && path.split('/').all(|part| {
+            !part.is_empty()
+                && ![".", "..", "__proto__", "constructor", "prototype"].contains(&part)
+        })
+        && (folder
+            || [".js", ".ts", ".jsx", ".tsx"]
+                .iter()
+                .any(|ext| path.ends_with(ext)))
+}
+fn code_project(value: Option<&Value>) -> bool {
+    let Some(value) = value else {
+        return true;
+    };
+    if !value.is_object() || value["version"] != 1 {
+        return false;
+    }
+    let Some(files) = value["files"].as_object() else {
+        return false;
+    };
+    let Some(entry) = value["entry"].as_str() else {
+        return false;
+    };
+    if !code_path(entry, false) || !files.contains_key(entry) || files.len() > 64 {
+        return false;
+    }
+    let mut bytes = 0;
+    for (path, file) in files {
+        if !code_path(path, false)
+            || !matches!(
+                file["language"].as_str(),
+                Some("javascript" | "typescript" | "jsx" | "tsx")
+            )
+        {
+            return false;
+        }
+        let Some(source) = file["source"].as_str() else {
+            return false;
+        };
+        bytes += source.len();
+        if bytes > 512 * 1024
+            || files
+                .keys()
+                .any(|other| other.starts_with(&format!("{path}/")))
+        {
+            return false;
+        }
+    }
+    if let Some(folders) = value.get("folders") {
+        let Some(folders) = folders.as_array() else {
+            return false;
+        };
+        if folders.len() > 128
+            || folders.iter().any(|folder| {
+                folder.as_str().is_none_or(|folder| {
+                    !code_path(folder, true)
+                        || files.contains_key(folder)
+                        || files
+                            .keys()
+                            .any(|path| folder.starts_with(&format!("{path}/")))
+                })
+            })
+        {
+            return false;
+        }
+    }
+    if let Some(presentation) = value.get("presentation") {
+        let Some(presentation) = presentation.as_object() else {
+            return false;
+        };
+        if presentation
+            .keys()
+            .any(|key| !["layout", "chatDock", "chatRatio", "chatStyle"].contains(&key.as_str()))
+        {
+            return false;
+        }
+        let mut ui = json!({"version":1,"entry":"main.tsx","modules":{"main.tsx":{"language":"tsx","source":""}}});
+        for (key, value) in presentation {
+            ui[key] = value.clone();
+        }
+        if !game_ui(Some(&ui)) {
+            return false;
+        }
+    }
+    true
+}
 fn resources(value: Option<&Value>) -> bool {
     use base64::Engine;
     let Some(value) = value else {
@@ -530,6 +634,7 @@ fn resources(value: Option<&Value>) -> bool {
         return false;
     }
     let mut total = 0;
+    let mut paths = std::collections::HashSet::new();
     for (id, row) in entries {
         if id.is_empty()
             || id.len() > 100
@@ -551,6 +656,14 @@ fn resources(value: Option<&Value>) -> bool {
         };
         if name.trim().is_empty()
             || name.encode_utf16().count() > 200
+            || name
+                .chars()
+                .any(|c| c == '\\' || c == ':' || (c as u32) < 32 || c == '\u{007f}')
+            || name
+                .split('/')
+                .any(|part| part.trim().is_empty() || [".", ".."].contains(&part))
+            || !paths.insert(name.to_owned())
+            || entries.contains_key(name) && name != id
             || ![
                 "image/png",
                 "image/jpeg",
@@ -581,6 +694,14 @@ fn resources(value: Option<&Value>) -> bool {
             return false;
         }
     }
+    for path in &paths {
+        let parts: Vec<_> = path.split('/').collect();
+        for i in 1..parts.len() {
+            if paths.contains(&parts[..i].join("/")) {
+                return false;
+            }
+        }
+    }
     true
 }
 fn valid_value(table: Table, value: &Value) -> bool {
@@ -603,6 +724,7 @@ fn valid_value(table: Table, value: &Value) -> bool {
                 && scripts(&value["scripts"])
                 && game_ui(value.get("ui"))
                 && resources(value.get("resources"))
+                && code_project(value.get("code"))
         }
         Table::Sessions => {
             id(&value["title"])
@@ -630,6 +752,7 @@ fn valid_value(table: Table, value: &Value) -> bool {
                 && scripts(&value["scripts"])
                 && game_ui(value.get("ui"))
                 && resources(value.get("resources"))
+                && code_project(value.get("code"))
                 && value.get("restoredStates").is_none_or(|states| {
                     states.as_object().is_some_and(|states| {
                         states
@@ -1378,6 +1501,41 @@ mod tests {
         assert!(!resources(Some(
             &json!({"constructor":{"name":"Portrait","mime":"image/png","data":"data:image/png;base64,aGVsbG8="}})
         )));
+        for path in [
+            "../bad.png",
+            "/root.png",
+            "a\\b.png",
+            "a:b.png",
+            "a//b.png",
+            "a/./b.png",
+        ] {
+            let mut invalid = valid.clone();
+            invalid["portrait"]["name"] = json!(path);
+            assert!(!resources(Some(&invalid)));
+        }
+        let mut duplicate = valid.clone();
+        duplicate["other"] = duplicate["portrait"].clone();
+        assert!(!resources(Some(&duplicate)));
+        duplicate["other"]["name"] = json!("Portrait/child.png");
+        assert!(!resources(Some(&duplicate)));
+        duplicate["other"]["name"] = json!("portrait");
+        assert!(!resources(Some(&duplicate)));
+    }
+    #[test]
+    fn validates_source_code_projects_and_current_drafts() {
+        let project = json!({"version":1,"entry":"main.ts","files":{"main.ts":{"language":"typescript","source":"export {};"}},"folders":["components/empty"]});
+        assert!(code_project(Some(&project)));
+        let mut invalid = project.clone();
+        invalid["entry"] = json!("missing.ts");
+        assert!(!code_project(Some(&invalid)));
+        invalid = project.clone();
+        invalid["folders"] = json!(["main.ts/child"]);
+        assert!(!code_project(Some(&invalid)));
+        let mut game = game("Source project");
+        game["code"] = project;
+        assert!(valid_value(Table::Games, &game));
+        let draft = json!({"version":3,"gameId":"game","baseContent":game,"documents":{"info":"{}","instructions":"{}","state":"{unfinished","code":"{unfinished","lorebook":"{}","assets":"{}"}});
+        assert!(validate_draft("game", &draft).is_ok());
     }
     use std::sync::atomic::{AtomicUsize, Ordering};
     static NEXT: AtomicUsize = AtomicUsize::new(0);
@@ -1442,7 +1600,7 @@ mod tests {
         let fixture = Fixture::new();
         fixture.create();
         let text = "x".repeat(6 * 1024 * 1024);
-        let draft = json!({"version":2,"gameId":"game","baseContent":game("Original"),"documents":{"info":"{}","instructions":"{}","state":text,"scripts":"{}","ui":"null","lorebook":"{}","assets":"{}"}});
+        let draft = json!({"version":3,"gameId":"game","baseContent":game("Original"),"documents":{"info":"{}","instructions":"{}","state":text,"code":"{unfinished","lorebook":"{}","assets":"{}"}});
         let saved = fixture
             .request(json!({"kind":"writeDraft","gameId":"game","version":0,"draft":draft}))
             .unwrap();

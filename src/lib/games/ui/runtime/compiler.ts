@@ -29,7 +29,9 @@ export async function compileGameUI(
 		const name = parts.join('/');
 		const target = [
 			name,
-			...['.tsx', '.jsx', '.ts', '.js', '/index.tsx', '/index.jsx'].map((ext) => name + ext)
+			...['.tsx', '.jsx', '.ts', '.js', '/index.tsx', '/index.jsx', '/index.ts', '/index.js'].map(
+				(ext) => name + ext
+			)
 		].find((id) => Object.hasOwn(ui.modules, id));
 		if (!target) throw Error('게임 UI 모듈을 찾을 수 없어요.');
 		return target;
@@ -56,6 +58,11 @@ export async function compileGameUI(
 						: ts.ScriptKind.TS
 			);
 			function visit(node: import('typescript').Node) {
+				if (
+					(ts.isImportDeclaration(node) && node.importClause?.isTypeOnly) ||
+					(ts.isExportDeclaration(node) && node.isTypeOnly)
+				)
+					return;
 				if (
 					(ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) &&
 					node.moduleSpecifier
@@ -107,6 +114,12 @@ export async function compileGameUI(
 	// Escape closing script tags in every source, including authored JSX/string literals.
 	// Creator factories are born outside the runtime closure: free variables cannot
 	// reach its private MessagePort, state listeners, or lifecycle handles.
-	const code = `((run) => {const factories={${factories.join(',')}};run(factories,${JSON.stringify(Object.fromEntries(dependencies))},${JSON.stringify(ui.entry)},${JSON.stringify(token)},${JSON.stringify(Object.fromEntries(Object.entries(resources).map(([id, resource]) => [id, resource.data])))});})(function(factories,dependencies,entry,token,resources){${FRAME_BOOTSTRAP}\n})`;
+	const resourceURLs = Object.fromEntries(
+		Object.entries(resources).flatMap(([id, resource]) => [
+			[id, resource.data],
+			[resource.name, resource.data]
+		])
+	);
+	const code = `((run) => {const factories={${factories.join(',')}};run(factories,${JSON.stringify(Object.fromEntries(dependencies))},${JSON.stringify(ui.entry)},${JSON.stringify(token)},JSON.parse(${JSON.stringify(JSON.stringify(resourceURLs))}));})(function(factories,dependencies,entry,token,resources){${FRAME_BOOTSTRAP}\n})`;
 	return `<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; media-src data:; connect-src 'none'; frame-src 'none'; form-action 'none'; base-uri 'none'"><meta name="referrer" content="no-referrer"><style>${FRAME_STYLES}</style></head><body><div id="workbench"></div><script>${code.replace(/<\/script/gi, '<\\/script')}</script></body></html>`;
 }

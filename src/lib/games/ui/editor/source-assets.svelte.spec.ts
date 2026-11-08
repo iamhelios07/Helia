@@ -4,6 +4,7 @@ import { page, userEvent } from 'vitest/browser';
 import { render } from 'vitest-browser-svelte';
 import BundleEditor from './BundleEditor.svelte';
 import AssetEditor from './AssetEditor.svelte';
+import { getMonacoSource, setMonacoSource } from './monaco-test.js';
 
 const stateTypes = 'export type GameState = { gold: number };\n';
 
@@ -20,20 +21,17 @@ it('edits actual script strings and provides generated state diagnostics', async
 		void screen.rerender({ source });
 	});
 	const screen = render(BundleEditor, { source, kind: 'scripts', stateTypes, onchange });
-	await page
-		.getByRole('textbox', { name: 'main 코드' })
-		.fill(
-			"helia.defineAction({name:'gain',arguments:{},run({state}) { state.gold = 'bad'; return state; }});\n"
-		);
+	await setMonacoSource(
+		'main 코드',
+		"helia.defineAction({name:'gain',arguments:{},run({state}) { state.gold = 'bad'; return state; }});\n"
+	);
 	await expect.poll(() => JSON.parse(source).main.source).toContain("state.gold = 'bad'");
 	expect(JSON.parse(source).main.source).toContain('\n');
 	await expect
 		.element(page.getByText("Type 'string' is not assignable to type 'number'.", { exact: false }))
 		.toBeVisible();
 	await page.getByRole('button', { name: 'GameState.d.ts', exact: true }).click();
-	await expect
-		.element(page.getByRole('textbox', { name: '생성된 GameState 타입' }))
-		.toHaveValue(stateTypes);
+	await expect.poll(() => getMonacoSource('생성된 GameState 타입')).toBe(stateTypes);
 	await expect
 		.element(page.getByRole('textbox', { name: '생성된 GameState 타입' }))
 		.toHaveAttribute('readonly');
@@ -60,14 +58,12 @@ it('adds and renames modules, preserves UI settings and requires a modal for rem
 	await page.getByRole('textbox', { name: '모듈 이름', exact: true }).fill('status.tsx');
 	await page.getByRole('button', { name: '추가', exact: true }).click();
 	await expect.element(page.getByRole('textbox', { name: 'status.tsx 코드' })).toBeVisible();
-	await page
-		.getByRole('textbox', { name: 'status.tsx 코드' })
-		.fill('export const label = "한 줄\\n다음 줄";\n');
+	await setMonacoSource('status.tsx 코드', 'export const label = "한 줄\\n다음 줄";\n');
 	await page.getByRole('textbox', { name: '모듈 이름', exact: true }).fill('status-panel.tsx');
 	await page.getByRole('button', { name: '이름 변경', exact: true }).click();
 	await expect
-		.element(page.getByRole('textbox', { name: 'status-panel.tsx 코드' }))
-		.toHaveValue('export const label = "한 줄\\n다음 줄";\n');
+		.poll(() => getMonacoSource('status-panel.tsx 코드'))
+		.toBe('export const label = "한 줄\\n다음 줄";\n');
 	expect(JSON.parse(source).chatStyle).toEqual({ color: '#fff' });
 	await page.getByRole('button', { name: '모듈 삭제', exact: true }).click();
 	await expect.element(page.getByRole('dialog', { name: '모듈 삭제' })).toBeVisible();
@@ -88,7 +84,13 @@ it('creates UI only by explicit request and leaves invalid JSON untouched', asyn
 	const created = JSON.parse(onchange.mock.calls[0][0]);
 	expect(created.modules[created.entry].source).toContain('registerPanel');
 	await screen.rerender({ source: '{unfinished' });
-	await expect.element(page.getByRole('alert')).toBeVisible();
+	await expect
+		.element(
+			page.getByText('JSON 보기에서 문서를 수정하면 코드 편집으로 돌아올 수 있어요.', {
+				exact: false
+			})
+		)
+		.toBeVisible();
 	expect(onchange).toHaveBeenCalledTimes(1);
 });
 
@@ -114,14 +116,14 @@ it('uploads media, previews it, renames it and confirms deletion', async () => {
 	await expect.element(page.getByRole('img', { name: 'portrait.png' })).toBeVisible();
 	const id = Object.keys(JSON.parse(source))[0];
 	expect(JSON.parse(source)[id].data).toMatch(/^data:image\/png;base64,/);
-	await page.getByRole('textbox', { name: `${id} 표시 이름` }).fill('초상화');
-	await page.getByRole('textbox', { name: `${id} 표시 이름` }).click();
+	await page.getByRole('textbox', { name: '에셋 파일 경로' }).fill('초상화');
+	await page.getByRole('textbox', { name: '에셋 파일 경로' }).click();
 	await userEvent.keyboard('{Tab}');
 	await expect.element(page.getByRole('img', { name: '초상화' })).toBeVisible();
-	await page.getByRole('button', { name: '초상화 리소스 삭제' }).click();
+	await page.getByRole('button', { name: '초상화 파일 삭제' }).click();
 	await page.getByRole('button', { name: '취소', exact: true }).click();
 	expect(Object.keys(JSON.parse(source))).toHaveLength(1);
-	await page.getByRole('button', { name: '초상화 리소스 삭제' }).click();
+	await page.getByRole('button', { name: '초상화 파일 삭제' }).click();
 	await page.getByRole('button', { name: '삭제', exact: true }).click();
 	await expect.poll(() => JSON.parse(source)).toEqual({});
 });
@@ -133,6 +135,6 @@ it('rejects oversized uploads without altering the resource document', async () 
 		page.getByLabelText('파일 추가'),
 		new File([new Uint8Array(1024 * 1024 + 1)], 'large.png', { type: 'image/png' })
 	);
-	await expect.element(page.getByRole('alert')).toHaveTextContent('각 파일은 1 MiB');
+	await expect.element(page.getByText('각 파일은 1 MiB', { exact: false })).toBeVisible();
 	expect(onchange).not.toHaveBeenCalled();
 });

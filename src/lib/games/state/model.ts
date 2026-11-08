@@ -10,10 +10,11 @@ import { parseStateDocument } from './schema.js';
 import { parseGameUI } from '../ui/runtime/model.js';
 import { parseGameAIContent } from '../ai/prompts.js';
 import { parseResources } from '../resources.js';
+import { parseCodeProject } from '../code-project.js';
 
 export interface GameSnapshot extends Pick<
 	Game,
-	'schema' | 'initialState' | 'scripts' | 'settings' | 'ui' | 'ai' | 'resources'
+	'schema' | 'initialState' | 'scripts' | 'settings' | 'ui' | 'ai' | 'resources' | 'code'
 > {
 	schemaVersion: 1;
 	id: string;
@@ -117,6 +118,7 @@ export function parseGameSnapshot(value: unknown): GameSnapshot {
 		...(input.ui === undefined ? {} : { ui: parseGameUI(input.ui) }),
 		...(input.ai === undefined ? {} : { ai: parseGameAIContent(input.ai) }),
 		...(input.resources === undefined ? {} : { resources: parseResources(input.resources) }),
+		...(input.code === undefined ? {} : { code: parseCodeProject(input.code) }),
 		...(input.restoredStates === undefined
 			? {}
 			: {

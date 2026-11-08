@@ -42,14 +42,51 @@ export default defineConfig(({ mode }) => ({
 			{
 				extends: './vite.config.ts',
 				optimizeDeps: {
+					// Discover lazy editor contributions before browser tests mount an editor.
 					include: [
 						'typescript',
 						'@jitl/quickjs-singlefile-browser-release-sync',
-						'quickjs-emscripten-core'
+						'quickjs-emscripten-core',
+						'monaco-editor/features/codicon/register.js',
+						'monaco-editor/editor/contrib/codelens/browser/codeLensCache.js',
+						'monaco-editor/editor/common/services/treeViewsDndService.js',
+						'monaco-editor/languages/features/typescript/ts.worker.js',
+						'monaco-editor/editor/browser/widget/codeEditor/codeEditorWidget.js',
+						'monaco-editor/editor/browser/coreCommands.js',
+						'monaco-editor/editor/contrib/clipboard/browser/clipboard.js',
+						'monaco-editor/editor/contrib/comment/browser/comment.js',
+						'monaco-editor/editor/contrib/contextmenu/browser/contextmenu.js',
+						'monaco-editor/editor/contrib/cursorUndo/browser/cursorUndo.js',
+						'monaco-editor/editor/contrib/find/browser/findController.js',
+						'monaco-editor/editor/contrib/folding/browser/folding.js',
+						'monaco-editor/editor/contrib/format/browser/formatActions.js',
+						'monaco-editor/editor/contrib/gotoError/browser/gotoError.js',
+						'monaco-editor/editor/contrib/gotoSymbol/browser/goToCommands.js',
+						'monaco-editor/editor/contrib/hover/browser/hoverContribution.js',
+						'monaco-editor/editor/contrib/indentation/browser/indentation.js',
+						'monaco-editor/editor/contrib/linesOperations/browser/linesOperations.js',
+						'monaco-editor/editor/contrib/links/browser/links.js',
+						'monaco-editor/editor/contrib/multicursor/browser/multicursor.js',
+						'monaco-editor/editor/contrib/parameterHints/browser/parameterHints.js',
+						'monaco-editor/editor/contrib/readOnlyMessage/browser/contribution.js',
+						'monaco-editor/editor/contrib/rename/browser/rename.js',
+						'monaco-editor/editor/contrib/snippet/browser/snippetController2.js',
+						'monaco-editor/editor/contrib/suggest/browser/suggestController.js',
+						'monaco-editor/editor/contrib/toggleTabFocusMode/browser/toggleTabFocusMode.js',
+						'monaco-editor/editor/contrib/wordOperations/browser/wordOperations.js',
+						'monaco-editor/editor/contrib/wordPartOperations/browser/wordPartOperations.js',
+						'monaco-editor/editor/standalone/browser/quickAccess/standaloneCommandsQuickAccess.js',
+						'monaco-editor/editor/standalone/browser/quickAccess/standaloneGotoLineQuickAccess.js',
+						'monaco-editor/editor/editor.api.js',
+						'monaco-editor/languages/definitions/typescript/register.js',
+						'monaco-editor/languages/definitions/javascript/register.js',
+						'monaco-editor/languages/features/typescript/register.js',
+						'monaco-editor/languages/features/json/register.js'
 					]
 				},
 				test: {
 					name: 'client',
+					fileParallelism: false,
 					browser: {
 						enabled: true,
 						provider: playwright(),

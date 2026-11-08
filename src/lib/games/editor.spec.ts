@@ -128,6 +128,8 @@ describe('IDE authoring drafts', () => {
 			documents: {
 				...draft.documents,
 				schema: JSON.stringify(game.schema),
+				scripts: JSON.stringify(game.scripts),
+				ui: JSON.stringify(game.ui ?? null),
 				state: JSON.stringify(game.initialState)
 			}
 		};

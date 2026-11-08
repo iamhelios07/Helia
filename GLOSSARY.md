@@ -287,6 +287,9 @@ _Avoid_: Confusing it with a History Event or AI-directed Internal Event.
 
 ### Authoring, Distribution and Permissions
 
+**Code Project**:
+The creator-owned source files and shared entry point defining a game's logic and presentation. It is one authoring unit while preserving the execution permissions of Creator Scripts and Game UI.
+
 **Authoring Draft**:
 Saved creator edits that have not yet been applied to running content. Saving a draft and applying it are separate operations.
 

@@ -8,7 +8,24 @@ The play sidebar keeps its **Sessions / Game** switch. **Game** provides **Open 
 
 ## Authoring IDE
 
-The editor uses a project explorer, closable document tabs, a central form/source area, a collapsible execution preview and a bottom inspection area. Game information and instructions use forms. One canonical `state.json` authoring document contains separate `schema` and `initialState` fields. Its recursive visual editor updates that same JSON text bidirectionally, including optional presence, nullable values, objects, arrays and enums. Invalid JSON remains editable in source mode. Earlier drafts with separate schema and initial-state sources are combined without discarding unfinished source. Script and UI modules have individual source editors, generated `GameState` declarations and TypeScript diagnostics. Raw JSON remains available for every document; language-server completion is not provided.
+The explorer has four groups: **Game** (`game.json`, `instructions.json`), **Game Data** (`state.json`, `lorebook.json`), **Assets** (actual media files and folders), and **Code** (actual JS/TS/JSX/TSX source files). JSON views remain available for the metadata, instructions and data documents. Neither code nor assets expose a JSON container document. Source files open directly in the outer document tabs and occupy the central editor. Monaco provides code and JSON source editing, syntax highlighting, indentation, find/replace, folding and multiple cursors. Generated `GameState.d.ts` opens as a read-only virtual file. Code errors join the bottom Problems panel, and selecting one opens its source location.
+
+Monaco loads only when a source editor opens. Editor, TypeScript and JSON workers are bundled locally without a CDN. A shared project session maintains file models, undo history and view state across tabs and split views, then disposes them when its authoring workspace closes. The TypeScript worker uses the current project's state declarations and Helia/Preact APIs for completion, hover information and diagnostics. Suggestions appear while typing or with Ctrl+Space; use Ctrl+M to toggle whether Tab moves keyboard focus or indents code.
+
+One canonical `state.json` authoring document contains separate `schema` and `initialState` fields. Its recursive visual editor updates that same JSON text bidirectionally. Invalid JSON remains editable in source mode. Earlier drafts with separate schema and initial-state sources are combined without discarding unfinished source.
+
+### One source project, isolated execution
+
+`Game.code` stores a source project with an entry path, source files and optional empty code folders. It is the authoring source; `Game.scripts` and `Game.ui` are runtime outputs derived before preview or Apply. Existing applied scripts and UI modules open as a source project without executing them in the host. Applying a project persists its source and compiled outputs with the affected session snapshots in the same commit. A build failure preserves the old applied content.
+
+The default `main.ts` entry connects either or both execution targets using static default re-exports:
+
+```ts
+export { default as logic } from './logic';
+export { default as ui } from './ui';
+```
+
+`export {};` represents an empty project. The entry is a declaration of the execution targets: executable entry statements and other export names produce a diagnostic. File and directory names are creator-selected, and relative static imports connect packaged files. Moving a code file or folder updates its relative import/export paths and the entry path. A logic module's default function synchronously registers Actions, Queries, Filters and Hooks through `helia`. It runs only in QuickJS. A UI module uses the existing Preact APIs and synchronous default initializer and runs only in its opaque-origin frame. Type-only imports from `@helia/state` are erased; importing UI modules or packages into the logic graph is rejected. Dynamic imports, external packages and host capabilities remain unavailable. The project supports 64 files and 512 KiB of source in total; existing target runtime limits also apply.
 
 State authoring aligns each field's name, type, initial value and required presence in one row. Object and array rows expand into their structure; arrays distinguish the shared item schema from actual initial items. A selected field reveals annotations, nullability and enum settings inline. Document annotations remain available through document settings. Collapsing a row never changes its data, and initial inputs beneath an omitted or null object stay disabled until the parent has an object value.
 
@@ -20,7 +37,7 @@ The explorer and preview widths and inspection panel height can be resized with 
 
 Live preview runs the actual Preact UI and game logic through the existing opaque-origin iframe and QuickJS runner in an isolated in-memory repository. Valid draft changes restart preview after a debounce; invalid edits retain the last valid preview. A separate test playthrough keeps its own progress until explicitly restarted, and shows when its content is outdated. Neither mode adds normal play sessions or writes normal game progress. BYOK tests use fresh host lease scopes and the same agent loop/provider transport. Action, Filter, Hook, UI and AI failures appear in diagnostics, and committed test state and history can be inspected. Test progress lasts until restart or editor teardown.
 
-Resources are portable data URIs, validated by both storage hosts: PNG/JPEG/WebP/GIF, supported audio and video, at most 1 MiB each and 3 MiB total. The asset editor supports file selection, preview, names and modal-confirmed deletion. Creator UI uses `helia.asset('resource-id')` or the `asset` export from `@helia/ui`. SVG, HTML and network URLs are not resource payloads. Start the production web server with `pnpm start`, which defaults `BODY_SIZE_LIMIT` to 20 MiB for content and draft requests; an explicitly configured limit takes precedence.
+Resources are portable data URIs, validated by both storage hosts: PNG/JPEG/WebP/GIF, supported audio and video, at most 1 MiB each and 3 MiB total. The asset explorer supports folder-aware upload, file selection, preview, path changes and modal-confirmed deletion. Folder renaming updates contained paths while retaining resource IDs and bytes. Empty asset folders are editor-local until populated; empty code folders persist with the project. Creator UI uses `helia.asset('images/portrait.png')` or the `asset` export from `@helia/ui`; existing stable-ID references also remain valid. Duplicate paths, file/folder collisions, ID/path ambiguities and paths escaping the virtual asset root are rejected. SVG, HTML and network URLs are not resource payloads. Start the production web server with `pnpm start`, which defaults `BODY_SIZE_LIMIT` to 20 MiB for content and draft requests; an explicitly configured limit takes precedence.
 
 ## Workbench structure
 

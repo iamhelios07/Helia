@@ -1,0 +1,179 @@
+import '../../../../app.css';
+import { afterEach, expect, it } from 'vitest';
+import { page, userEvent } from 'vitest/browser';
+import { render } from 'vitest-browser-svelte';
+import SourceEditor from './SourceEditor.svelte';
+import { MonacoProject } from './monaco-project.js';
+import { getMonacoSource, monacoModel, setMonacoSource } from './monaco-test.js';
+import { getTypeScriptWorker } from 'monaco-editor/languages/features/typescript/register.js';
+const projects: MonacoProject[] = [];
+afterEach(() => {
+	projects.splice(0).forEach((project) => project.dispose());
+});
+function project(field: string, source = 'helia.getState().') {
+	const session = new MonacoProject();
+	projects.push(session);
+	session.update(
+		{ 'main.ts': { language: 'typescript', source } },
+		'export type GameState = { ' + field + ': number };'
+	);
+	return session;
+}
+it('loads Monaco and its local language worker, completes and edits with the keyboard', async () => {
+	const session = project('gold', 'helia.def');
+	render(SourceEditor, {
+		project: session,
+		path: 'main.ts',
+		value: 'helia.def',
+		language: 'typescript',
+		label: '코드',
+		onchange: () => {}
+	});
+	document.querySelector<HTMLElement>('.source-editor')!.style.height = '300px';
+	const input = page.getByRole('textbox', { name: '코드', exact: true });
+	await expect.element(input).toBeVisible();
+	const { monaco } = await session.ready();
+	const codeEditor = monaco.editor
+		.getEditors()
+		.find((item) => item.getModel()?.uri.toString() === session.root + 'main.ts')!;
+	codeEditor.focus();
+	codeEditor.setPosition({ lineNumber: 1, column: 10 });
+	await userEvent.keyboard('{Control>} {/Control}');
+	await expect.element(page.getByRole('listbox')).toBeVisible();
+	await expect
+		.poll(() => document.querySelector('[role=listbox]')?.textContent)
+		.toContain('defineAction');
+	await expect
+		.element(page.getByRole('listbox').getByText('defineAction', { exact: true }))
+		.toBeVisible();
+	await userEvent.keyboard('{Enter}');
+	await expect.poll(() => getMonacoSource('코드')).toBe('helia.defineAction');
+	await userEvent.keyboard('{Control>}z{/Control}');
+	await expect.poll(() => getMonacoSource('코드')).toBe('helia.def');
+});
+it('isolates generated state types while switching worker requests between editor projects', async () => {
+	const first = project('gold'),
+		second = project('health');
+	const { monaco } = await first.ready();
+	await second.ready();
+	const a = first.model('main.ts', '', 'typescript'),
+		b = second.model('main.ts', '', 'typescript');
+	const host = document.createElement('div');
+	document.body.append(host);
+	const instance = monaco.editor.create(host, { model: a });
+	try {
+		const worker = await getTypeScriptWorker();
+		const proxy = await worker(a.uri, b.uri);
+		const names = async (model: typeof a) =>
+			(
+				await proxy.getCompletionsAtPosition(model.uri.toString(), model.getValueLength())
+			)?.entries.map((item: { name: string }) => item.name) ?? [];
+		expect(await names(a)).toContain('gold');
+		expect(await names(a)).not.toContain('health');
+		expect(await names(b)).toContain('health');
+		expect(await names(b)).not.toContain('gold');
+		a.setValue('helia.getState().gold.toUpperCase();');
+		expect((await proxy.getSemanticDiagnostics(a.uri.toString())).length).toBeGreaterThan(0);
+		expect(await names(b)).toContain('health');
+	} finally {
+		instance.dispose();
+		host.remove();
+	}
+});
+it('keeps file undo and view state across tabs, blocks generated types, and diagnoses JSON', async () => {
+	const session = project('gold', 'const count = 1;');
+	session.update(
+		{
+			'main.ts': { language: 'typescript', source: 'const count = 1;' },
+			'other.ts': { language: 'typescript', source: 'export {};' }
+		},
+		'export type GameState = {gold:number};',
+		{ 'state.json': '{}' }
+	);
+	const screen = render(SourceEditor, {
+		project: session,
+		path: 'main.ts',
+		value: 'const count = 1;',
+		language: 'typescript',
+		label: '코드',
+		onchange: () => {}
+	});
+	document.querySelector<HTMLElement>('.source-editor')!.style.height = '300px';
+	await setMonacoSource('코드', 'const count = 2;');
+	await screen.rerender({ path: 'other.ts', value: 'export {};' });
+	await expect.poll(() => getMonacoSource('코드')).toBe('export {};');
+	await screen.rerender({ path: 'main.ts', value: 'const count = 2;' });
+	const input = page.getByRole('textbox', { name: '코드', exact: true });
+	(input.element() as HTMLTextAreaElement).focus();
+	await userEvent.keyboard('{Control>}z{/Control}');
+	await expect.poll(() => getMonacoSource('코드')).toBe('const count = 1;');
+	await screen.rerender({
+		path: 'GameState.d.ts',
+		value: 'export type GameState = {gold:number};',
+		readonly: true
+	});
+	await expect.element(input).toHaveAttribute('readonly');
+	const before = await getMonacoSource('코드');
+	await userEvent.keyboard('x');
+	expect(await getMonacoSource('코드')).toBe(before);
+	await screen.rerender({ path: 'state.json', value: '{bad', language: 'json', readonly: false });
+	const json = await monacoModel('코드');
+	const { monaco } = await session.ready();
+	await expect
+		.poll(() => monaco.editor.getModelMarkers({ resource: json.uri }).length)
+		.toBeGreaterThan(0);
+	const uri = json.uri;
+	screen.unmount();
+	session.dispose();
+	expect(monaco.editor.getModel(uri)).toBeNull();
+});
+
+it('checks packaged imports, JS state completion and TSX APIs without requiring an h import', async () => {
+	const session = project('gold');
+	session.update(
+		{
+			'logic.ts': {
+				language: 'typescript',
+				source:
+					"import { amount } from './helper';\nhelia.defineAction({name:'gain',arguments:{},run({state}){state.gold=amount;return state;}});"
+			},
+			'helper.ts': { language: 'typescript', source: 'export const amount = "wrong";' },
+			'view.tsx': {
+				language: 'tsx',
+				source:
+					"import { registerPanel, useGameState, asset } from '@helia/ui';\nregisterPanel({id:'stats',title:'Stats',component:()=> <span>{useGameState().gold}{asset('images/test.png')}</span>});"
+			},
+			'query.js': { language: 'javascript', source: 'helia.getState().' }
+		},
+		'export type GameState = {gold:number};'
+	);
+	const { monaco } = await session.ready();
+
+	const logic = session.model('logic.ts', '', 'typescript');
+	const ui = session.model('view.tsx', '', 'tsx');
+	// Opening a source model activates Monaco's native language providers.
+	const host = document.createElement('div');
+	document.body.append(host);
+	const instance = monaco.editor.create(host, { model: logic });
+	try {
+		const ts = await getTypeScriptWorker();
+		const proxy = await ts(logic.uri, ui.uri);
+		const errors = await proxy.getSemanticDiagnostics(logic.uri.toString());
+		expect(errors.map((item) => String(item.messageText)).join(' ')).toContain('not assignable');
+		expect(await proxy.getSemanticDiagnostics(ui.uri.toString())).toEqual([]);
+		const { getJavaScriptWorker } =
+			await import('monaco-editor/languages/features/typescript/register.js');
+		const js = session.model('query.js', '', 'javascript');
+		instance.setModel(js);
+		const factory = await getJavaScriptWorker();
+		const jsProxy = await factory(js.uri);
+		const completion = await jsProxy.getCompletionsAtPosition(
+			js.uri.toString(),
+			js.getValueLength()
+		);
+		expect(completion.entries.map((item: { name: string }) => item.name)).toContain('gold');
+	} finally {
+		instance.dispose();
+		host.remove();
+	}
+});

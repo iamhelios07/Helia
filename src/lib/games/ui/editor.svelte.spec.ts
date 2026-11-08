@@ -6,6 +6,7 @@ import { beforeNavigate, goto } from '$app/navigation';
 import GameEditor from './GameEditor.svelte';
 import { createGame, createSession, getGameWorkspace, updateGameSettings } from '../repository.js';
 import { loadEditorDraft } from '../editor.js';
+import { getMonacoSource, monacoModel, setMonacoSource } from './editor/monaco-test.js';
 import type { EditorDraft } from '../editor.js';
 import { loadAuthoringDraft, saveAuthoringDraft } from '../editor-draft-storage.js';
 import { loadEditorLayout } from '../editor-layout.js';
@@ -49,6 +50,90 @@ const applyButton = () => page.getByRole('button', { name: '적용', exact: true
 const returnLink = () => page.getByRole('link', { name: '플레이로 돌아가기' });
 const heightHandle = () => page.getByRole('slider', { name: '검사 패널 높이 조절' });
 
+it('keeps the editor usable while incomplete code produces repeated diagnostic messages', async () => {
+	const game = await createGame();
+	render(GameEditor, { gameId: game.id });
+	await expect.element(nameInput()).toBeVisible();
+	await page.getByRole('button', { name: /main\.ts.*진입점/ }).click();
+	await setMonacoSource('main.ts 소스', 'export {};\nhelia.');
+	const problems = page.getByRole('tabpanel', { name: '문제', exact: true });
+	await expect.element(problems).toHaveTextContent('Identifier expected.');
+	await expect.element(applyButton()).toBeDisabled();
+	await expect
+		.element(page.getByRole('textbox', { name: 'main.ts 소스', exact: true }))
+		.toBeVisible();
+	await expect.poll(() => getMonacoSource('main.ts 소스')).toBe('export {};\nhelia.');
+
+	// The same parser message at different locations must remain independently navigable.
+	await setMonacoSource('main.ts 소스', 'export {};\nhelia.;\nhelia.');
+	const repeated = problems.getByRole('button', { name: /Identifier expected\./ });
+	await expect.poll(() => repeated.elements().length, { timeout: 20000 }).toBe(2);
+	await repeated.nth(1).click();
+	const model = await monacoModel('main.ts 소스');
+	await expect
+		.poll(() => document.querySelector('.source-editor footer')?.textContent)
+		.toContain('줄 3, 열 7');
+	expect(model.getValue()).toBe('export {};\nhelia.;\nhelia.');
+
+	await setMonacoSource('main.ts 소스', 'export {};');
+	await expect.element(problems).toHaveTextContent('문서 형식 검사를 통과했어요.');
+	await expect.element(applyButton()).toBeEnabled();
+}, 30000);
+
+it('edits source files as project tabs, keeps imports on rename, and hides storage manifests', async () => {
+	const game = await createGame();
+	render(GameEditor, { gameId: game.id });
+	await expect.element(nameInput()).toBeVisible();
+	await expect
+		.element(page.getByRole('button', { name: /scripts\.json|ui\.json|resources\.json/ }))
+		.not.toBeInTheDocument();
+	await page.getByRole('button', { name: '새 코드 파일', exact: true }).click();
+	await page.getByRole('textbox', { name: '프로젝트 상대 경로' }).fill('logic.ts');
+	await page.getByRole('button', { name: '확인', exact: true }).click();
+	const logic = page.getByRole('textbox', { name: 'logic.ts 소스', exact: true });
+	await expect.element(logic).toBeVisible();
+	await setMonacoSource(
+		'logic.ts 소스',
+		'export default function register() {\n  helia.defineQuery({name:"answer", arguments:{}, run:()=>42});\n}\n'
+	);
+	await page.getByRole('button', { name: '새 코드 파일', exact: true }).click();
+	await page.getByRole('textbox', { name: '프로젝트 상대 경로' }).fill('logic.ts');
+	await page.getByRole('button', { name: '확인', exact: true }).click();
+	await expect
+		.element(page.getByRole('main').getByRole('alert'))
+		.toHaveTextContent('같은 경로가 이미 있어요.');
+	await page.getByRole('button', { name: '취소', exact: true }).click();
+	await expect.poll(() => getMonacoSource('logic.ts 소스')).toContain('answer');
+	await page.getByRole('button', { name: /main\.ts.*진입점/ }).click();
+	await setMonacoSource('main.ts 소스', "export { default as logic } from './logic';");
+	await page.getByRole('tab', { name: /logic\.ts/ }).click();
+	await expect.element(logic).toHaveValue(expect.stringContaining('answer'));
+	await page.getByRole('button', { name: '이름 변경', exact: true }).click();
+	await page.getByRole('textbox', { name: '프로젝트 상대 경로' }).fill('logic/queries.ts');
+	await page.getByRole('button', { name: '확인', exact: true }).click();
+	await expect
+		.element(page.getByRole('textbox', { name: 'logic/queries.ts 소스', exact: true }))
+		.toBeVisible();
+	await page.getByRole('tab', { name: /main\.ts/ }).click();
+	await expect
+		.poll(() => getMonacoSource('main.ts 소스'))
+		.toBe("export { default as logic } from './logic/queries.ts';");
+	await expect
+		.poll(
+			() =>
+				JSON.parse(loadEditorDraft(game.id)?.documents.code ?? '{}').files?.['logic/queries.ts']
+					?.source
+		)
+		.toContain('answer');
+	await page.getByRole('button', { name: /GameState\.d\.ts.*자동/ }).click();
+	await expect
+		.element(page.getByRole('textbox', { name: 'GameState.d.ts 소스', exact: true }))
+		.toHaveAttribute('readonly');
+	await expect
+		.element(page.getByRole('button', { name: 'JSON으로 편집', exact: true }))
+		.not.toBeInTheDocument();
+});
+
 it('keeps document edits in a local draft until atomic apply, preserving the play session', async () => {
 	const game = await createGame();
 	const active = await createSession(game.id);
@@ -86,8 +171,7 @@ it('restores unfinished source across remounts, reports errors, and permits leav
 	await expect.element(nameInput()).toBeVisible();
 	await page.getByRole('button', { name: /state\.json/ }).click();
 	await page.getByRole('button', { name: 'JSON으로 편집', exact: true }).click();
-	const source = page.getByRole('textbox', { name: '상태 소스', exact: true });
-	await source.fill('{unfinished');
+	await setMonacoSource('상태 소스', '{unfinished');
 	await expect.element(applyButton()).toBeDisabled();
 	await expect
 		.element(page.getByRole('tabpanel', { name: '문제', exact: true }))
@@ -99,7 +183,7 @@ it('restores unfinished source across remounts, reports errors, and permits leav
 	await expect.element(nameInput()).toBeVisible();
 	await page.getByRole('button', { name: /state\.json/ }).click();
 	await page.getByRole('button', { name: 'JSON으로 편집', exact: true }).click();
-	await expect.element(source).toHaveValue('{unfinished');
+	await expect.poll(() => getMonacoSource('상태 소스')).toBe('{unfinished');
 	await returnLink().click();
 	expect(goto).toHaveBeenCalledWith(`/games/${game.id}`);
 	expect((await getGameWorkspace(game.id))?.game.schema).toEqual(game.schema);
@@ -112,7 +196,7 @@ it('retains edits and blocks return when durable draft storage fails, then retri
 	vi.mocked(saveAuthoringDraft).mockRejectedValueOnce(new Error('Durable storage unavailable'));
 	await nameInput().fill('보존할 초안');
 	await returnLink().click();
-	await expect.element(page.getByRole('alert')).toBeVisible();
+	await expect.element(page.getByRole('main').getByRole('alert')).toBeVisible();
 	expect(goto).not.toHaveBeenCalled();
 	await expect.element(nameInput()).toHaveValue('보존할 초안');
 	await page.getByRole('button', { name: '초안 저장 다시 시도' }).click();
@@ -161,7 +245,9 @@ it('recovers an unsaved cache after a durable save failure and persists it on re
 	await expect.element(nameInput()).toBeVisible();
 	await nameInput().fill('저장 실패 후 복구할 내용');
 	await returnLink().click();
-	await expect.element(page.getByRole('alert')).toHaveTextContent('Durable storage unavailable');
+	await expect
+		.element(page.getByRole('main').getByRole('alert'))
+		.toHaveTextContent('Durable storage unavailable');
 	await screen.unmount();
 	// Let the rejected final flush finish before simulating a new process.
 	await new Promise((resolve) => setTimeout(resolve, 0));
@@ -215,14 +301,13 @@ it('edits schema and initial values bidirectionally through GUI and canonical JS
 	await page.getByRole('spinbutton', { name: '상태.hp 초기값', exact: true }).fill('9');
 	await expect.poll(() => durableDrafts.get(game.id)?.draft?.documents.state).toContain('9');
 	await page.getByRole('button', { name: 'JSON으로 편집', exact: true }).click();
-	const source = page.getByRole('textbox', { name: '상태 소스', exact: true });
-	const parsed = JSON.parse((source.element() as HTMLTextAreaElement).value);
+	const parsed = JSON.parse(await getMonacoSource('상태 소스'));
 	expect(parsed.schema.properties.hp.type).toBe('integer');
 	expect(parsed.schema.required).toContain('hp');
 	expect(parsed.initialState.hp).toBe(9);
 	parsed.schema.properties.hp.title = '체력';
 	parsed.initialState.hp = 12;
-	await source.fill(JSON.stringify(parsed, null, 2));
+	await setMonacoSource('상태 소스', JSON.stringify(parsed, null, 2));
 	await page.getByRole('button', { name: 'GUI로 편집', exact: true }).click();
 	await page.getByRole('button', { name: '상태.hp 상세 설정', exact: true }).click();
 	await expect
@@ -288,7 +373,9 @@ it('preserves the local draft when another screen changes the applied game', asy
 	await nameInput().fill('편집 중인 초안');
 	await updateGameSettings(game.id, { title: '다른 화면의 수정', ...game.settings });
 	await applyButton().click();
-	await expect.element(page.getByRole('alert')).toHaveTextContent('다른 화면에서 게임이 변경');
+	await expect
+		.element(page.getByRole('main').getByRole('alert'))
+		.toHaveTextContent('다른 화면에서 게임이 변경');
 	await expect.element(nameInput()).toHaveValue('편집 중인 초안');
 	expect((await getGameWorkspace(game.id))?.game.title).toBe('다른 화면의 수정');
 	expect(loadEditorDraft(game.id)?.documents.info).toContain('편집 중인 초안');
@@ -371,7 +458,7 @@ it('edits an independent document in the secondary pane without replacing the ma
 	await page.getByRole('button', { name: '편집기 좌우 분할' }).click();
 	await page.getByRole('combobox', { name: '문서', exact: true }).selectOptions('instructions');
 	const value = JSON.stringify({ ...game.settings, firstMessage: '보조 편집기의 시작' }, null, 2);
-	await page.getByRole('textbox', { name: '보조 게임 지침 소스', exact: true }).fill(value);
+	await setMonacoSource('보조 게임 지침 소스', value);
 	await expect.element(nameInput()).toHaveValue(game.title);
 	await expect.poll(() => loadEditorDraft(game.id)?.documents.instructions).toBe(value);
 	await page.getByRole('button', { name: '보조 편집기 닫기' }).click();

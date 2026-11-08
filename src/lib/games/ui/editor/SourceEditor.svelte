@@ -1,10 +1,17 @@
 <script lang="ts">
+	import { untrack } from 'svelte';
+	import type { editor } from 'monaco-editor/editor/editor.api.js';
+	import { MonacoProject } from './monaco-project.js';
 	let {
 		value,
 		label,
 		language = 'JSON',
 		readonly = false,
 		disabled = false,
+		project,
+		path = 'document.json',
+		viewId = 'primary',
+		location,
 		onchange
 	}: {
 		value: string;
@@ -12,55 +19,116 @@
 		language?: string;
 		readonly?: boolean;
 		disabled?: boolean;
+		project?: MonacoProject;
+		path?: string;
+		viewId?: string;
+		location?: { line: number; column: number; sequence: number };
 		onchange?: (value: string) => void;
 	} = $props();
-	let lineCount = $derived(value.split('\n').length);
-	let scrollTop = $state(0);
-	let firstLine = $derived(Math.min(lineCount, Math.max(1, Math.floor(scrollTop / 21) - 5)));
-	let visibleLines = $derived(
-		Array.from(
-			{ length: Math.min(150, lineCount - firstLine + 1) },
-			(_, index) => firstLine + index
-		)
-	);
-	let position = $state({ line: 1, column: 1 });
-
-	function updatePosition(element: HTMLTextAreaElement) {
-		const before = element.value.slice(0, element.selectionStart);
-		const lines = before.split('\n');
-		position = { line: lines.length, column: (lines.at(-1)?.length ?? 0) + 1 };
+	const localProject = new MonacoProject();
+	let instance = $state.raw<editor.IStandaloneCodeEditor>();
+	let loadError = $state('');
+	let position = $state({ lineNumber: 1, column: 1 });
+	let modelUri = $derived((project ?? localProject).root + path);
+	let activePath = '';
+	function attach(element: HTMLDivElement) {
+		let disposed = false;
+		const session = untrack(() => project ?? localProject);
+		void session
+			.ready()
+			.then(({ monaco }) => {
+				if (disposed) return;
+				const codeEditor = monaco.editor.create(element, {
+					model: untrack(() => session.model(path, value, language)),
+					theme: 'helia',
+					automaticLayout: true,
+					minimap: { enabled: false },
+					fontSize: 12,
+					lineHeight: 21,
+					tabSize: 2,
+					insertSpaces: true,
+					fontFamily: "Consolas, 'SFMono-Regular', monospace",
+					scrollBeyondLastLine: false,
+					padding: { top: 16, bottom: 16 },
+					lineNumbersMinChars: 3,
+					glyphMargin: false,
+					overviewRulerLanes: 0,
+					hideCursorInOverviewRuler: true,
+					renderLineHighlight: 'line',
+					scrollbar: { verticalScrollbarSize: 6, horizontalScrollbarSize: 6, useShadows: false },
+					fixedOverflowWidgets: true,
+					accessibilitySupport: 'on',
+					editContext: false,
+					ariaLabel: untrack(() => label),
+					readOnly: untrack(() => readonly || disabled),
+					domReadOnly: untrack(() => readonly || disabled),
+					wordBasedSuggestions: 'off',
+					quickSuggestions: { other: true, comments: false, strings: false }
+				});
+				const content = codeEditor.onDidChangeModelContent(() => {
+					if (readonly || disabled || codeEditor.getModel()?.uri.toString() !== session.root + path)
+						return;
+					onchange?.(codeEditor.getValue());
+				});
+				const cursor = codeEditor.onDidChangeCursorPosition((event) => (position = event.position));
+				instance = codeEditor;
+				cleanup = () => {
+					session.saveView(viewId + ':' + activePath, codeEditor.saveViewState());
+					content.dispose();
+					cursor.dispose();
+					codeEditor.dispose();
+				};
+			})
+			.catch(() => {
+				if (!disposed) loadError = '코드 편집기를 불러오지 못했어요.';
+			});
+		let cleanup: (() => void) | undefined;
+		return () => {
+			disposed = true;
+			cleanup?.();
+			instance = undefined;
+			localProject.dispose();
+		};
 	}
+	$effect(() => {
+		const codeEditor = instance;
+		const session = project ?? localProject;
+		const currentPath = path;
+		const source = value;
+		const mode = language;
+		if (!codeEditor) return;
+		if (!project) session.update({ [currentPath]: { source, language: mode } }, '');
+		const model = session.model(currentPath, source, mode);
+		if (activePath !== currentPath || codeEditor.getModel() !== model) {
+			session.saveView(viewId + ':' + activePath, codeEditor.saveViewState());
+			activePath = currentPath;
+			codeEditor.setModel(model);
+			const saved = session.view(viewId + ':' + currentPath);
+			if (saved) codeEditor.restoreViewState(saved);
+		}
+		if (model.getValue() !== source) model.setValue(source);
+		codeEditor.updateOptions({
+			ariaLabel: label,
+			readOnly: readonly || disabled,
+			domReadOnly: readonly || disabled
+		});
+	});
+	$effect(() => {
+		const target = location;
+		const codeEditor = instance;
+		if (!target || !codeEditor) return;
+		codeEditor.setPosition({ lineNumber: target.line, column: target.column });
+		codeEditor.revealPositionInCenter({ lineNumber: target.line, column: target.column });
+		codeEditor.focus();
+	});
 </script>
 
-<div class="source-editor">
-	<div class="source-body">
-		<div class="line-numbers" aria-hidden="true">
-			<div style:transform="translateY({(firstLine - 1) * 21 - scrollTop}px)">
-				{#each visibleLines as line (line)}
-					<div>{line}</div>
-				{/each}
-			</div>
-		</div>
-		<textarea
-			aria-label={label}
-			{value}
-			{readonly}
-			{disabled}
-			spellcheck="false"
-			autocapitalize="off"
-			autocomplete="off"
-			wrap="off"
-			oninput={(event) => {
-				onchange?.(event.currentTarget.value);
-				updatePosition(event.currentTarget);
-			}}
-			onscroll={(event) => (scrollTop = event.currentTarget.scrollTop)}
-			onclick={(event) => updatePosition(event.currentTarget)}
-			onkeyup={(event) => updatePosition(event.currentTarget)}></textarea>
-	</div>
+<div class="source-editor" data-model-uri={modelUri}>
+	<div class="source-body" {@attach attach}></div>
+	{#if loadError}<p role="alert">{loadError}</p>{/if}
 	<footer>
 		<span>{language}{readonly ? ' · 읽기 전용' : ''}</span><span
-			>줄 {position.line}, 열 {position.column}</span
+			>줄 {position.lineNumber}, 열 {position.column}</span
 		>
 	</footer>
 </div>
@@ -71,44 +139,13 @@
 		flex-direction: column;
 		height: 100%;
 		min-height: 0;
+		min-width: 0;
 	}
 	.source-body {
-		position: relative;
-		display: flex;
 		flex: 1;
 		min-height: 0;
-		overflow: hidden;
-	}
-	.line-numbers {
-		flex: 0 0 48px;
-		overflow: hidden;
-		padding: 20px 11px 20px 0;
-		text-align: right;
-		color: color-mix(in srgb, var(--text-muted) 55%, transparent);
-		user-select: none;
-	}
-	.line-numbers,
-	textarea {
-		font:
-			12px/21px Consolas,
-			'SFMono-Regular',
-			monospace;
-		tab-size: 2;
-	}
-	textarea {
-		flex: 1;
 		min-width: 0;
-		resize: none;
-		border: 0;
-		border-radius: 0;
-		padding: 20px 18px 20px 0;
-		background: transparent;
-		color: var(--text);
-		outline-offset: -2px;
-		white-space: pre;
-	}
-	textarea:focus-visible {
-		outline: 1px solid var(--border-strong);
+		overflow: hidden;
 	}
 	footer {
 		display: flex;
@@ -118,5 +155,8 @@
 		border-top: 1px solid var(--border);
 		font-size: 10px;
 		color: var(--text-muted);
+	}
+	p {
+		padding: 12px;
 	}
 </style>

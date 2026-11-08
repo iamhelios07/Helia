@@ -1,12 +1,6 @@
-import {
-	parseGame,
-	parseGameSettings,
-	parseScripts,
-	validateGameMetadata,
-	type Game
-} from './model.js';
+import { parseGame, parseGameSettings, validateGameMetadata, type Game } from './model.js';
 import { parseStateDocument } from './state/schema.js';
-import { parseGameUI } from './ui/runtime/model.js';
+import { createCodeProject, parseCodeProject } from './code-project.js';
 import { parseGameAIContent } from './ai/prompts.js';
 import { parseResources } from './resources.js';
 
@@ -14,8 +8,7 @@ export const EDITOR_DOCUMENTS = [
 	{ id: 'info', label: '게임 정보' },
 	{ id: 'instructions', label: '게임 지침' },
 	{ id: 'state', label: '상태' },
-	{ id: 'scripts', label: '로직' },
-	{ id: 'ui', label: '화면' },
+	{ id: 'code', label: '코드' },
 	{ id: 'lorebook', label: '로어북' },
 	{ id: 'assets', label: '에셋' }
 ] as const;
@@ -32,9 +25,10 @@ export type GameEditorContent = Pick<
 	| 'ui'
 	| 'ai'
 	| 'resources'
+	| 'code'
 >;
 export interface EditorDraft {
-	version: 2;
+	version: 3;
 	gameId: string;
 	baseContent: GameEditorContent;
 	documents: Record<EditorDocumentId, string>;
@@ -60,7 +54,8 @@ export function editorContent(game: Game): GameEditorContent {
 		scripts: game.scripts,
 		...(game.ui ? { ui: game.ui } : {}),
 		...(game.ai ? { ai: game.ai } : {}),
-		...(game.resources ? { resources: game.resources } : {})
+		...(game.resources ? { resources: game.resources } : {}),
+		...(game.code ? { code: game.code } : {})
 	});
 }
 
@@ -69,15 +64,14 @@ function documents(content: GameEditorContent): EditorDraft['documents'] {
 		info: format({ title: content.title, genre: content.genre, description: content.description }),
 		instructions: format(content.settings),
 		state: format({ schema: content.schema, initialState: content.initialState }),
-		scripts: format(content.scripts),
-		ui: format(content.ui ?? null),
+		code: format(createCodeProject(content)),
 		lorebook: format(content.ai ?? { version: 1, lorebook: [] }),
 		assets: format(content.resources ?? {})
 	};
 }
 export function createEditorDraft(game: Game): EditorDraft {
 	const baseContent = editorContent(game);
-	return { version: 2, gameId: game.id, baseContent, documents: documents(baseContent) };
+	return { version: 3, gameId: game.id, baseContent, documents: documents(baseContent) };
 }
 export function changedEditorDraft(draft: EditorDraft): boolean {
 	const initial = documents(draft.baseContent);
@@ -90,7 +84,7 @@ export function readEditorDraft(text: string, gameId: string): EditorDraft {
 	if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('잘못된 초안');
 	const row = value as Record<string, unknown>;
 	if (
-		(row.version !== 1 && row.version !== 2) ||
+		(row.version !== 1 && row.version !== 2 && row.version !== 3) ||
 		row.gameId !== gameId ||
 		!row.documents ||
 		typeof row.documents !== 'object' ||
@@ -110,6 +104,20 @@ export function readEditorDraft(text: string, gameId: string): EditorDraft {
 		}
 	}
 	if (source.assets === undefined) source.assets = '{}';
+	if (row.version !== 3) {
+		if (typeof source.scripts !== 'string' || typeof source.ui !== 'string')
+			throw new Error('잘못된 초안');
+		try {
+			source.code = format(
+				createCodeProject({
+					scripts: JSON.parse(source.scripts),
+					ui: JSON.parse(source.ui) ?? undefined
+				})
+			);
+		} catch {
+			throw new Error('이전 코드 초안을 변환하지 못했어요. 저장된 원본은 유지됩니다.');
+		}
+	}
 	if (EDITOR_DOCUMENTS.some(({ id }) => typeof source[id] !== 'string'))
 		throw new Error('잘못된 초안');
 	// Rebuild the stored base with the same runtime validators used by persisted games.
@@ -122,7 +130,7 @@ export function readEditorDraft(text: string, gameId: string): EditorDraft {
 		updatedAt: '2000-01-01T00:00:00.000Z'
 	});
 	return {
-		version: 2,
+		version: 3,
 		gameId,
 		baseContent: editorContent(base),
 		documents: Object.fromEntries(
@@ -178,20 +186,10 @@ export function validateEditorDraft(
 	const info = check('info', validateGameMetadata);
 	const settings = check('instructions', parseGameSettings);
 	const stateDocument = check('state', parseStateDocument);
-	const scripts = check('scripts', parseScripts);
-	const ui = check('ui', (value) => (value === null ? null : parseGameUI(value)));
+	const code = check('code', parseCodeProject);
 	const ai = check('lorebook', parseGameAIContent);
 	const resources = check('assets', parseResources);
-	if (
-		problems.length ||
-		!info ||
-		!settings ||
-		!stateDocument ||
-		!scripts ||
-		ui === undefined ||
-		!ai ||
-		!resources
-	)
+	if (problems.length || !info || !settings || !stateDocument || !code || !ai || !resources)
 		return { game: null, problems };
 	return {
 		game: parseGame({
@@ -199,8 +197,7 @@ export function validateEditorDraft(
 			...info,
 			settings,
 			...stateDocument,
-			scripts,
-			ui: ui ?? undefined,
+			code,
 			ai,
 			resources
 		}),
