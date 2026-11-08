@@ -61,7 +61,7 @@ export const BOOTSTRAP = String.raw`
       if (name.startsWith('$helia.')) throw Error('reserved-name');
       if (description !== undefined && (typeof description !== 'string' || !description.trim() || description.length > 1024)) throw Error('description');
       const info = {name,scriptId};
-      if (kind === 'action' || kind === 'query') {info.arguments = copy(args);info.ai = definition.ai === true;}
+      if (kind === 'action' || kind === 'query') {info.arguments = copy(args === undefined ? {type:'object',properties:{},additionalProperties:false} : args);info.ai = definition.ai === true;}
       else {
         info.priority = definition.priority === undefined ? 0 : definition.priority;
         info.actions = definition.actions === undefined ? null : copy(definition.actions);

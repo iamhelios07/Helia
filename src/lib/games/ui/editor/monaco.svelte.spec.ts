@@ -10,6 +10,53 @@ const projects: MonacoProject[] = [];
 afterEach(() => {
 	projects.splice(0).forEach((project) => project.dispose());
 });
+it('completes imported generic argument fields and type-checks Action and Query callbacks', async () => {
+	const session = new MonacoProject();
+	projects.push(session);
+	const source = `import type {Args} from './args';
+helia.defineAction<Args>({name:'buy',run({state,args}){state.gold -= args.price; return state;}});
+helia.defineQuery<Args>({name:'read',run({args}){return args.tags;}});
+helia.defineAction({name:'rest',run({state}){return state;}});`;
+	session.update(
+		{
+			'main.ts': { language: 'typescript', source },
+			'args.ts': {
+				language: 'typescript',
+				source: "export interface Args {price:number; item:'sword'|'shield'; tags:string[];}"
+			}
+		},
+		'export type GameState = {gold:number};'
+	);
+	const { monaco } = await session.ready();
+	const model = session.model('main.ts', source, 'typescript');
+	const host = document.createElement('div');
+	document.body.append(host);
+	const instance = monaco.editor.create(host, { model });
+	try {
+		await expect
+			.poll(async () => {
+				try {
+					await getTypeScriptWorker();
+					return true;
+				} catch {
+					return false;
+				}
+			})
+			.toBe(true);
+		const proxy = await (await getTypeScriptWorker())(model.uri);
+		expect(await proxy.getSemanticDiagnostics(model.uri.toString())).toEqual([]);
+		const offset = source.indexOf('args.price') + 'args.'.length;
+		const completions = await proxy.getCompletionsAtPosition(model.uri.toString(), offset);
+		expect(completions?.entries.map((entry: { name: string }) => entry.name)).toEqual(
+			expect.arrayContaining(['price', 'item'])
+		);
+		model.setValue(source.replace('args.price', 'args.price.toUpperCase()'));
+		expect((await proxy.getSemanticDiagnostics(model.uri.toString())).length).toBeGreaterThan(0);
+	} finally {
+		instance.dispose();
+		host.remove();
+	}
+});
 function project(field: string, source = 'helia.getState().') {
 	const session = new MonacoProject();
 	projects.push(session);

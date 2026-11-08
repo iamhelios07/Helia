@@ -8,6 +8,8 @@ import {
 import { BOOTSTRAP } from './bootstrap.js';
 import { parseGameState } from '#lib/games/state/value.js';
 import { evaluateRules, type Definition, type RuleKind } from './rules.js';
+import { argumentSchemaCompiler } from '../argument-schema.js';
+import { generateStateTypes } from '../state/schema.js';
 import {
 	boundedText,
 	CreatorRuntimeError,
@@ -24,6 +26,14 @@ import {
 export async function evaluateAction(value: ActionRequest): Promise<ActionResult> {
 	const input = parseInput(value);
 	const compiled: { id: string; source: string }[] = [];
+	const typed = Object.entries(input.scripts).filter(([, script]) =>
+		['typescript', 'ts'].includes(script.language)
+	);
+	const typedScripts = Object.fromEntries(
+		typed.map(([, script], index) => [`script-${index}.ts`, script])
+	);
+	const paths = new Map(typed.map(([id], index) => [id, `script-${index}.ts`]));
+	let argumentsFor: ((path: string) => string) | undefined;
 	for (const [id, script] of Object.entries(input.scripts).sort(([a], [b]) =>
 		a < b ? -1 : a > b ? 1 : 0
 	)) {
@@ -32,7 +42,18 @@ export async function evaluateAction(value: ActionRequest): Promise<ActionResult
 			continue;
 		}
 		const { default: ts } = await import('typescript');
-		const output = ts.transpileModule(script.source, {
+		argumentsFor ??= argumentSchemaCompiler(
+			ts,
+			typedScripts,
+			(_message, file) => {
+				throw new CreatorRuntimeError(
+					'compile',
+					typed[Number(file.match(/^script-(\d+)\.ts$/)?.[1])]?.[0] ?? id
+				);
+			},
+			generateStateTypes(input.schema)
+		);
+		const output = ts.transpileModule(argumentsFor(paths.get(id)!), {
 			fileName: `${id}.ts`,
 			reportDiagnostics: true,
 			compilerOptions: {

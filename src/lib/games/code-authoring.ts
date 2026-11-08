@@ -48,16 +48,16 @@ export function writeAuthoringBundle(
 
 export const HELIA_AUTHORING_DECLARATIONS = `
 type GameState = import('./GameState').GameState;
-type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
+type JsonValue = null | boolean | number | string | readonly JsonValue[] | { [key: string]: JsonValue };
 type ReadonlyState<T> = { readonly [K in keyof T]: T[K] extends object ? ReadonlyState<T[K]> : T[K] };
-interface ActionContext { state: GameState; args: Record<string, JsonValue>; }
-interface ReadContext { state: ReadonlyState<GameState>; args: Record<string, JsonValue>; }
-interface ActionDefinition { name: string; arguments: object; description?: string; ai?: boolean; run(context: ActionContext): GameState; }
-interface QueryDefinition { name: string; arguments: object; description?: string; ai?: boolean; run(context: ReadContext): JsonValue; }
+interface ActionContext<TArgs extends object = Record<string, JsonValue>> { state: GameState; args: ReadonlyState<TArgs>; }
+interface ReadContext<TArgs extends object = Record<string, JsonValue>> { state: ReadonlyState<GameState>; args: ReadonlyState<TArgs>; }
+interface ActionDefinition<TArgs extends object = Record<string, JsonValue>> { name: string; arguments?: object; description?: string; ai?: boolean; run(context: ActionContext<TArgs>): GameState; }
+interface QueryDefinition<TArgs extends object = Record<string, JsonValue>> { name: string; arguments?: object; description?: string; ai?: boolean; run(context: ReadContext<TArgs>): JsonValue; }
 interface RuleDefinition { name: string; priority?: number; actions?: string[]; mode?: 'included' | 'independent'; run(context: ReadContext): unknown; }
 interface HeliaRuntime {
- defineAction(definition: ActionDefinition): void;
- defineQuery(definition: QueryDefinition): void;
+ defineAction<TArgs extends object = Record<string, JsonValue>>(definition: ActionDefinition<TArgs>): void;
+ defineQuery<TArgs extends object = Record<string, JsonValue>>(definition: QueryDefinition<TArgs>): void;
  defineFilter(definition: RuleDefinition): void;
  defineHook(definition: RuleDefinition): void;
  emit(name: string, payload?: JsonValue): void;

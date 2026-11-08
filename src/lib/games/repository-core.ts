@@ -562,7 +562,7 @@ export function createGameRepository(
 			const content = input.content.code
 				? {
 						...input.content,
-						...(await compileCodeProject(input.content.code)),
+						...(await compileCodeProject(input.content.code, input.content.schema)),
 						code: input.content.code
 					}
 				: input.content;

@@ -1,6 +1,9 @@
 import type ts from 'typescript';
 import type { Game } from './model.js';
 import { parseGameUI, type GameUI } from './ui/runtime/model.js';
+import { argumentSchemaCompiler } from './argument-schema.js';
+import { generateStateTypes } from './state/schema.js';
+import { isTypeOnlyModule } from './module-syntax.js';
 
 export type CodeLanguage = 'javascript' | 'typescript' | 'jsx' | 'tsx';
 export interface CodeProject {
@@ -117,8 +120,7 @@ export function parseCodeProject(input: unknown): CodeProject {
 export function createCodeProject(game: Pick<Game, 'scripts' | 'ui' | 'code'>): CodeProject {
 	if (game.code) return parseCodeProject(game.code);
 	const files: CodeProject['files'] = {};
-	const exports: string[] = [];
-	const registrations: string[] = [];
+	const imports: string[] = [];
 	const scripts = Object.entries(game.scripts)
 		.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
 		.map(([, script]) => script);
@@ -127,20 +129,9 @@ export function createCodeProject(game: Pick<Game, 'scripts' | 'ui' | 'code'>): 
 		const path = `logic/part-${index + 1}.${typed ? 'ts' : 'js'}`;
 		files[path] = {
 			language: typed ? 'typescript' : 'javascript',
-			source: `export default function register() {\n${script.source}\n}\n`
+			source: `'use logic';\n${script.source}\n`
 		};
-		registrations.push(`import register${index} from './${path}';`);
-	}
-	if (registrations.length) {
-		files['logic.ts'] = {
-			language: 'typescript',
-			source:
-				registrations.join('\n') +
-				'\n\nexport default function register() {\n' +
-				registrations.map((_, i) => `  register${i}();`).join('\n') +
-				'\n}\n'
-		};
-		exports.push("export { default as logic } from './logic';");
+		imports.push(`import './${path}';`);
 	}
 	let presentation: CodeProject['presentation'];
 	if (game.ui) {
@@ -151,10 +142,15 @@ export function createCodeProject(game: Pick<Game, 'scripts' | 'ui' | 'code'>): 
 				? ''
 				: '.' + ({ javascript: 'js', typescript: 'ts' }[language] ?? language));
 		for (const [id, file] of Object.entries(game.ui.modules))
-			files[pathFor(id, file.language)] = structuredClone(file);
-		exports.push(
-			`export { default as ui } from './${pathFor(game.ui.entry, game.ui.modules[game.ui.entry].language)}';`
-		);
+			files[pathFor(id, file.language)] = { ...file, source: `'use ui';\n${file.source}` };
+		let start = 'ui/start-entry.ts';
+		while (Object.hasOwn(files, start)) start = start.replace('.ts', '-next.ts');
+		const entry = pathFor(game.ui.entry, game.ui.modules[game.ui.entry].language).slice(3);
+		files[start] = {
+			language: 'typescript',
+			source: `'use ui';\nimport * as entry from './${entry}';\nimport { onDispose } from '@helia/ui';\nconst initialize: unknown = Reflect.get(entry, 'default');\nif (typeof initialize === 'function') {\n const dispose = initialize(helia);\n if (typeof dispose === 'function') onDispose(dispose);\n}\n`
+		};
+		imports.push(`import './${start}';`);
 		const { layout, chatDock, chatRatio, chatStyle } = game.ui;
 		presentation = {
 			...(layout ? { layout } : {}),
@@ -165,7 +161,7 @@ export function createCodeProject(game: Pick<Game, 'scripts' | 'ui' | 'code'>): 
 	}
 	files['main.ts'] = {
 		language: 'typescript',
-		source: (exports.join('\n') || 'export {};') + '\n'
+		source: (imports.join('\n') || 'export {};') + '\n'
 	};
 	return parseCodeProject({
 		version: 1,
@@ -177,7 +173,8 @@ export function createCodeProject(game: Pick<Game, 'scripts' | 'ui' | 'code'>): 
 
 /** Resolve the single authoring entry into two isolated runtime graphs. Never evaluate source here. */
 export async function compileCodeProject(
-	input: CodeProject
+	input: CodeProject,
+	schema?: unknown
 ): Promise<Pick<Game, 'scripts' | 'ui'>> {
 	const project = parseCodeProject(input);
 	const { default: compiler } = await import('typescript');
@@ -210,7 +207,10 @@ export async function compileCodeProject(
 		].find((id) => Object.hasOwn(project.files, id));
 		return found ?? error(`파일을 찾을 수 없어요: ${specifier}`, from, node);
 	}
+	const trees = new Map<string, ts.SourceFile>();
 	function sourceFile(path: string) {
+		const previous = trees.get(path);
+		if (previous) return previous;
 		const file = project.files[path];
 		const tree = compiler.createSourceFile(
 			path,
@@ -246,11 +246,25 @@ export async function compileCodeProject(
 				p.character + 1
 			);
 		}
+		trees.set(path, tree);
 		return tree;
 	}
 	const targets: Partial<Record<'logic' | 'ui', string>> = {};
 	const main = sourceFile(project.entry);
-	for (const statement of main.statements) {
+	// Existing declaration-only entries keep their startup behavior. New entries are ordinary modules.
+	const legacy = main.statements.every(
+		(statement) =>
+			compiler.isEmptyStatement(statement) ||
+			(compiler.isExportDeclaration(statement) &&
+				!statement.isTypeOnly &&
+				statement.exportClause &&
+				compiler.isNamedExports(statement.exportClause) &&
+				statement.exportClause.elements.every(
+					(item) =>
+						item.propertyName?.text === 'default' && ['logic', 'ui'].includes(item.name.text)
+				))
+	);
+	for (const statement of legacy ? main.statements : []) {
 		if (compiler.isEmptyStatement(statement)) continue;
 		if (
 			!compiler.isExportDeclaration(statement) ||
@@ -277,15 +291,49 @@ export async function compileCodeProject(
 			);
 		}
 	}
+	const domains = new Map<string, 'logic' | 'ui' | undefined>();
+	function domain(path: string) {
+		if (domains.has(path)) return domains.get(path);
+		let result: 'logic' | 'ui' | undefined;
+		for (const statement of sourceFile(path).statements) {
+			if (
+				!compiler.isExpressionStatement(statement) ||
+				!compiler.isStringLiteral(statement.expression)
+			)
+				break;
+			const directive = statement.expression.text;
+			if (directive === 'use ui' || directive === 'use logic') {
+				const next = directive === 'use ui' ? 'ui' : 'logic';
+				if (result && result !== next)
+					error('한 모듈에는 하나의 실행 영역만 지정해주세요.', path, statement);
+				result = next;
+			}
+		}
+		domains.set(path, result);
+		return result;
+	}
+	if (!legacy) targets[domain(project.entry) ?? 'logic'] = project.entry;
+	const uiRoots = new Set<string>();
 	function graph(entry: string, target: 'logic' | 'ui') {
 		const modules: CodeProject['files'] = {};
 		const dependencies: Record<string, Record<string, string>> = {};
+		const omitted = new Map<string, Set<string>>();
 		function collect(path: string) {
 			if (Object.hasOwn(modules, path)) return;
-			if (path === project.entry) error('진입 파일을 실행 모듈에서 가져올 수 없어요.', path);
+			if (legacy && path === project.entry)
+				error('진입 파일을 실행 모듈에서 가져올 수 없어요.', path);
+			const scope = domain(path) ?? (path === project.entry ? 'logic' : undefined);
+			if (scope && scope !== target)
+				error(
+					'서로 다른 실행 영역의 모듈 값을 가져올 수 없어요. UI에서는 Action 요청과 읽기 전용 상태 API를 사용해주세요.',
+					path
+				);
 			const file = project.files[path];
 			if (target === 'logic' && ['jsx', 'tsx'].includes(file.language))
-				error('로직에서는 JSX 화면 모듈을 실행할 수 없어요.', path);
+				error(
+					"화면 모듈 맨 위에 'use ui';를 지정해주세요. 로직에서는 JSX를 실행할 수 없어요.",
+					path
+				);
 			modules[path] = file;
 			dependencies[path] = {};
 			const tree = sourceFile(path);
@@ -294,11 +342,7 @@ export async function compileCodeProject(
 					(compiler.isImportDeclaration(node) || compiler.isExportDeclaration(node)) &&
 					node.moduleSpecifier
 				) {
-					if (
-						(compiler.isImportDeclaration(node) && node.importClause?.isTypeOnly) ||
-						(compiler.isExportDeclaration(node) && node.isTypeOnly)
-					)
-						return;
+					if (isTypeOnlyModule(compiler, node)) return;
 					if (!compiler.isStringLiteral(node.moduleSpecifier))
 						error('정적인 모듈 경로가 필요해요.', path, node);
 					const specifier = node.moduleSpecifier.text;
@@ -306,6 +350,18 @@ export async function compileCodeProject(
 						dependencies[path][specifier] = specifier;
 					else {
 						const id = resolve(path, specifier, node);
+						if (target === 'logic' && domain(id) === 'ui') {
+							if (!compiler.isImportDeclaration(node) || node.importClause)
+								error(
+									"UI 모듈은 import './ui';처럼 실행 목적으로 연결해주세요. 로직에서 UI의 값을 가져올 수 없어요.",
+									path,
+									node
+								);
+							uiRoots.add(id);
+							if (!omitted.has(path)) omitted.set(path, new Set());
+							omitted.get(path)!.add(specifier);
+							return;
+						}
 						dependencies[path][specifier] = id;
 						collect(id);
 					}
@@ -331,20 +387,49 @@ export async function compileCodeProject(
 			visit(tree);
 		}
 		collect(entry);
-		return { modules, dependencies };
+		return { modules, dependencies, omitted };
 	}
 	const scripts: Game['scripts'] = {};
 	if (targets.logic) {
-		const { modules, dependencies } = graph(targets.logic, 'logic');
+		const { modules, dependencies, omitted } = graph(targets.logic, 'logic');
+		const argumentsFor = argumentSchemaCompiler(
+			compiler,
+			project.files,
+			error,
+			schema === undefined ? undefined : generateStateTypes(schema)
+		);
 		const factories = Object.entries(modules)
-			.map(
-				([path, file]) =>
-					`${JSON.stringify(path)}:function(module,exports,require){\n${compiler.transpileModule(file.source, { fileName: path, compilerOptions: { target: compiler.ScriptTarget.ES2022, module: compiler.ModuleKind.CommonJS, esModuleInterop: true } }).outputText}\n}`
-			)
+			.map(([path]) => {
+				const output = compiler.transpileModule(argumentsFor(path), {
+					fileName: path,
+					compilerOptions: {
+						target: compiler.ScriptTarget.ES2022,
+						module: compiler.ModuleKind.CommonJS,
+						esModuleInterop: true
+					},
+					transformers: {
+						before: [
+							() => (tree) =>
+								compiler.factory.updateSourceFile(
+									tree,
+									tree.statements.filter(
+										(statement) =>
+											!(
+												compiler.isImportDeclaration(statement) &&
+												compiler.isStringLiteral(statement.moduleSpecifier) &&
+												omitted.get(path)?.has(statement.moduleSpecifier.text)
+											)
+									)
+								)
+						]
+					}
+				}).outputText;
+				return `${JSON.stringify(path)}:function(module,exports,require){\n${output}\n}`;
+			})
 			.join(',');
 		scripts['project'] = {
 			language: 'javascript',
-			source: `(function(factories,deps,entry){const cache=Object.create(null);function load(id){if(Object.hasOwn(cache,id))return cache[id].exports;const module={exports:{}};cache[id]=module;factories[id](module,module.exports,function(name){const target=deps[id][name];if(!target)throw Error('Unknown module');return load(target);});return module.exports;}const register=load(entry).default;if(typeof register!=='function')throw Error('Logic default must be a function');const result=register();if(result&&typeof result.then==='function')throw Error('Logic registration must be synchronous');})({${factories}},${JSON.stringify(dependencies)},${JSON.stringify(targets.logic)});`
+			source: `(function(factories,deps,entry){const cache=Object.create(null);function load(id){if(Object.hasOwn(cache,id))return cache[id].exports;const module={exports:{}};cache[id]=module;factories[id](module,module.exports,function(name){const target=deps[id][name];if(!target)throw Error('Unknown module');return load(target);});return module.exports;}const entryModule=load(entry);${legacy ? "const register=entryModule.default;if(typeof register!=='function')throw Error('Logic default must be a function');const result=register();if(result&&typeof result.then==='function')throw Error('Logic registration must be synchronous');" : ''}})({${factories}},${JSON.stringify(dependencies)},${JSON.stringify(targets.logic)});`
 		};
 		if (new TextEncoder().encode(scripts.project.source).length > 512 * 1024)
 			error('컴파일된 로직이 실행 한도 512 KiB를 넘었어요.', targets.logic);
@@ -352,12 +437,33 @@ export async function compileCodeProject(
 	let ui: GameUI | undefined;
 	if (targets.ui) {
 		const { modules } = graph(targets.ui, 'ui');
-		ui = parseGameUI({ version: 1, entry: targets.ui, modules, ...project.presentation });
+		if (legacy)
+			ui = parseGameUI({ version: 1, entry: targets.ui, modules, ...project.presentation });
+		else uiRoots.add(targets.ui);
+	}
+	if (uiRoots.size) {
+		const modules: CodeProject['files'] = {};
+		for (const root of uiRoots) Object.assign(modules, graph(root, 'ui').modules);
+		const startup = [...uiRoots].map((root) => `import './${root}';`);
+		if (ui) {
+			// A legacy UI target can coexist with newly imported UI modules.
+			Object.assign(modules, ui.modules);
+			startup.push(
+				`import * as legacyEntry from './${ui.entry}';\nconst initialize: unknown = Reflect.get(legacyEntry,'default');\nif(typeof initialize === 'function'){const dispose=initialize(helia);if(typeof dispose==='function')helia.onDispose(dispose);}`
+			);
+		}
+		let entry = 'helia-ui-entry.ts';
+		while (Object.hasOwn(project.files, entry)) entry = entry.replace('.ts', '-next.ts');
+		modules[entry] = {
+			language: 'typescript',
+			source: startup.join('\n')
+		};
+		ui = parseGameUI({ version: 1, entry, modules, ...project.presentation });
 	}
 	return { scripts, ui };
 }
 export async function compileAuthoringGame(game: Game): Promise<Game> {
 	if (!game.code) return game;
-	const compiled = await compileCodeProject(game.code);
+	const compiled = await compileCodeProject(game.code, game.schema);
 	return { ...game, scripts: compiled.scripts, ui: compiled.ui };
 }

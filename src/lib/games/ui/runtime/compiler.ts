@@ -3,6 +3,7 @@ import hooksSource from 'preact/hooks?raw';
 import { FRAME_BOOTSTRAP, FRAME_STYLES } from './frame-bootstrap.js';
 import { parseGameUI, type GameUI } from './model.js';
 import { parseResources, type GameResources } from '../../resources.js';
+import { isTypeOnlyModule } from '../../module-syntax.js';
 
 /** Compile without executing creator code in the host. Only packaged modules can be resolved. */
 export async function compileGameUI(
@@ -58,11 +59,7 @@ export async function compileGameUI(
 						: ts.ScriptKind.TS
 			);
 			function visit(node: import('typescript').Node) {
-				if (
-					(ts.isImportDeclaration(node) && node.importClause?.isTypeOnly) ||
-					(ts.isExportDeclaration(node) && node.isTypeOnly)
-				)
-					return;
+				if (isTypeOnlyModule(ts, node)) return;
 				if (
 					(ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) &&
 					node.moduleSpecifier

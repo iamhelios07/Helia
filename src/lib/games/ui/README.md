@@ -18,14 +18,33 @@ One canonical `state.json` authoring document contains separate `schema` and `in
 
 `Game.code` stores a source project with an entry path, source files and optional empty code folders. It is the authoring source; `Game.scripts` and `Game.ui` are runtime outputs derived before preview or Apply. Existing applied scripts and UI modules open as a source project without executing them in the host. Applying a project persists its source and compiled outputs with the affected session snapshots in the same commit. A build failure preserves the old applied content.
 
-The default `main.ts` entry connects either or both execution targets using static default re-exports:
+The default `main.ts` entry is an ordinary module. Its top-level code can register game logic directly or call imported functions:
 
 ```ts
-export { default as logic } from './logic';
-export { default as ui } from './ui';
+import { registerActions } from './actions';
+import './ui';
+
+registerActions();
 ```
 
-`export {};` represents an empty project. The entry is a declaration of the execution targets: executable entry statements and other export names produce a diagnostic. File and directory names are creator-selected, and relative static imports connect packaged files. Moving a code file or folder updates its relative import/export paths and the entry path. A logic module's default function synchronously registers Actions, Queries, Filters and Hooks through `helia`. It runs only in QuickJS. A UI module uses the existing Preact APIs and synchronous default initializer and runs only in its opaque-origin frame. Type-only imports from `@helia/state` are erased; importing UI modules or packages into the logic graph is rejected. Dynamic imports, external packages and host capabilities remain unavailable. The project supports 64 files and 512 KiB of source in total; existing target runtime limits also apply.
+Logic is the default entry execution domain. Put `'use ui';` at the beginning of a UI module to mark the iframe boundary, then connect it through a side-effect import as above:
+
+```tsx
+'use ui';
+import { registerPanel, useGameState } from '@helia/ui';
+
+function Status() {
+	const state = useGameState();
+	return <p>Gold: {state.gold}</p>;
+}
+registerPanel({ id: 'status', title: 'Status', component: Status });
+```
+
+No fixed export names or default initializer are required. A top-level function call executes because the entry imports or calls it; exporting a default function alone does not invoke it. An entry marked `'use ui';` starts a UI-only project. Unmarked helper modules inherit their importing domain and can be shared; `'use logic';` explicitly restricts a module to QuickJS. Logic-to-UI side-effect imports are extracted during compilation and loaded by a generated iframe entry; they are never evaluated in QuickJS. Importing values across an explicit domain boundary is rejected. UI reads exposed state and requests Actions through its mediated API. Within each runtime, packaged imports follow dependency order and initialize once per module instance. The two domains initialize independently, so code must not rely on ordering or shared mutable globals between them.
+
+Logic registration runs again in a fresh QuickJS environment for each execution request. UI top-level code runs once per iframe startup; register cleanup through `onDispose` or a Preact effect. File and directory names are creator-selected, and moving them updates relative static import/export paths and the entry path. `export {};` represents an empty project. Existing declaration-only entries using `export { default as logic/ui }` retain their previous initialization behavior. Opening older script/UI content generates ordinary imports with explicit compatibility startup calls.
+
+Type-only imports from `@helia/state` and project modules are erased. Dynamic imports, external packages, top-level `await` and host capabilities remain unavailable. The project supports 64 files and 512 KiB of source in total; existing target runtime limits also apply, including the generated UI entry.
 
 State authoring aligns each field's name, type, initial value and required presence in one row. Object and array rows expand into their structure; arrays distinguish the shared item schema from actual initial items. A selected field reveals annotations, nullability and enum settings inline. Document annotations remain available through document settings. Collapsing a row never changes its data, and initial inputs beneath an omitted or null object stay disabled until the parent has an object value.
 
@@ -38,6 +57,31 @@ The explorer and preview widths and inspection panel height can be resized with 
 Live preview runs the actual Preact UI and game logic through the existing opaque-origin iframe and QuickJS runner in an isolated in-memory repository. Valid draft changes restart preview after a debounce; invalid edits retain the last valid preview. A separate test playthrough keeps its own progress until explicitly restarted, and shows when its content is outdated. Neither mode adds normal play sessions or writes normal game progress. BYOK tests use fresh host lease scopes and the same agent loop/provider transport. Action, Filter, Hook, UI and AI failures appear in diagnostics, and committed test state and history can be inspected. Test progress lasts until restart or editor teardown.
 
 Resources are portable data URIs, validated by both storage hosts: PNG/JPEG/WebP/GIF, supported audio and video, at most 1 MiB each and 3 MiB total. The asset explorer supports folder-aware upload, file selection, preview, path changes and modal-confirmed deletion. Folder renaming updates contained paths while retaining resource IDs and bytes. Empty asset folders are editor-local until populated; empty code folders persist with the project. Creator UI uses `helia.asset('images/portrait.png')` or the `asset` export from `@helia/ui`; existing stable-ID references also remain valid. Duplicate paths, file/folder collisions, ID/path ambiguities and paths escaping the virtual asset root are rejected. SVG, HTML and network URLs are not resource payloads. Start the production web server with `pnpm start`, which defaults `BODY_SIZE_LIMIT` to 20 MiB for content and draft requests; an explicitly configured limit takes precedence.
+
+### Typed Action and Query arguments
+
+Use `helia.defineAction<Args>(definition)` or `helia.defineQuery<Args>(definition)` to derive argument validation and AI tool schemas from TypeScript types. The compiler resolves project-local type imports, interfaces and inheritance, type aliases, object intersections, optional fields, arrays, nullable fields and same-primitive literal unions. Property JSDoc becomes the AI tool parameter description. Generated `GameState` types and standard TypeScript utility types can be referenced when their resolved result fits the supported schema profile.
+
+```ts
+interface BuyArgs {
+	/** ID of the item to purchase. */
+	itemId: string;
+	quantity?: number;
+}
+
+helia.defineAction<BuyArgs>({
+	name: 'buy',
+	ai: true,
+	run({ state, args }) {
+		state.inventory[args.itemId] += args.quantity ?? 1;
+		return state;
+	}
+});
+```
+
+The compiler materializes a closed JSON Schema before erasing types; raw source is retained unchanged. Runtime calls, including AI calls, still validate every argument. Omit both the generic and `arguments` for an operation with no parameters. JavaScript and existing definitions can continue providing an explicit `arguments` schema. A generic and explicit schema cannot be combined. Attach the generic directly to the registration call, including an aliased function call; detached generic instantiation is rejected.
+
+`number` accepts finite numbers, including fractions. Explicit schemas remain available for `integer` and other supported schema distinctions. Unsupported types (including `any`, `unknown`, recursive objects, open index signatures, tuples and heterogeneous unions) produce source-location errors rather than weakening validation. Type resolution uses only packaged source and bundled TypeScript declarations, with no host filesystem or network access.
 
 ## Workbench structure
 
