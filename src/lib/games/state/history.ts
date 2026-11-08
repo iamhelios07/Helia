@@ -1,3 +1,5 @@
+import type { Message, Session } from '#lib/games/model.js';
+
 import { activeTransactions, assertRevision, checkoutHistory } from './engine.js';
 import {
 	counter,
@@ -8,7 +10,6 @@ import {
 	type StateChange,
 	type Transaction
 } from './model.js';
-import type { Message, Session } from '#lib/games/model.js';
 
 export interface HistoryEvent {
 	id: string;
@@ -30,8 +31,12 @@ export interface SessionTimeline {
 	memories: Memory[];
 }
 export function transactionSummary(node: Transaction): string {
-	if (node.description) return node.description;
-	if (!node.changes.length) return node.messageId ? '대화' : `${node.action.name} · 상태 변경 없음`;
+	if (node.description) {
+		return node.description;
+	}
+	if (!node.changes.length) {
+		return node.messageId ? '대화' : `${node.action.name} · 상태 변경 없음`;
+	}
 	const fields = node.changes.slice(0, 3).map((change) => JSON.stringify(change.path));
 	return `${node.action.name} · ${fields.join(', ')}${node.changes.length > 3 ? ` 외 ${node.changes.length - 3}개` : ''}`;
 }
@@ -48,17 +53,19 @@ export function historyEvents(
 		siblings.push(node);
 		children.set(node.parentId, siblings);
 	}
-	for (const siblings of children.values())
+	for (const siblings of children.values()) {
 		siblings.sort((a, b) => a.createdRevision - b.createdRevision);
+	}
 	const result: HistoryEvent[] = [];
 	const stack = [...(children.get(null) ?? [])].reverse().map((node) => ({ node, depth: 0 }));
 	const visited = new Set<string>();
 	while (stack.length) {
 		const { node, depth } = stack.pop()!;
-		if (visited.has(node.id)) throw new Error('진행 기록이 순환하고 있어요.');
+		if (visited.has(node.id)) {
+			throw new Error('진행 기록이 순환하고 있어요.');
+		}
 		visited.add(node.id);
-		const message = node.messageId ? byMessage.get(node.messageId) : undefined;
-		if (node.messageId && !message) throw new Error('이력에 연결된 메시지가 없어요.');
+		const message = historyMessage(node, byMessage);
 		result.push({
 			id: node.id,
 			parentId: node.parentId,
@@ -71,11 +78,13 @@ export function historyEvents(
 			changes: node.changes,
 			...(message ? { message } : {})
 		});
-		for (const child of [...(children.get(node.id) ?? [])].reverse())
+		for (const child of [...(children.get(node.id) ?? [])].reverse()) {
 			stack.push({ node: child, depth: depth + 1 });
+		}
 	}
-	if (visited.size !== history.transactions.length)
+	if (visited.size !== history.transactions.length) {
 		throw new Error('연결되지 않은 진행 기록이 있어요.');
+	}
 	return result;
 }
 export function deleteHistoryEvent(
@@ -86,18 +95,24 @@ export function deleteHistoryEvent(
 	assertRevision(history.progress, expectedRevision);
 	identifier(eventId);
 	const target = history.transactions.find((node) => node.id === eventId);
-	if (!target) throw new Error('삭제할 이벤트를 찾을 수 없어요.');
+	if (!target) {
+		throw new Error('삭제할 이벤트를 찾을 수 없어요.');
+	}
 	// Validate ownership/duplicates and selected path before calculating the subtree.
 	activeTransactions(history);
 	const children = new Map<string, string[]>();
-	for (const node of history.transactions)
-		if (node.parentId !== null)
+	for (const node of history.transactions) {
+		if (node.parentId !== null) {
 			children.set(node.parentId, [...(children.get(node.parentId) ?? []), node.id]);
+		}
+	}
 	const removedIds = new Set<string>();
 	const stack = [eventId];
 	while (stack.length) {
 		const id = stack.pop()!;
-		if (removedIds.has(id)) throw new Error('진행 기록이 순환하고 있어요.');
+		if (removedIds.has(id)) {
+			throw new Error('진행 기록이 순환하고 있어요.');
+		}
 		removedIds.add(id);
 		stack.push(...(children.get(id) ?? []));
 	}
@@ -114,4 +129,12 @@ export function deleteHistoryEvent(
 		},
 		removedIds
 	};
+}
+
+function historyMessage(node: Transaction, byMessage: Map<string, Message>): Message | undefined {
+	const message = node.messageId ? byMessage.get(node.messageId) : undefined;
+	if (node.messageId && !message) {
+		throw new Error('이력에 연결된 메시지가 없어요.');
+	}
+	return message;
 }

@@ -1,11 +1,12 @@
 import '../../../../app.css';
+import { getTypeScriptWorker } from 'monaco-editor/languages/features/typescript/register.js';
 import { afterEach, expect, it } from 'vitest';
-import { page, userEvent } from 'vitest/browser';
 import { render } from 'vitest-browser-svelte';
-import SourceEditor from './SourceEditor.svelte';
+import { page, userEvent } from 'vitest/browser';
+
 import { MonacoProject } from './monaco-project.js';
 import { getMonacoSource, monacoModel, setMonacoSource } from './monaco-test.js';
-import { getTypeScriptWorker } from 'monaco-editor/languages/features/typescript/register.js';
+import SourceEditor from './SourceEditor.svelte';
 const projects: MonacoProject[] = [];
 afterEach(() => {
 	projects.splice(0).forEach((project) => project.dispose());

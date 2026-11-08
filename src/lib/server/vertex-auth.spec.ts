@@ -1,7 +1,9 @@
 import { createPublicKey, verify } from 'node:crypto';
 import { expect, it, vi } from 'vitest';
-import fixture from '#lib/testing/fixtures/service-account.json';
+
 import { GOOGLE_TOKEN_URL, parseServiceAccountJson } from '#lib/app/settings/vertex.js';
+import fixture from '#lib/testing/fixtures/service-account.json';
+
 import { VertexAuth, validateServiceAccountKey } from './vertex-auth.js';
 
 const account = parseServiceAccountJson(JSON.stringify(fixture));

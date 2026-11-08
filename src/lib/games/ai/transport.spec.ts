@@ -1,6 +1,8 @@
 import { afterEach, it, expect, vi } from 'vitest';
-import { beginGeneration } from './transport.js';
+
 import type { RoundRequest } from './protocol.js';
+
+import { beginGeneration } from './transport.js';
 vi.mock('#lib/platform/index.js', () => ({ isDesktopBuild: true, isTauri: () => true }));
 vi.mock('@tauri-apps/api/core', () => ({
 	Channel: class {
@@ -12,8 +14,12 @@ it('cancels native generation promptly and ignores late host chunks without awai
 	let deliver: ((value: unknown) => void) | undefined;
 	const host = vi.fn(
 		(input: { kind: string }, channel: { onmessage: (value: unknown) => void }) => {
-			if (input.kind === 'begin') return Promise.resolve({ lease: 'test-lease' });
-			if (input.kind === 'release') return Promise.resolve({});
+			if (input.kind === 'begin') {
+				return Promise.resolve({ lease: 'test-lease' });
+			}
+			if (input.kind === 'release') {
+				return Promise.resolve({});
+			}
 			deliver = channel.onmessage;
 			return new Promise<unknown>(() => {});
 		}

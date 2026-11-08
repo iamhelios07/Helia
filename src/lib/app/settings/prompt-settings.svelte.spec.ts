@@ -1,17 +1,19 @@
 import '../../../app.css';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { page, userEvent } from 'vitest/browser';
 import { render } from 'vitest-browser-svelte';
-import SettingsDialog from './SettingsDialog.svelte';
-import { emptyPromptSettings, upsertPromptPreset } from './prompts.js';
+import { page, userEvent } from 'vitest/browser';
+
+import { parsePromptConfig } from '#lib/games/ai/prompts.js';
+import risupFixtureUrl from '#lib/testing/fixtures/prompt-preset.risup?url';
+import risupresetFixtureUrl from '#lib/testing/fixtures/prompt-preset.risupreset?url';
+
 import {
 	loadPromptSettings,
 	savePromptSettings,
 	PROMPT_SETTINGS_KEY
 } from './prompt-repository.js';
-import { parsePromptConfig } from '#lib/games/ai/prompts.js';
-import risupFixtureUrl from '#lib/testing/fixtures/prompt-preset.risup?url';
-import risupresetFixtureUrl from '#lib/testing/fixtures/prompt-preset.risupreset?url';
+import { emptyPromptSettings, upsertPromptPreset } from './prompts.js';
+import SettingsDialog from './SettingsDialog.svelte';
 
 vi.mock('./credentials.js', () => ({
 	getCredentialStatus: vi.fn(async () => ({})),
@@ -66,55 +68,7 @@ it('uses translated single-column cards and keeps independently expanded cards c
 	const screen = await openPrompts();
 	const main = page.getByRole('region', { name: '1번 프롬프트 블록', exact: true });
 	const mainToggle = main.getByRole('button', { name: '순수 프롬프트', exact: true });
-	const type = main
-		.getByRole('combobox', { name: '타입', exact: true })
-		.element() as HTMLSelectElement;
-	expect(Array.from(type.options, (option) => option.text)).toEqual([
-		'순수 프롬프트',
-		'탈옥 프롬프트',
-		'생각의 사슬',
-		'페르소나 프롬프트',
-		'캐릭터 설명',
-		'로어북',
-		'최종 삽입 프롬프트',
-		'장기 기억',
-		'작가의 노트',
-		'챗',
-		'ChatML',
-		'캐시 포인트'
-	]);
-	const special = main
-		.getByRole('combobox', { name: '특수 타입', exact: true })
-		.element() as HTMLSelectElement;
-	expect(Array.from(special.options, (option) => option.text)).toEqual([
-		'특수 타입 없음',
-		'메인 프롬프트',
-		'글로벌 노트'
-	]);
-	const role = main
-		.getByRole('combobox', { name: '역할', exact: true })
-		.element() as HTMLSelectElement;
-	expect(Array.from(role.options, (option) => option.text)).toEqual([
-		'시스템 프롬프트',
-		'유저',
-		'캐릭터'
-	]);
-	expect(
-		Array.from(main.element().querySelectorAll('.block-fields > label'), (label) =>
-			label.firstChild?.textContent?.trim()
-		)
-	).toEqual(['이름', '타입', '특수 타입', '프롬프트', '역할']);
-	const bounds = [
-		main.getByRole('textbox', { name: '이름', exact: true }).element(),
-		type,
-		special,
-		main.getByRole('textbox', { name: '프롬프트', exact: true }).element(),
-		role
-	].map((control) => control.getBoundingClientRect());
-	expect(bounds.every((rect) => rect.x === bounds[0].x && rect.width === bounds[0].width)).toBe(
-		true
-	);
-	expect(bounds.every((rect, index) => index === 0 || rect.y > bounds[index - 1].y)).toBe(true);
+	expectPromptBlockLayout(main);
 	const persona = page.getByRole('region', { name: '2번 프롬프트 블록', exact: true });
 	await persona.getByRole('button', { name: '페르소나 프롬프트', exact: true }).click();
 	await expect.element(mainToggle).toHaveAttribute('aria-expanded', 'true');
@@ -181,33 +135,7 @@ it('creates a preset, edits ordered blocks and options, saves explicitly, select
 	const saved = loadPromptSettings();
 	const preset = saved.presets.find((preset) => preset.name === '서사 프롬프트')!;
 	expect(saved.selectedPresetId).toBe('default');
-	expect(preset.config).toMatchObject({
-		version: 2,
-		maxTokens: 8192,
-		promptSettings: { sendChatAsSystem: true, assistantPrefill: '이야기:' }
-	});
-	expect(preset.config.promptTemplate[0]).toMatchObject({
-		type: 'plain',
-		type2: 'main',
-		text: '장면을 생생하게 묘사하세요.'
-	});
-	expect(preset.config.promptTemplate[2]).toMatchObject({
-		type: 'persona',
-		text: '여행자',
-		innerFormat: 'Persona: {{slot}}'
-	});
-	expect(preset.config.promptTemplate[8]).toMatchObject({
-		type: 'postEverything',
-		text: '장면을 마무리하세요.'
-	});
-	expect(preset.config.promptTemplate[7]).toMatchObject({
-		name: '보충 지시',
-		type: 'jailbreak',
-		type2: 'globalNote',
-		role: 'user',
-		text: '추가 지시',
-		enabled: false
-	});
+	expectSavedPrompt(preset);
 	await page.getByRole('button', { name: '기본 프롬프트로 사용', exact: true }).click();
 	expect(loadPromptSettings().selectedPresetId).toBe(preset.id);
 	await screen.unmount();
@@ -391,7 +319,9 @@ it('loads legacy preset bodies into their matching block editors without dirtyin
 	for (let index = 0; index < expectedBodies.length; index++) {
 		const block = page.getByRole('region', { name: `${index + 1}번 프롬프트 블록`, exact: true });
 		const toggle = block.getByRole('button').first();
-		if (toggle.element().getAttribute('aria-expanded') !== 'true') await toggle.click();
+		if (toggle.element().getAttribute('aria-expanded') !== 'true') {
+			await toggle.click();
+		}
 		await expect
 			.element(block.getByRole('textbox', { name: '프롬프트', exact: true }))
 			.toHaveValue(expectedBodies[index]);
@@ -409,8 +339,9 @@ it('loads legacy preset bodies into their matching block editors without dirtyin
 		'기존 후처리'
 	]);
 	const persistedConfig = JSON.parse(localStorage.getItem(PROMPT_SETTINGS_KEY)!).presets[0].config;
-	for (const field of ['mainPrompt', 'globalNote', 'persona', 'postEverything'])
+	for (const field of ['mainPrompt', 'globalNote', 'persona', 'postEverything']) {
 		expect(persistedConfig).not.toHaveProperty(field);
+	}
 	await expect.element(save()).toBeDisabled();
 	await screen.unmount();
 });
@@ -597,3 +528,85 @@ it('keeps all prompt controls within a narrow viewport and allows keyboard editi
 	expect(panel.scrollWidth).toBeLessThanOrEqual(panel.clientWidth);
 	await screen.unmount();
 });
+
+function expectPromptBlockLayout(main: ReturnType<typeof page.getByRole>) {
+	const type = main
+		.getByRole('combobox', { name: '타입', exact: true })
+		.element() as HTMLSelectElement;
+	expect(Array.from(type.options, (option) => option.text)).toEqual([
+		'순수 프롬프트',
+		'탈옥 프롬프트',
+		'생각의 사슬',
+		'페르소나 프롬프트',
+		'캐릭터 설명',
+		'로어북',
+		'최종 삽입 프롬프트',
+		'장기 기억',
+		'작가의 노트',
+		'챗',
+		'ChatML',
+		'캐시 포인트'
+	]);
+	const special = main
+		.getByRole('combobox', { name: '특수 타입', exact: true })
+		.element() as HTMLSelectElement;
+	expect(Array.from(special.options, (option) => option.text)).toEqual([
+		'특수 타입 없음',
+		'메인 프롬프트',
+		'글로벌 노트'
+	]);
+	const role = main
+		.getByRole('combobox', { name: '역할', exact: true })
+		.element() as HTMLSelectElement;
+	expect(Array.from(role.options, (option) => option.text)).toEqual([
+		'시스템 프롬프트',
+		'유저',
+		'캐릭터'
+	]);
+	expect(
+		Array.from(main.element().querySelectorAll('.block-fields > label'), (label) =>
+			label.firstChild?.textContent?.trim()
+		)
+	).toEqual(['이름', '타입', '특수 타입', '프롬프트', '역할']);
+	const bounds = [
+		main.getByRole('textbox', { name: '이름', exact: true }).element(),
+		type,
+		special,
+		main.getByRole('textbox', { name: '프롬프트', exact: true }).element(),
+		role
+	].map((control) => control.getBoundingClientRect());
+	expect(bounds.every((rect) => rect.x === bounds[0].x && rect.width === bounds[0].width)).toBe(
+		true
+	);
+	expect(bounds.every((rect, index) => index === 0 || rect.y > bounds[index - 1].y)).toBe(true);
+}
+
+function expectSavedPrompt(preset: ReturnType<typeof loadPromptSettings>['presets'][number]) {
+	expect(preset.config).toMatchObject({
+		version: 2,
+		maxTokens: 8192,
+		promptSettings: { sendChatAsSystem: true, assistantPrefill: '이야기:' }
+	});
+	expect(preset.config.promptTemplate[0]).toMatchObject({
+		type: 'plain',
+		type2: 'main',
+		text: '장면을 생생하게 묘사하세요.'
+	});
+	expect(preset.config.promptTemplate[2]).toMatchObject({
+		type: 'persona',
+		text: '여행자',
+		innerFormat: 'Persona: {{slot}}'
+	});
+	expect(preset.config.promptTemplate[8]).toMatchObject({
+		type: 'postEverything',
+		text: '장면을 마무리하세요.'
+	});
+	expect(preset.config.promptTemplate[7]).toMatchObject({
+		name: '보충 지시',
+		type: 'jailbreak',
+		type2: 'globalNote',
+		role: 'user',
+		text: '추가 지시',
+		enabled: false
+	});
+}

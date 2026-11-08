@@ -1,14 +1,17 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
-	import { version } from '../../package.json';
-	import Icon from '#lib/components/Icon.svelte';
+	import { onMount } from 'svelte';
+
+	import type { Game } from '#lib/games/model.js';
+
 	import { configureAppSidebar } from '#lib/app/sidebar.svelte.js';
+	import Icon from '#lib/components/Icon.svelte';
+	import { listGames, createGame } from '#lib/games/repository.js';
 	import GameCard from '#lib/library/GameCard.svelte';
 	import { toLibraryGame, type LibraryGame } from '#lib/library/library-games.js';
-	import { listGames, createGame } from '#lib/games/repository.js';
-	import type { Game } from '#lib/games/model.js';
+
+	import { version } from '../../package.json';
 
 	let search = $state('');
 	let sort = $state<'recent' | 'name'>('recent');
@@ -48,7 +51,9 @@
 	}
 
 	async function startGame() {
-		if (!ready || creating) return;
+		if (!ready || creating) {
+			return;
+		}
 		creating = true;
 		createError = '';
 		let saved: Game;
@@ -77,7 +82,9 @@
 	}
 
 	function closeDialog(dialog: typeof activeDialog) {
-		if (!creating && activeDialog === dialog) activeDialog = null;
+		if (!creating && activeDialog === dialog) {
+			activeDialog = null;
+		}
 	}
 
 	let visibleGames = $derived.by(() => {
@@ -234,7 +241,9 @@
 		{@attach openModal}
 		onclose={() => closeDialog('add')}
 		oncancel={(event) => {
-			if (creating) event.preventDefault();
+			if (creating) {
+				event.preventDefault();
+			}
 		}}
 		aria-labelledby="add-heading"
 		aria-busy={creating}

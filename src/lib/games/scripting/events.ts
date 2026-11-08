@@ -1,4 +1,5 @@
 import { identifier } from '#lib/games/state/model.js';
+
 import type { UIEvent } from './protocol.js';
 
 export interface SessionUIEvent extends UIEvent {
@@ -27,32 +28,39 @@ export function createSessionEvents() {
 			listeners.set(id, entries);
 			return () => {
 				entries.delete(listener);
-				if (!entries.size) listeners.delete(id);
+				if (!entries.size) {
+					listeners.delete(id);
+				}
 			};
 		},
 		publish(gameId: string, sessionId: string, transactionId: string, events: UIEvent[]): number {
 			let failures = 0;
-			for (const event of events)
+			for (const event of events) {
 				for (const listener of [...(listeners.get(key(gameId, sessionId)) ?? [])]) {
-					try {
-						const result: unknown = listener(
-							freeze(structuredClone({ ...event, gameId, sessionId, transactionId }))
-						);
-						// UI listeners are synchronous. Consume accidental async rejections without undoing a commit.
-						if (
-							result !== null &&
-							(typeof result === 'object' || typeof result === 'function') &&
-							'then' in result &&
-							typeof result.then === 'function'
-						) {
-							failures++;
-							void Promise.resolve(result).catch(() => {});
-						}
-					} catch {
-						failures++;
-					}
+					failures += deliverEvent(listener, { ...event, gameId, sessionId, transactionId });
 				}
+			}
 			return failures;
 		}
 	};
+}
+
+function deliverEvent(listener: UIEventListener, event: SessionUIEvent): number {
+	let failures = 0;
+	try {
+		const result: unknown = listener(freeze(structuredClone(event)));
+		// UI listeners are synchronous. Consume accidental async rejections without undoing a commit.
+		if (
+			result !== null &&
+			(typeof result === 'object' || typeof result === 'function') &&
+			'then' in result &&
+			typeof result.then === 'function'
+		) {
+			failures++;
+			void Promise.resolve(result).catch(() => {});
+		}
+	} catch {
+		failures++;
+	}
+	return failures;
 }

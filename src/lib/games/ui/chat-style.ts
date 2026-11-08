@@ -2,7 +2,9 @@ import type { GameUI } from './runtime/model.js';
 
 /** Allow only individual CSS values; never accept stylesheets or resource references. */
 export function safeChatStyle(style: GameUI['chatStyle']): GameUI['chatStyle'] {
-	if (!style || typeof CSS === 'undefined') return undefined;
+	if (!style || typeof CSS === 'undefined') {
+		return undefined;
+	}
 	const safe = (property: string, value: string | undefined) =>
 		value &&
 		value.length <= 256 &&

@@ -1,14 +1,16 @@
 import { expect, it } from 'vitest';
+
+import { memoryStorage } from '#lib/testing/memory-storage.js';
+
 import {
 	compileCodeProject,
 	createCodeProject,
 	parseCodeProject,
 	type CodeProject
 } from './code-project.js';
-import { evaluateAction } from './scripting/engine.js';
-import { createGameRepository } from './repository-core.js';
-import { memoryStorage } from '#lib/testing/memory-storage.js';
 import { editorContent } from './editor.js';
+import { createGameRepository } from './repository-core.js';
+import { evaluateAction } from './scripting/engine.js';
 import { compileGameUI } from './ui/runtime/compiler.js';
 
 function fixture(): CodeProject {

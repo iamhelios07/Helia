@@ -1,7 +1,9 @@
 import { json } from '@sveltejs/kit';
-import { serverStorage } from '#lib/server/sqlite.js';
-import { editorDraftStorage } from '#lib/server/editor-drafts.js';
+
 import { readEditorDraft } from '#lib/games/editor.js';
+import { editorDraftStorage } from '#lib/server/editor-drafts.js';
+import { serverStorage } from '#lib/server/sqlite.js';
+
 import type { RequestHandler } from './$types';
 
 const options = { headers: { 'cache-control': 'no-store' } };
@@ -16,18 +18,22 @@ export const PUT: RequestHandler = async ({ request, params, url }) => {
 	if (
 		request.headers.get('origin') !== (process.env.HELIA_ORIGIN ?? url.origin) ||
 		!request.headers.get('content-type')?.startsWith('application/json')
-	)
+	) {
 		return json({ error: '허용하지 않는 요청이에요.' }, { status: 403, ...options });
+	}
 	try {
 		const text = await request.text();
-		if (text.length > 20 * 1024 * 1024) throw Error('초안이 너무 커요.');
+		if (text.length > 20 * 1024 * 1024) {
+			throw Error('초안이 너무 커요.');
+		}
 		const input = JSON.parse(text) as { version?: unknown; draft?: unknown };
 		if (
 			typeof input.version !== 'number' ||
 			!Number.isSafeInteger(input.version) ||
 			!Object.hasOwn(input, 'draft')
-		)
+		) {
 			throw Error('Invalid draft');
+		}
 		const draft =
 			input.draft === null ? null : readEditorDraft(JSON.stringify(input.draft), params.id);
 		return json(

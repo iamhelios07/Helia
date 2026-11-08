@@ -1,4 +1,5 @@
 import type Database from 'better-sqlite3';
+
 import { readEditorDraft, type EditorDraft } from '#lib/games/editor.js';
 
 export interface SavedEditorDraft {
@@ -11,8 +12,9 @@ export function editorDraftStorage(connection: Database.Database) {
 		'CREATE TABLE IF NOT EXISTS editor_drafts (game_id TEXT PRIMARY KEY REFERENCES games(id) ON DELETE CASCADE, version INTEGER NOT NULL, value TEXT)'
 	);
 	function read(gameId: string): SavedEditorDraft {
-		if (!connection.prepare('SELECT id FROM games WHERE id=?').get(gameId))
+		if (!connection.prepare('SELECT id FROM games WHERE id=?').get(gameId)) {
 			throw Error('게임을 찾을 수 없어요.');
+		}
 		const row = connection
 			.prepare('SELECT version,value FROM editor_drafts WHERE game_id=?')
 			.get(gameId) as { version: number; value: string | null } | undefined;
@@ -28,10 +30,13 @@ export function editorDraftStorage(connection: Database.Database) {
 				!Number.isSafeInteger(version) ||
 				version >= Number.MAX_SAFE_INTEGER ||
 				version !== previous.version
-			)
+			) {
 				throw Error('EDITOR_DRAFT_CONFLICT');
+			}
 			const text = draft === null ? null : JSON.stringify(draft);
-			if (text !== null) readEditorDraft(text, gameId);
+			if (text !== null) {
+				readEditorDraft(text, gameId);
+			}
 			connection
 				.prepare(
 					'INSERT INTO editor_drafts (game_id,version,value) VALUES (?,?,?) ON CONFLICT(game_id) DO UPDATE SET version=excluded.version,value=excluded.value'

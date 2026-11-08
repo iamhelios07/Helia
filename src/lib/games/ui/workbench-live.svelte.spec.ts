@@ -1,8 +1,10 @@
 import '../../../app.css';
 import { afterEach, expect, it, vi } from 'vitest';
-import { page } from 'vitest/browser';
 import { render } from 'vitest-browser-svelte';
+import { page } from 'vitest/browser';
+
 import AppFixture from '#lib/testing/AppFixture.svelte';
+
 import { createGame, updateGameRules, getSessionHistory } from '../repository.js';
 import { workbenchPreferenceKey } from './workbench-preferences.js';
 

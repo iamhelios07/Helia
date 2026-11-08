@@ -217,42 +217,7 @@ fn execute(input: Value, store: &impl CredentialStore) -> Result<Value, String> 
             provider,
             api_key,
             service_account_json,
-        } => {
-            validate_address(&provider)?;
-            let service_account = if provider.kind == "google-vertex" {
-                if api_key.is_some() {
-                    return Err("Vertex AI에는 Service Account JSON을 입력해주세요.".into());
-                }
-                Some(ServiceAccount::parse(
-                    service_account_json
-                        .as_deref()
-                        .ok_or("Service Account JSON을 입력해주세요.")?,
-                )?)
-            } else {
-                if service_account_json.is_some() {
-                    return Err("서비스 계정은 Vertex AI 연결에만 사용할 수 있어요.".into());
-                }
-                None
-            };
-            let api_key = api_key.unwrap_or_default();
-            if service_account.is_none()
-                && (api_key.trim().is_empty()
-                    || api_key.len() > 2048
-                    || api_key.chars().any(char::is_control))
-            {
-                return Err("API 키를 확인해주세요.".into());
-            }
-            store.save(Secret {
-                id: provider.id,
-                kind: provider.kind,
-                base_url: provider.base_url,
-                vertex: provider.vertex,
-                api_key: api_key.trim().into(),
-                service_account,
-            })?;
-            vertex::clear_tokens();
-            Ok(json!({}))
-        }
+        } => save_credential(store, provider, api_key, service_account_json.as_deref()),
         Request::Delete { id } => {
             if !valid_id(&id) {
                 return Err("연결 식별자가 올바르지 않아요.".into());
@@ -285,6 +250,123 @@ fn execute(input: Value, store: &impl CredentialStore) -> Result<Value, String> 
     }
 }
 
+fn save_credential(
+    store: &impl CredentialStore,
+    provider: Address,
+    api_key: Option<String>,
+    service_account_json: Option<&str>,
+) -> Result<Value, String> {
+    validate_address(&provider)?;
+    let service_account = if provider.kind == "google-vertex" {
+        if api_key.is_some() {
+            return Err("Vertex AI에는 Service Account JSON을 입력해주세요.".into());
+        }
+        Some(ServiceAccount::parse(
+            service_account_json.ok_or("Service Account JSON을 입력해주세요.")?,
+        )?)
+    } else {
+        if service_account_json.is_some() {
+            return Err("서비스 계정은 Vertex AI 연결에만 사용할 수 있어요.".into());
+        }
+        None
+    };
+    let api_key = api_key.unwrap_or_default();
+    if service_account.is_none()
+        && (api_key.trim().is_empty()
+            || api_key.len() > 2048
+            || api_key.chars().any(char::is_control))
+    {
+        return Err("API 키를 확인해주세요.".into());
+    }
+    store.save(Secret {
+        id: provider.id,
+        kind: provider.kind,
+        base_url: provider.base_url,
+        vertex: provider.vertex,
+        api_key: api_key.trim().into(),
+        service_account,
+    })?;
+    vertex::clear_tokens();
+    Ok(json!({}))
+}
+fn catalog_request(
+    client: &reqwest::blocking::Client,
+    secret: &Secret,
+    cursor: &str,
+    remaining: Duration,
+) -> Result<reqwest::blocking::RequestBuilder, String> {
+    let mut url = reqwest::Url::parse(&format!("{}/models", secret.base_url.trim_end_matches('/')))
+        .map_err(|_| CATALOG_ERROR)?;
+    let mut request = client.get(url.clone()).timeout(remaining);
+    if matches!(secret.kind.as_str(), "google" | "google-interactions") {
+        url.query_pairs_mut().append_pair("pageSize", "1000");
+        if !cursor.is_empty() {
+            url.query_pairs_mut().append_pair("pageToken", cursor);
+        }
+        request = client
+            .get(url)
+            .timeout(remaining)
+            .header("x-goog-api-key", &secret.api_key);
+    } else if secret.kind == "anthropic" {
+        url.query_pairs_mut().append_pair("limit", "1000");
+        if !cursor.is_empty() {
+            url.query_pairs_mut().append_pair("after_id", cursor);
+        }
+        request = client
+            .get(url)
+            .timeout(remaining)
+            .header("x-api-key", &secret.api_key)
+            .header("anthropic-version", "2023-06-01");
+    } else {
+        request = request.bearer_auth(&secret.api_key);
+    }
+    Ok(request)
+}
+fn catalog_model(secret: &Secret, entry: &Value) -> Result<Option<Value>, String> {
+    if matches!(secret.kind.as_str(), "google" | "google-interactions")
+        && entry["supportedGenerationMethods"]
+            .as_array()
+            .is_some_and(|methods| !methods.iter().any(|method| method == "generateContent"))
+    {
+        return Ok(None);
+    }
+    let id = entry[if matches!(secret.kind.as_str(), "google" | "google-interactions") {
+        "name"
+    } else {
+        "id"
+    }]
+    .as_str()
+    .ok_or(CATALOG_ERROR)?;
+    let id = if matches!(secret.kind.as_str(), "google" | "google-interactions") {
+        id.strip_prefix("models/").unwrap_or(id)
+    } else {
+        id
+    };
+    if id.is_empty() || id.len() > 256 || id.chars().any(char::is_control) {
+        return Err(CATALOG_ERROR.into());
+    }
+    let name: String = entry["displayName"]
+        .as_str()
+        .or(entry["display_name"].as_str())
+        .or(entry["name"].as_str())
+        .unwrap_or(id)
+        .chars()
+        .take(120)
+        .collect();
+    let mut model = json!({ "id": id, "name": name });
+    if let Some(description) = entry["description"].as_str() {
+        model["description"] = json!(description.chars().take(500).collect::<String>());
+    }
+    if ["id", "name", "description"].iter().any(|field| {
+        model[*field]
+            .as_str()
+            .is_some_and(|text| text.contains(&secret.api_key))
+    }) {
+        return Err(CATALOG_ERROR.into());
+    }
+    Ok(Some(model))
+}
+
 fn discover(secret: &Secret) -> Result<Value, String> {
     if secret.kind == "google-vertex" {
         return Err("Vertex AI에서는 모델 ID를 직접 추가해주세요.".into());
@@ -303,32 +385,7 @@ fn discover(secret: &Secret) -> Result<Value, String> {
         if remaining.is_zero() {
             return Err(CATALOG_ERROR.into());
         }
-        let mut url =
-            reqwest::Url::parse(&format!("{}/models", secret.base_url.trim_end_matches('/')))
-                .map_err(|_| CATALOG_ERROR)?;
-        let mut request = client.get(url.clone()).timeout(remaining);
-        if matches!(secret.kind.as_str(), "google" | "google-interactions") {
-            url.query_pairs_mut().append_pair("pageSize", "1000");
-            if !cursor.is_empty() {
-                url.query_pairs_mut().append_pair("pageToken", &cursor);
-            }
-            request = client
-                .get(url)
-                .timeout(remaining)
-                .header("x-goog-api-key", &secret.api_key);
-        } else if secret.kind == "anthropic" {
-            url.query_pairs_mut().append_pair("limit", "1000");
-            if !cursor.is_empty() {
-                url.query_pairs_mut().append_pair("after_id", &cursor);
-            }
-            request = client
-                .get(url)
-                .timeout(remaining)
-                .header("x-api-key", &secret.api_key)
-                .header("anthropic-version", "2023-06-01");
-        } else {
-            request = request.bearer_auth(&secret.api_key);
-        }
+        let request = catalog_request(&client, secret, &cursor, remaining)?;
         let response = request.send().map_err(|_| CATALOG_ERROR)?;
         if !response.status().is_success() {
             return Err(CATALOG_ERROR.into());
@@ -350,49 +407,10 @@ fn discover(secret: &Secret) -> Result<Value, String> {
         .as_array()
         .ok_or(CATALOG_ERROR)?;
         for entry in entries {
-            if matches!(secret.kind.as_str(), "google" | "google-interactions")
-                && entry["supportedGenerationMethods"]
-                    .as_array()
-                    .is_some_and(|methods| {
-                        !methods.iter().any(|method| method == "generateContent")
-                    })
-            {
+            let Some(model) = catalog_model(secret, entry)? else {
                 continue;
-            }
-            let id = entry[if matches!(secret.kind.as_str(), "google" | "google-interactions") {
-                "name"
-            } else {
-                "id"
-            }]
-            .as_str()
-            .ok_or(CATALOG_ERROR)?;
-            let id = if matches!(secret.kind.as_str(), "google" | "google-interactions") {
-                id.strip_prefix("models/").unwrap_or(id)
-            } else {
-                id
             };
-            if id.is_empty() || id.len() > 256 || id.chars().any(char::is_control) {
-                return Err(CATALOG_ERROR.into());
-            }
-            let name: String = entry["displayName"]
-                .as_str()
-                .or(entry["display_name"].as_str())
-                .or(entry["name"].as_str())
-                .unwrap_or(id)
-                .chars()
-                .take(120)
-                .collect();
-            let mut model = json!({ "id": id, "name": name });
-            if let Some(description) = entry["description"].as_str() {
-                model["description"] = json!(description.chars().take(500).collect::<String>());
-            }
-            if ["id", "name", "description"].iter().any(|field| {
-                model[*field]
-                    .as_str()
-                    .is_some_and(|text| text.contains(&secret.api_key))
-            }) {
-                return Err(CATALOG_ERROR.into());
-            }
+            let id = model["id"].as_str().ok_or(CATALOG_ERROR)?;
             if seen.insert(id.to_owned()) {
                 models.push(model);
             }
@@ -673,24 +691,16 @@ mod tests {
         let store = MemoryStore::default();
         let provider = json!({ "id": "vertex", "kind": "google-vertex", "baseUrl": "https://aiplatform.googleapis.com/v1/projects/helia-test-project/locations/global/publishers/google", "vertex": { "projectId": "helia-test-project", "location": "global" } });
         execute(
-            json!({ "kind": "save", "provider": provider.clone(), "serviceAccountJson": include_str!("../../src/lib/testing/fixtures/service-account.json") }),
+            json!({ "kind": "save", "provider": provider, "serviceAccountJson": include_str!("../../src/lib/testing/fixtures/service-account.json") }),
             &store,
         )
         .unwrap();
         assert_eq!(
-            execute(
-                json!({ "kind": "status", "providers": [provider.clone()] }),
-                &store
-            )
-            .unwrap(),
+            execute(json!({ "kind": "status", "providers": [provider] }), &store).unwrap(),
             json!({ "vertex": true })
         );
         assert_eq!(
-            execute(
-                json!({ "kind": "models", "provider": provider.clone() }),
-                &store
-            )
-            .unwrap_err(),
+            execute(json!({ "kind": "models", "provider": provider }), &store).unwrap_err(),
             "Vertex AI에서는 모델 ID를 직접 추가해주세요."
         );
         let mut changed = provider.clone();

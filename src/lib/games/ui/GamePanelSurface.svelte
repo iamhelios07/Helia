@@ -1,8 +1,13 @@
 <script lang="ts">
 	import { onMount, type Snippet } from 'svelte';
+
 	import Icon from '#lib/components/Icon.svelte';
+
 	import type { PanelInfo, PanelLayout, PanelView } from './runtime/model.js';
-	import { panelIds } from './runtime/layout.js';
+
+	import { panelDropTarget, type DockEdge, type PanelDrop } from './panel-geometry.js';
+	import { PanelMeasurement } from './panel-measurement.js';
+	import PanelLayoutNode from './PanelLayoutNode.svelte';
 	import {
 		CHAT_PANEL_ID,
 		addWorkbenchPanels,
@@ -14,7 +19,6 @@
 		saveWorkbenchPreferences,
 		type WorkbenchPreferences
 	} from './workbench-preferences.js';
-	import PanelLayoutNode from './PanelLayoutNode.svelte';
 	let {
 		gameId,
 		panels,
@@ -46,22 +50,8 @@
 			visiblePanels.map((panel) => panel.id)
 		)
 	);
-	let area: HTMLDivElement | undefined;
-	let observer: ResizeObserver | undefined;
-	let animation: number | undefined;
-	let expectedIds: string[] = [];
-	const bodies: Record<string, HTMLDivElement> = Object.create(null);
 	let chatRect = $state.raw<PanelView | undefined>();
 	let resizing = $state(false);
-	type DockEdge = 'left' | 'right' | 'top' | 'bottom';
-	type Drop = {
-		target: string;
-		edge: DockEdge;
-		x: number;
-		y: number;
-		width: number;
-		height: number;
-	};
 	let dragging = $state.raw<{
 		id: string;
 		pointerId: number;
@@ -70,69 +60,29 @@
 		y: number;
 		active: boolean;
 	} | null>(null);
-	let drop = $state.raw<Drop | null>(null);
+	let drop = $state.raw<PanelDrop | null>(null);
 	onMount(() => {
 		preferences = loadWorkbenchPreferences(gameId);
 	});
 	$effect(() => scheduleMeasure(tree));
-	function scheduleMeasure(layout?: PanelLayout) {
-		if (layout) expectedIds = panelIds(layout);
-		if (!area || animation !== undefined) return;
-		animation = requestAnimationFrame(() => {
-			animation = undefined;
-			if (!area) return;
-			const bounds = area.getBoundingClientRect();
-			const views: PanelView[] = [];
-			let nextChat: PanelView | undefined;
-			if (bounds.width > 0 && bounds.height > 0)
-				for (const [id, body] of Object.entries(bodies)) {
-					if (!expectedIds.includes(id)) continue;
-					const rect = body.getBoundingClientRect();
-					const x = Math.max(0, rect.left - bounds.left),
-						y = Math.max(0, rect.top - bounds.top);
-					const width = Math.min(bounds.width, rect.right - bounds.left) - x,
-						height = Math.min(bounds.height, rect.bottom - bounds.top) - y;
-					if (width <= 0 || height <= 0) continue;
-					const view = { id, x, y, width, height };
-					if (id === CHAT_PANEL_ID) nextChat = view;
-					else views.push(view);
-				}
-			chatRect = nextChat;
-			onviews(views);
-		});
-	}
-	function attachArea(element: HTMLDivElement) {
-		area = element;
-		observer = new ResizeObserver(() => scheduleMeasure());
-		observer.observe(element);
-		for (const body of Object.values(bodies)) observer.observe(body);
-		scheduleMeasure();
-		return () => {
-			cancelDock();
-			observer?.disconnect();
-			observer = undefined;
-			if (animation !== undefined) cancelAnimationFrame(animation);
-			animation = undefined;
-			area = undefined;
-		};
-	}
-	function attachBody(id: string, element: HTMLDivElement) {
-		bodies[id] = element;
-		observer?.observe(element);
-		scheduleMeasure();
-		return () => {
-			observer?.unobserve(element);
-			if (bodies[id] === element) delete bodies[id];
-			scheduleMeasure();
-		};
-	}
+	const measurement = new PanelMeasurement((views, chat) => {
+		chatRect = chat;
+		onviews(views);
+	});
+	const scheduleMeasure = measurement.scheduleMeasure;
+	const attachBody = measurement.attachBody;
+	const attachArea = (element: HTMLDivElement) => measurement.attachArea(element, cancelDock);
 	function update(nextTree: PanelLayout, nextHidden = hidden, persist = true) {
 		preferences = { version: 2, tree: nextTree, hidden: nextHidden };
-		if (persist) saveWorkbenchPreferences(gameId, preferences);
+		if (persist) {
+			saveWorkbenchPreferences(gameId, preferences);
+		}
 		scheduleMeasure();
 	}
 	function hide(id: string) {
-		if (id !== CHAT_PANEL_ID) update(template, [...new Set([...hidden, id])]);
+		if (id !== CHAT_PANEL_ID) {
+			update(template, [...new Set([...hidden, id])]);
+		}
 	}
 	function reopen(id: string) {
 		update(
@@ -160,7 +110,9 @@
 		scheduleMeasure();
 	}
 	function startDock(id: string, event: PointerEvent) {
-		if (dragging || resizing || !event.isPrimary || event.button !== 0 || !area) return;
+		if (dragging || resizing || !event.isPrimary || event.button !== 0 || !measurement.area) {
+			return;
+		}
 		event.preventDefault();
 		const target = event.currentTarget as HTMLElement;
 		target.setPointerCapture(event.pointerId);
@@ -174,60 +126,59 @@
 		};
 	}
 	function moveDock(event: PointerEvent) {
-		if (!dragging || dragging.pointerId !== event.pointerId || !area) return;
-		if (!dragging.active && Math.hypot(event.clientX - dragging.x, event.clientY - dragging.y) < 5)
+		if (!dragging || dragging.pointerId !== event.pointerId || !measurement.area) {
 			return;
-		if (!dragging.active) dragging = { ...dragging, active: true };
-		const bounds = area.getBoundingClientRect();
+		}
+		if (
+			!dragging.active &&
+			Math.hypot(event.clientX - dragging.x, event.clientY - dragging.y) < 5
+		) {
+			return;
+		}
+		if (!dragging.active) {
+			dragging = { ...dragging, active: true };
+		}
+		const bounds = measurement.area.getBoundingClientRect();
 		drop = null;
-		for (const [id, body] of Object.entries(bodies)) {
-			if (id === dragging.id || !expectedIds.includes(id)) continue;
-			const rect = body.parentElement!.getBoundingClientRect();
-			if (
-				event.clientX < rect.left ||
-				event.clientX > rect.right ||
-				event.clientY < rect.top ||
-				event.clientY > rect.bottom
-			)
+		for (const [id, body] of Object.entries(measurement.bodies)) {
+			if (id === dragging.id || !measurement.expectedIds.includes(id)) {
 				continue;
-			const distances: [DockEdge, number][] = [
-				['left', (event.clientX - rect.left) / rect.width],
-				['right', (rect.right - event.clientX) / rect.width],
-				['top', (event.clientY - rect.top) / rect.height],
-				['bottom', (rect.bottom - event.clientY) / rect.height]
-			];
-			const edge = distances.sort((a, b) => a[1] - b[1])[0][0],
-				horizontal = edge === 'left' || edge === 'right';
-			drop = {
-				target: id,
-				edge,
-				x: rect.left - bounds.left + (edge === 'right' ? rect.width / 2 : 0),
-				y: rect.top - bounds.top + (edge === 'bottom' ? rect.height / 2 : 0),
-				width: rect.width / (horizontal ? 2 : 1),
-				height: rect.height / (horizontal ? 1 : 2)
-			};
-			break;
+			}
+			const rect = body.parentElement!.getBoundingClientRect();
+			drop = panelDropTarget(rect, bounds, event, id);
+			if (drop) {
+				break;
+			}
 		}
 	}
 	function cancelDock(event?: PointerEvent) {
-		if (!dragging || (event && dragging.pointerId !== event.pointerId)) return;
+		if (!dragging || (event && dragging.pointerId !== event.pointerId)) {
+			return;
+		}
 		const previous = dragging;
 		dragging = null;
 		drop = null;
-		if (previous.target.hasPointerCapture(previous.pointerId))
+		if (previous.target.hasPointerCapture(previous.pointerId)) {
 			previous.target.releasePointerCapture(previous.pointerId);
+		}
 	}
 	function finishDock(event: PointerEvent) {
-		if (!dragging || dragging.pointerId !== event.pointerId) return;
+		if (!dragging || dragging.pointerId !== event.pointerId) {
+			return;
+		}
 		const source = dragging.id,
 			destination = dragging.active ? drop : null;
 		cancelDock(event);
-		if (destination) dock(source, destination.target, destination.edge);
+		if (destination) {
+			dock(source, destination.target, destination.edge);
+		}
 	}
 	function handleKeydown(event: KeyboardEvent) {
 		if (event.key === 'Escape') {
 			const menu = (event.target as HTMLElement).closest?.('details');
-			if (menu) menu.open = false;
+			if (menu) {
+				menu.open = false;
+			}
 		}
 		if (event.key === 'Escape' && dragging) {
 			event.preventDefault();

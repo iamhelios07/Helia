@@ -17,11 +17,14 @@ function boot(child = false) {
 	window.top = child ? {} : window;
 	// Tauri runs invoke initialization before core.js installs invoke. Plugin init runs after it.
 	// Follow the actual native builder hook so an early-hook regression exercises the failure.
-	if (builder.includes('.append_invoke_initialization_script(initialization)'))
+	if (builder.includes('.append_invoke_initialization_script(initialization)')) {
 		runInNewContext(script, { window });
+	}
 	const internals = window.__TAURI_INTERNALS__ as Record<string, unknown>;
 	internals.invoke = invoke;
-	if (builder.includes('.js_init_script(initialization)')) runInNewContext(script, { window });
+	if (builder.includes('.js_init_script(initialization)')) {
+		runInNewContext(script, { window });
+	}
 	return { window, internals, invoke };
 }
 

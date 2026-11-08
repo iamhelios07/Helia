@@ -1,6 +1,7 @@
 <script lang="ts">
-	import Icon from '#lib/components/Icon.svelte';
 	import ConfirmDialog from '#lib/components/ConfirmDialog.svelte';
+	import Icon from '#lib/components/Icon.svelte';
+
 	import { parseCodeProject, type CodeProject } from '../../code-project.js';
 	import { cleanProjectPath, codeLanguage, renameCodePath } from './code-files.js';
 	let {
@@ -40,7 +41,9 @@
 			const parts = file.split('/');
 			parts.pop();
 			while (parts.length) {
-				if (!result.includes(parts.join('/'))) result.push(parts.join('/'));
+				if (!result.includes(parts.join('/'))) {
+					result.push(parts.join('/'));
+				}
 				parts.pop();
 			}
 		}
@@ -51,24 +54,43 @@
 	}
 	function begin(kind: 'file' | 'folder' | 'rename') {
 		operation = kind;
-		path = kind === 'rename' ? (active ?? folder) : folder ? folder + '/' : '';
+		path = folder ? folder + '/' : '';
+		if (kind === 'rename') {
+			path = active ?? folder;
+		}
 		error = '';
 		dialog?.showModal();
 	}
+	function operationTitle() {
+		if (operation === 'rename') {
+			return '경로 이름 변경';
+		}
+		return operation === 'folder' ? '새 코드 폴더' : '새 코드 파일';
+	}
+	function ensureAvailable(nextPath: string, before: string) {
+		if (operation === 'rename' && nextPath === before) {
+			return;
+		}
+		if (paths.includes(nextPath) || folders.includes(nextPath)) {
+			throw new Error('같은 경로가 이미 있어요.');
+		}
+	}
 	async function submit(event: SubmitEvent) {
 		event.preventDefault();
-		if (!project || disabled) return;
+		if (!project || disabled) {
+			return;
+		}
 		try {
 			const nextPath = cleanProjectPath(path);
 			const before = active ?? folder;
-			if (
-				(operation !== 'rename' || nextPath !== before) &&
-				(paths.includes(nextPath) || folders.includes(nextPath))
-			)
-				throw new Error('같은 경로가 이미 있어요.');
+			ensureAvailable(nextPath, before);
 			if (operation === 'rename') {
-				if (!before) return;
-				if (paths.includes(before)) codeLanguage(nextPath);
+				if (!before) {
+					return;
+				}
+				if (paths.includes(before)) {
+					codeLanguage(nextPath);
+				}
 				write(await renameCodePath(project, before, nextPath));
 				onmove(before, nextPath);
 			} else if (operation === 'folder') {
@@ -88,7 +110,9 @@
 		}
 	}
 	function remove() {
-		if (!project || disabled) return;
+		if (!project || disabled) {
+			return;
+		}
 		const target = active ?? folder;
 		const removed = paths.filter((item) => item === target || item.startsWith(target + '/'));
 		if (removed.includes(project.entry)) {
@@ -199,11 +223,7 @@
 >
 	<form onsubmit={submit}>
 		<h2>
-			{operation === 'rename'
-				? '경로 이름 변경'
-				: operation === 'folder'
-					? '새 코드 폴더'
-					: '새 코드 파일'}
+			{operationTitle()}
 		</h2>
 		<label for="code-path">프로젝트 상대 경로</label><input
 			id="code-path"

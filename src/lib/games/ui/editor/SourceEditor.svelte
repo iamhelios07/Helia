@@ -1,6 +1,8 @@
 <script lang="ts">
-	import { untrack } from 'svelte';
 	import type { editor } from 'monaco-editor/editor/editor.api.js';
+
+	import { untrack } from 'svelte';
+
 	import { MonacoProject } from './monaco-project.js';
 	let {
 		value,
@@ -37,7 +39,9 @@
 		void session
 			.ready()
 			.then(({ monaco }) => {
-				if (disposed) return;
+				if (disposed) {
+					return;
+				}
 				const codeEditor = monaco.editor.create(element, {
 					model: untrack(() => session.model(path, value, language)),
 					theme: 'helia',
@@ -66,8 +70,13 @@
 					quickSuggestions: { other: true, comments: false, strings: false }
 				});
 				const content = codeEditor.onDidChangeModelContent(() => {
-					if (readonly || disabled || codeEditor.getModel()?.uri.toString() !== session.root + path)
+					if (
+						readonly ||
+						disabled ||
+						codeEditor.getModel()?.uri.toString() !== session.root + path
+					) {
 						return;
+					}
 					onchange?.(codeEditor.getValue());
 				});
 				const cursor = codeEditor.onDidChangeCursorPosition((event) => (position = event.position));
@@ -80,7 +89,9 @@
 				};
 			})
 			.catch(() => {
-				if (!disposed) loadError = '코드 편집기를 불러오지 못했어요.';
+				if (!disposed) {
+					loadError = '코드 편집기를 불러오지 못했어요.';
+				}
 			});
 		let cleanup: (() => void) | undefined;
 		return () => {
@@ -96,17 +107,25 @@
 		const currentPath = path;
 		const source = value;
 		const mode = language;
-		if (!codeEditor) return;
-		if (!project) session.update({ [currentPath]: { source, language: mode } }, '');
+		if (!codeEditor) {
+			return;
+		}
+		if (!project) {
+			session.update({ [currentPath]: { source, language: mode } }, '');
+		}
 		const model = session.model(currentPath, source, mode);
 		if (activePath !== currentPath || codeEditor.getModel() !== model) {
 			session.saveView(viewId + ':' + activePath, codeEditor.saveViewState());
 			activePath = currentPath;
 			codeEditor.setModel(model);
 			const saved = session.view(viewId + ':' + currentPath);
-			if (saved) codeEditor.restoreViewState(saved);
+			if (saved) {
+				codeEditor.restoreViewState(saved);
+			}
 		}
-		if (model.getValue() !== source) model.setValue(source);
+		if (model.getValue() !== source) {
+			model.setValue(source);
+		}
 		codeEditor.updateOptions({
 			ariaLabel: label,
 			readOnly: readonly || disabled,
@@ -116,7 +135,9 @@
 	$effect(() => {
 		const target = location;
 		const codeEditor = instance;
-		if (!target || !codeEditor) return;
+		if (!target || !codeEditor) {
+			return;
+		}
 		codeEditor.setPosition({ lineNumber: target.line, column: target.column });
 		codeEditor.revealPositionInCenter({ lineNumber: target.line, column: target.column });
 		codeEditor.focus();

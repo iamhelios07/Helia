@@ -1,3 +1,10 @@
+import { parseGameSettings, parseScripts, type Game } from '#lib/games/model.js';
+
+import { parseGameAIContent } from '../ai/prompts.js';
+import { parseCodeProject } from '../code-project.js';
+import { parseResources } from '../resources.js';
+import { parseGameUI } from '../ui/runtime/model.js';
+import { parseStateDocument } from './schema.js';
 import {
 	parseGameState,
 	parseStateValue,
@@ -5,12 +12,6 @@ import {
 	type GameState,
 	type StateValue
 } from './value.js';
-import { parseGameSettings, parseScripts, type Game } from '#lib/games/model.js';
-import { parseStateDocument } from './schema.js';
-import { parseGameUI } from '../ui/runtime/model.js';
-import { parseGameAIContent } from '../ai/prompts.js';
-import { parseResources } from '../resources.js';
-import { parseCodeProject } from '../code-project.js';
 
 export interface GameSnapshot extends Pick<
 	Game,
@@ -81,28 +82,33 @@ export interface Memory {
 }
 
 export function record(value: unknown): Record<string, unknown> {
-	if (typeof value !== 'object' || value === null || Array.isArray(value))
+	if (typeof value !== 'object' || value === null || Array.isArray(value)) {
 		throw new Error('저장된 게임 진행 데이터의 형식이 올바르지 않아요.');
+	}
 	return value as Record<string, unknown>;
 }
 export function identifier(value: unknown): string {
-	if (typeof value !== 'string' || !value.trim())
+	if (typeof value !== 'string' || !value.trim()) {
 		throw new Error('게임 진행 식별자가 올바르지 않아요.');
+	}
 	return value;
 }
 export function counter(value: unknown): number {
-	if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0)
+	if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) {
 		throw new Error('게임 진행 리비전이 올바르지 않아요.');
+	}
 	return value;
 }
 function timestamp(value: unknown): string {
-	if (typeof value !== 'string' || !Number.isFinite(Date.parse(value)))
+	if (typeof value !== 'string' || !Number.isFinite(Date.parse(value))) {
 		throw new Error('기록 시간이 올바르지 않아요.');
+	}
 	return value;
 }
 function version(value: Record<string, unknown>, supported: readonly number[] = [1]) {
-	if (!supported.includes(value.schemaVersion as number))
+	if (!supported.includes(value.schemaVersion as number)) {
 		throw new Error('지원하지 않는 게임 진행 데이터 버전이에요.');
+	}
 }
 
 export function parseGameSnapshot(value: unknown): GameSnapshot {
@@ -155,19 +161,26 @@ export function parseAction(value: unknown): Action {
 
 function parseSlot(value: unknown): StateSlot {
 	const input = record(value);
-	if (input.exists === false) return { exists: false };
-	if (input.exists !== true) throw new Error('상태 변경 기록이 올바르지 않아요.');
+	if (input.exists === false) {
+		return { exists: false };
+	}
+	if (input.exists !== true) {
+		throw new Error('상태 변경 기록이 올바르지 않아요.');
+	}
 	return { exists: true, value: parseStateValue(input.value) };
 }
 
 export function parseTransaction(value: unknown): Transaction {
 	const input = record(value);
 	version(input, [2]);
-	if (!Array.isArray(input.changes)) throw new Error('상태 변경 기록이 올바르지 않아요.');
+	if (!Array.isArray(input.changes)) {
+		throw new Error('상태 변경 기록이 올바르지 않아요.');
+	}
 	const changes = input.changes.map((value: unknown): StateChange => {
 		const change = record(value);
-		if (!Array.isArray(change.path) || change.path.length === 0)
+		if (!Array.isArray(change.path) || change.path.length === 0) {
 			throw new Error('상태 변경 경로가 올바르지 않아요.');
+		}
 		const path = change.path.map((key: unknown) => {
 			validateStateKey(key);
 			return key;
@@ -192,8 +205,9 @@ export function parseTransaction(value: unknown): Transaction {
 export function parseMemory(value: unknown): Memory {
 	const input = record(value);
 	version(input);
-	if (!Array.isArray(input.sourceTransactionIds) || input.sourceTransactionIds.length === 0)
+	if (!Array.isArray(input.sourceTransactionIds) || input.sourceTransactionIds.length === 0) {
 		throw new Error('기억의 근거가 필요해요.');
+	}
 	return {
 		schemaVersion: 1,
 		id: identifier(input.id),

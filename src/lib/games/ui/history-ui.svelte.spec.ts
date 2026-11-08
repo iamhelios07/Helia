@@ -1,9 +1,10 @@
 import '../../../app.css';
 import { beforeEach, expect, it, vi } from 'vitest';
-import { page, userEvent } from 'vitest/browser';
 import { render } from 'vitest-browser-svelte';
-import SessionChat from './SessionChat.svelte';
+import { page, userEvent } from 'vitest/browser';
+
 import { saveAISettings } from '#lib/app/settings/repository.js';
+
 import {
 	createGame,
 	updateGameRules,
@@ -13,6 +14,7 @@ import {
 	saveSessionMemory,
 	getSessionTimeline
 } from '../repository.js';
+import SessionChat from './SessionChat.svelte';
 
 vi.mock('../../storage/transport.js', async () => {
 	const { memoryStorage } = await import('../../testing/memory-storage.js');

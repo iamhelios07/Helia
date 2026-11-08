@@ -1,6 +1,7 @@
 <script lang="ts">
-	import GameCover from './GameCover.svelte';
 	import type { LibraryGame } from './library-games.js';
+
+	import GameCover from './GameCover.svelte';
 	let {
 		game,
 		view,

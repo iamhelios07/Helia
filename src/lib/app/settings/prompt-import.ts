@@ -1,4 +1,5 @@
 import { Unpackr } from 'msgpackr/unpack-no-eval';
+
 import { importPromptPreset, parsePromptConfig, type PromptConfig } from '#lib/games/ai/prompts.js';
 
 const MAX_BYTES = 4 * 1024 * 1024;
@@ -12,14 +13,14 @@ const RPACK_DECODE = Uint8Array.from(
 );
 
 function record(value: unknown): Record<string, unknown> {
-	if (!value || typeof value !== 'object' || Array.isArray(value))
+	if (!value || typeof value !== 'object' || Array.isArray(value)) {
 		throw new Error('프롬프트 파일의 형식을 확인해주세요.');
+	}
 	return value as Record<string, unknown>;
 }
 
 async function decompress(bytes: Uint8Array<ArrayBuffer>): Promise<Uint8Array<ArrayBuffer>> {
-	const format =
-		bytes[0] === 0x1f && bytes[1] === 0x8b ? 'gzip' : bytes[0] === 0x78 ? 'deflate' : 'deflate-raw';
+	const format = compressionFormat(bytes);
 	const reader = new Blob([bytes])
 		.stream()
 		.pipeThrough(new DecompressionStream(format))
@@ -29,7 +30,9 @@ async function decompress(bytes: Uint8Array<ArrayBuffer>): Promise<Uint8Array<Ar
 	try {
 		while (true) {
 			const { value, done } = await reader.read();
-			if (done) break;
+			if (done) {
+				break;
+			}
 			size += value.byteLength;
 			if (size > MAX_BYTES) {
 				await reader.cancel();
@@ -50,14 +53,21 @@ async function decompress(bytes: Uint8Array<ArrayBuffer>): Promise<Uint8Array<Ar
 }
 
 async function decodeRisu(bytes: Uint8Array<ArrayBuffer>, packed: boolean): Promise<unknown> {
-	if (packed) bytes = bytes.map((byte) => RPACK_DECODE[byte]);
+	if (packed) {
+		bytes = bytes.map((byte) => RPACK_DECODE[byte]);
+	}
 	const decoder = new Unpackr({ useRecords: false });
 	const envelope = record(decoder.unpack(await decompress(bytes)) as unknown);
-	if ((envelope.presetVersion !== 0 && envelope.presetVersion !== 2) || envelope.type !== 'preset')
+	if (
+		(envelope.presetVersion !== 0 && envelope.presetVersion !== 2) ||
+		envelope.type !== 'preset'
+	) {
 		throw new Error('지원하지 않는 Risu 프리셋 파일이에요.');
+	}
 	const encrypted = envelope.preset ?? envelope.pres;
-	if (!(encrypted instanceof ArrayBuffer) && !(encrypted instanceof Uint8Array))
+	if (!(encrypted instanceof ArrayBuffer) && !(encrypted instanceof Uint8Array)) {
 		throw new Error('Risu 프리셋 파일의 형식을 확인해주세요.');
+	}
 	const hash = await crypto.subtle.digest('SHA-256', new TextEncoder().encode('risupreset'));
 	const key = await crypto.subtle.importKey('raw', hash, 'AES-GCM', false, ['decrypt']);
 	const content = await crypto.subtle.decrypt(
@@ -72,10 +82,13 @@ async function decodeRisu(bytes: Uint8Array<ArrayBuffer>, packed: boolean): Prom
 export async function readPromptPresetFile(
 	file: File
 ): Promise<{ name: string; config: PromptConfig }> {
-	if (file.size > MAX_BYTES) throw new Error('프롬프트 파일은 4MiB 이하여야 해요.');
+	if (file.size > MAX_BYTES) {
+		throw new Error('프롬프트 파일은 4MiB 이하여야 해요.');
+	}
 	const extension = file.name.split('.').at(-1)?.toLowerCase();
-	if (!['json', 'preset', 'risupreset', 'risup'].includes(extension ?? ''))
+	if (!['json', 'preset', 'risupreset', 'risup'].includes(extension ?? '')) {
 		throw new Error('JSON 또는 Risu 프리셋 파일을 선택해주세요.');
+	}
 	let source: unknown;
 	try {
 		source =
@@ -95,4 +108,11 @@ export async function readPromptPresetFile(
 	} catch {
 		throw new Error('프롬프트 파일의 내용을 확인해주세요.');
 	}
+}
+
+function compressionFormat(bytes: Uint8Array): CompressionFormat {
+	if (bytes[0] === 0x1f && bytes[1] === 0x8b) {
+		return 'gzip';
+	}
+	return bytes[0] === 0x78 ? 'deflate' : 'deflate-raw';
 }

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
 import { memoryStorage } from '#lib/testing/memory-storage.js';
-import { createGameRepository } from './repository-core.js';
+
 import {
 	createEditorDraft,
 	changedEditorDraft,
@@ -11,6 +12,7 @@ import {
 	storeEditorDraft,
 	validateEditorDraft
 } from './editor.js';
+import { createGameRepository } from './repository-core.js';
 
 const repository = () => createGameRepository(memoryStorage());
 let stored: Map<string, string>;
@@ -42,6 +44,9 @@ describe('IDE authoring drafts', () => {
 			problems: [{ documentId: 'state' }]
 		});
 	});
+});
+
+describe('IDE authoring drafts', () => {
 	it('reports document errors and validates initial state against the edited schema', async () => {
 		const game = await repository().createGame();
 		const draft = createEditorDraft(game);
@@ -56,6 +61,9 @@ describe('IDE authoring drafts', () => {
 		draft.documents.state = JSON.stringify({ schema, initialState: { hp: 20 } });
 		expect(validateEditorDraft(game, draft).game?.initialState).toEqual({ hp: 20 });
 	});
+});
+
+describe('IDE authoring drafts', () => {
 	it('does not erase a newer draft when an older apply completes', async () => {
 		const game = await repository().createGame();
 		const draft = createEditorDraft(game);
@@ -71,6 +79,9 @@ describe('IDE authoring drafts', () => {
 		clearEditorDraft(game.id, newer);
 		expect(loadEditorDraft(game.id)).toBeNull();
 	});
+});
+
+describe('IDE authoring drafts', () => {
 	it('reports corrupt or unavailable storage without overwriting saved data', async () => {
 		stored.set('helia:editor-draft:broken', '{broken');
 		expect(() => loadEditorDraft('broken')).toThrow('불러오지 못했어요');
@@ -83,6 +94,9 @@ describe('IDE authoring drafts', () => {
 		});
 		expect(() => storeEditorDraft(draft)).toThrow('저장하지 못했어요');
 	});
+});
+
+describe('IDE authoring drafts', () => {
 	it('atomically applies authored content to existing sessions, retaining active session and history', async () => {
 		const repo = repository();
 		const game = await repo.createGame();
@@ -114,6 +128,9 @@ describe('IDE authoring drafts', () => {
 		expect(refreshed.snapshot.migrationFrom).toBe(history.snapshot.id);
 		expect(refreshed.transactions).toEqual(history.transactions);
 	});
+});
+
+describe('IDE authoring drafts', () => {
 	it('uses one canonical state document and migrates separate legacy sources without losing edits', async () => {
 		const game = await repository().createGame();
 		const draft = createEditorDraft(game);
@@ -155,6 +172,9 @@ describe('IDE authoring drafts', () => {
 		expect(loadEditorDraft(game.id)).toEqual(unfinished);
 		expect(validateEditorDraft(game, unfinished).game).toBeNull();
 	});
+});
+
+describe('IDE authoring drafts', () => {
 	it('rejects stale content and invalid new content without partial updates', async () => {
 		const repo = repository();
 		const game = await repo.createGame();
@@ -172,6 +192,9 @@ describe('IDE authoring drafts', () => {
 		).rejects.toThrow('다른 화면');
 		expect((await repo.getGameWorkspace(game.id))?.game.title).toBe('Other edit');
 	});
+});
+
+describe('IDE authoring drafts', () => {
 	it('detects newly added optional content and supports explicit UI removal', async () => {
 		const repo = repository();
 		const game = await repo.createGame();

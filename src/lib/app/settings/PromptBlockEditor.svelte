@@ -1,6 +1,8 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
+
 	import { PROMPT_TYPES, type PromptBlock } from '#lib/games/ai/prompts.js';
+
 	import { PROMPT_TYPE_LABELS } from './prompt-labels.js';
 	let { block = $bindable() }: { block: PromptBlock } = $props();
 	const uid = $props.id();
@@ -21,7 +23,9 @@
 	);
 	function setType(type: PromptBlock['type']) {
 		block.type = type;
-		if (type !== 'cache' && block.role === 'all') block.role = undefined;
+		if (type !== 'cache' && block.role === 'all') {
+			block.role = undefined;
+		}
 	}
 </script>
 

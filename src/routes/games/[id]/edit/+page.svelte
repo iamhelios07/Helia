@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { page } from '$app/state';
+
 	import GameEditor from '#lib/games/ui/GameEditor.svelte';
 </script>
 

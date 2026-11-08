@@ -1,9 +1,10 @@
 import '../../../../app.css';
-import { beforeEach, expect, it, vi } from 'vitest';
 import { createRawSnippet } from 'svelte';
-import { page } from 'vitest/browser';
+import { beforeEach, expect, it, vi } from 'vitest';
 import { render } from 'vitest-browser-svelte';
-import GameWorkbench from '../GameWorkbench.svelte';
+import { page } from 'vitest/browser';
+
+import { editorContent } from '#lib/games/editor.js';
 import {
 	createGame,
 	updateGameRules,
@@ -11,8 +12,10 @@ import {
 	getSessionHistory,
 	applyGameDraft
 } from '#lib/games/repository.js';
-import { editorContent } from '#lib/games/editor.js';
+
 import type { GameUI } from './model.js';
+
+import GameWorkbench from '../GameWorkbench.svelte';
 
 vi.mock('#lib/storage/transport.js', async () => {
 	const { memoryStorage } = await import('#lib/testing/memory-storage.js');

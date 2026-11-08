@@ -1,15 +1,18 @@
 <script lang="ts">
 	import { untrack, type Snippet } from 'svelte';
+
 	import { isSessionBusy } from '#lib/games/ai/activity.js';
+
+	import type { GameUIHandle } from './runtime/bridge.js';
 	import type { GameUI, PanelInfo, PanelView, PanelLayout } from './runtime/model.js';
+
+	import GamePanelSurface from './GamePanelSurface.svelte';
+	import { panelIds } from './runtime/layout.js';
 	import {
 		CHAT_PANEL_ID,
 		defaultWorkbenchLayout,
 		reconcileWorkbenchLayout
 	} from './workbench-preferences.js';
-	import { panelIds } from './runtime/layout.js';
-	import type { GameUIHandle } from './runtime/bridge.js';
-	import GamePanelSurface from './GamePanelSurface.svelte';
 	let {
 		gameId,
 		sessionId,
@@ -42,14 +45,20 @@
 		async function mount() {
 			try {
 				const { mountGameUI } = await import('./runtime/bridge.js');
-				if (!alive) return;
+				if (!alive) {
+					return;
+				}
 				const cleanup = await mountGameUI(frame, game, session, {
 					blocked: () => !alive || blocked || isSessionBusy(game, session),
 					oncontentchange: () => {
-						if (alive) reload();
+						if (alive) {
+							reload();
+						}
 					},
 					onpanels: (nextPanels) => {
-						if (!alive) return;
+						if (!alive) {
+							return;
+						}
 						if (nextPanels.length) {
 							defaultTree = defaultTree
 								? reconcileWorkbenchLayout(defaultTree, [
@@ -66,14 +75,20 @@
 						panels = nextPanels;
 					},
 					onbusy: (busy) => {
-						if (alive) onsavingchange(busy);
+						if (alive) {
+							onsavingchange(busy);
+						}
 					},
 					onui: (snapshotUI) => {
-						if (!alive) return;
+						if (!alive) {
+							return;
+						}
 						currentUI = snapshotUI;
 					},
 					onready: () => {
-						if (alive) loading = false;
+						if (alive) {
+							loading = false;
+						}
 					},
 					onerror: () => {
 						if (alive) {
@@ -86,7 +101,9 @@
 					dispose = cleanup;
 					runtimeHandle = cleanup;
 					cleanup.setViews(latestViews);
-				} else cleanup();
+				} else {
+					cleanup();
+				}
 			} catch {
 				if (alive) {
 					loading = false;
@@ -98,7 +115,9 @@
 		return () => {
 			alive = false;
 			dispose?.();
-			if (runtimeHandle === dispose) runtimeHandle = undefined;
+			if (runtimeHandle === dispose) {
+				runtimeHandle = undefined;
+			}
 			onsavingchange(false);
 		};
 	}

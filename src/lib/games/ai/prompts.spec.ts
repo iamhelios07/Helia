@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { assemblePrompt, importPromptPreset, parsePromptConfig } from './prompts.js';
+
 import type { PromptContext } from './prompts.js';
+
+import { assemblePrompt, importPromptPreset, parsePromptConfig } from './prompts.js';
 
 const context: PromptContext = {
 	settings: { description: 'World', firstMessage: 'Opening', authorNote: 'Note' },
@@ -85,6 +87,9 @@ describe('Risu-style prompt configuration', () => {
 		expect(messages.at(-1)?.content).toContain('"gold":2');
 		expect(messages.at(-1)?.cache).toBeUndefined();
 	});
+});
+
+describe('Risu-style prompt configuration', () => {
 	it('supports author-note fallback, disabled blocks, prompt toggles and original chat roles', () => {
 		const ai = parsePromptConfig({
 			jailbreakEnabled: false,
@@ -112,6 +117,9 @@ describe('Risu-style prompt configuration', () => {
 			{ role: 'system', content: 'After' }
 		]);
 	});
+});
+
+describe('Risu-style prompt configuration', () => {
 	it('rebuilds a JSON preset without importing private or unrelated fields', () => {
 		const ai = importPromptPreset({
 			promptTemplate: [{ type: 'plain', type2: 'main', role: 'assistant', text: 'Hello' }],
@@ -124,6 +132,9 @@ describe('Risu-style prompt configuration', () => {
 		expect(ai.promptTemplate[0].role).toBe('bot');
 		expect(ai).not.toHaveProperty('openAIKey');
 	});
+});
+
+describe('Risu-style prompt configuration', () => {
 	it.each([1, 2])(
 		'normalizes legacy Helia version %s effective roles into one saved field',
 		(version) => {
@@ -153,11 +164,16 @@ describe('Risu-style prompt configuration', () => {
 					.slice(0, -1)
 					.map((message) => !!message.cache)
 			).toEqual([false, true, true]);
-			for (const block of config.promptTemplate) expect(block).not.toHaveProperty('role2');
+			for (const block of config.promptTemplate) {
+				expect(block).not.toHaveProperty('role2');
+			}
 			expect(parsePromptConfig(JSON.parse(JSON.stringify(config)))).toEqual(config);
 			expect(importPromptPreset(legacy)).toEqual(config);
 		}
 	);
+});
+
+describe('Risu-style prompt configuration', () => {
 	it('imports Risu roles by block kind, ignoring stale fields and normalizing assistant aliases', () => {
 		const config = importPromptPreset({
 			promptTemplate: [
@@ -177,13 +193,18 @@ describe('Risu-style prompt configuration', () => {
 			undefined,
 			'all'
 		]);
-		for (const block of config.promptTemplate) expect(block).not.toHaveProperty('role2');
+		for (const block of config.promptTemplate) {
+			expect(block).not.toHaveProperty('role2');
+		}
 		expect(
 			assemblePrompt(config, context)
 				.slice(0, -1)
 				.map((message) => message.role)
 		).toEqual(['user', 'user', 'assistant', 'system', 'user', 'assistant']);
 	});
+});
+
+describe('Risu-style prompt configuration', () => {
 	it('migrates legacy shared bodies into every matching block while retaining order, formatting and enabled flags', () => {
 		const ai = importPromptPreset({
 			version: 1,
@@ -214,10 +235,14 @@ describe('Risu-style prompt configuration', () => {
 			{ role: 'system', content: 'Player: Legacy persona' },
 			{ role: 'system', content: 'Last: Legacy last' }
 		]);
-		for (const key of ['mainPrompt', 'globalNote', 'persona', 'postEverything'])
+		for (const key of ['mainPrompt', 'globalNote', 'persona', 'postEverything']) {
 			expect(ai).not.toHaveProperty(key);
+		}
 		expect(parsePromptConfig(ai)).toEqual(ai);
 	});
+});
+
+describe('Risu-style prompt configuration', () => {
 	it('preserves previously unreferenced legacy text in disabled blocks without injecting it into the request', () => {
 		const ai = parsePromptConfig({
 			version: 1,
@@ -238,6 +263,9 @@ describe('Risu-style prompt configuration', () => {
 			})
 		).toThrow('보존');
 	});
+});
+
+describe('Risu-style prompt configuration', () => {
 	it('keeps per-block text independent and ignores removed shared fields in version 2', () => {
 		const ai = parsePromptConfig({
 			version: 2,
@@ -264,6 +292,9 @@ describe('Risu-style prompt configuration', () => {
 		]);
 		expect(ai).not.toHaveProperty('mainPrompt');
 	});
+});
+
+describe('Risu-style prompt configuration', () => {
 	it('rejects malformed prompt types, roles and oversized context instead of silently coercing them', () => {
 		expect(() => parsePromptConfig({ promptTemplate: [{ type: 'unsupported' }] })).toThrow();
 		expect(() =>

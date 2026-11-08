@@ -27,7 +27,9 @@
 	aria-describedby={`${id}-message`}
 	oncancel={(event) => {
 		event.preventDefault();
-		if (!disabled) oncancel();
+		if (!disabled) {
+			oncancel();
+		}
 	}}
 >
 	<h2 id={`${id}-title`}>{title}</h2>

@@ -1,8 +1,8 @@
 <script lang="ts">
-	import StateValueEditor from './StateValueEditor.svelte';
 	import { allowsNull, arrayItem, initialValueFor, objectShape } from '../../state/authoring.js';
 	import { schemaType, validateValue, type ValueSchema } from '../../state/schema.js';
 	import { isStateObject, sameValue, type StateValue } from '../../state/value.js';
+	import StateValueEditor from './StateValueEditor.svelte';
 	let {
 		schema,
 		value,
@@ -26,7 +26,9 @@
 	let object = $derived(objectShape(schema));
 	let itemSchema = $derived(arrayItem(schema));
 	let invalid = $derived.by(() => {
-		if (value === undefined) return false;
+		if (value === undefined) {
+			return false;
+		}
 		try {
 			validateValue(schema, value, 'initial');
 			return false;
@@ -35,10 +37,15 @@
 		}
 	});
 	function child(name: string, next: StateValue | undefined) {
-		if (value === undefined || !isStateObject(value)) return;
+		if (value === undefined || !isStateObject(value)) {
+			return;
+		}
 		const updated = { ...value };
-		if (next === undefined) delete updated[name];
-		else updated[name] = next;
+		if (next === undefined) {
+			delete updated[name];
+		} else {
+			updated[name] = next;
+		}
 		onchange(updated);
 	}
 </script>
@@ -55,11 +62,13 @@
 				onchange={(event) => {
 					const included = event.currentTarget.checked;
 					event.currentTarget.checked = value !== undefined;
-					if (included) onchange(initialValueFor(schema));
-					else
+					if (included) {
+						onchange(initialValueFor(schema));
+					} else {
 						onconfirm(`${label} 초기값을 제거할까요? 필드 정의는 유지됩니다.`, () =>
 							onchange(undefined)
 						);
+					}
 				}}
 			/>{compact ? '포함' : '초기값 포함'}</label
 		>
@@ -93,8 +102,11 @@
 					onchange={(event) => {
 						const useNull = event.currentTarget.checked;
 						event.currentTarget.checked = value === null;
-						if (useNull) onconfirm(`${label} 초기값을 null로 바꿀까요?`, () => onchange(null));
-						else onchange(initialValueFor(schema));
+						if (useNull) {
+							onconfirm(`${label} 초기값을 null로 바꿀까요?`, () => onchange(null));
+						} else {
+							onchange(initialValueFor(schema));
+						}
 					}}
 				/>null</label
 			>
@@ -134,8 +146,9 @@
 							label={`${label}[${index}]`}
 							{disabled}
 							onchange={(next) => {
-								if (Array.isArray(value) && next !== undefined)
+								if (Array.isArray(value) && next !== undefined) {
 									onchange(value.map((old, i) => (i === index ? next : old)));
+								}
 							}}
 							{onconfirm}
 						/>
@@ -144,7 +157,9 @@
 							aria-label="{label}[{index}] 항목 삭제"
 							onclick={() =>
 								onconfirm(`${label}[${index}] 항목을 삭제할까요?`, () => {
-									if (Array.isArray(value)) onchange(value.filter((_, i) => i !== index));
+									if (Array.isArray(value)) {
+										onchange(value.filter((_, i) => i !== index));
+									}
 								})}>항목 삭제</button
 						>
 					</div>
@@ -153,7 +168,9 @@
 					type="button"
 					aria-label="{label} 항목 추가"
 					onclick={() => {
-						if (Array.isArray(value)) onchange([...value, initialValueFor(itemSchema!)]);
+						if (Array.isArray(value)) {
+							onchange([...value, initialValueFor(itemSchema!)]);
+						}
 					}}>항목 추가</button
 				>
 			{/if}
@@ -174,13 +191,15 @@
 					{value}
 					oninput={(event) => {
 						const next = event.currentTarget.valueAsNumber;
-						if (Number.isFinite(next) && (type !== 'integer' || Number.isInteger(next)))
+						if (Number.isFinite(next) && (type !== 'integer' || Number.isInteger(next))) {
 							onchange(next);
+						}
 					}}
 					onblur={(event) => {
 						const next = event.currentTarget.valueAsNumber;
-						if (!Number.isFinite(next) || (type === 'integer' && !Number.isInteger(next)))
+						if (!Number.isFinite(next) || (type === 'integer' && !Number.isInteger(next))) {
 							event.currentTarget.value = String(value);
+						}
 					}}
 				/></label
 			>

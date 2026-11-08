@@ -1,67 +1,22 @@
 ﻿import '../../../../app.css';
 import { expect, it } from 'vitest';
-import { page } from 'vitest/browser';
 import { render } from 'vitest-browser-svelte';
+import { page } from 'vitest/browser';
+
+import { memoryStorage } from '#lib/testing/memory-storage.js';
+
+import type { EditorDiagnostic } from '../../editor-playground.js';
+import type { GameState } from '../../state/value.js';
+
 import { compileCodeProject, createCodeProject, type CodeProject } from '../../code-project.js';
 import { createGameRepository } from '../../repository-core.js';
-import { memoryStorage } from '#lib/testing/memory-storage.js';
-import type { GameState } from '../../state/value.js';
-import type { EditorDiagnostic } from '../../editor-playground.js';
 import EditorPlayground from '../editor/EditorPlayground.svelte';
 
 it.each(['legacy', 'module', 'converted'])(
 	'runs a %s code project as an isolated Preact preview whose button invokes imported QuickJS logic',
 	async (startup) => {
 		await page.viewport(1200, 800);
-		let project: CodeProject = {
-			version: 1,
-			entry: 'main.ts',
-			files: {
-				'main.ts': {
-					language: 'typescript',
-					source:
-						"export { default as logic } from './logic';\nexport { default as ui } from './ui';\n"
-				},
-				'shared/math.ts': {
-					language: 'typescript',
-					source: 'export function increase(value: number): number { return value + 2; }\n'
-				},
-				'logic.ts': {
-					language: 'typescript',
-					source: `
-import { increase } from './shared/math';
-export default function register() {
- helia.defineAction({name:'increment',arguments:{type:'object',properties:{},additionalProperties:false},run({state}){state.value=increase(state.value);return state;}});
- helia.defineAction({name:'inspect',arguments:{type:'object',properties:{label:{type:'string'}},required:['label'],additionalProperties:false},run({state,args}){state.checks.push(args.label);return state;}});
-}
-`
-				},
-				'ui.tsx': {
-					language: 'tsx',
-					source: `
-import { h } from 'preact';
-import { useEffect } from 'preact/hooks';
-import { registerPanel, action, useGameState } from '@helia/ui';
-function Panel() {
- const state=useGameState();
- useEffect(()=>{
-  const timer=setTimeout(()=>document.querySelector('[data-increment]')?.click(),50);
-  return ()=>clearTimeout(timer);
- },[]);
- useEffect(()=>{
-  if(state.value!==3)return;
-  let hostBlocked=false,storageBlocked=false;
-  try{parent.document.body;}catch{hostBlocked=true;}
-  try{localStorage.getItem('private');}catch{storageBlocked=true;}
-  void action('inspect',{label:[document.querySelector('[data-value]')?.textContent,hostBlocked,storageBlocked,typeof globalThis.__TAURI_INTERNALS__,Object.isFrozen(helia.getState())].join(':')});
- },[state.value]);
- return <div><p data-value>Value {state.value}</p><button data-increment onClick={()=>void action('increment')}>Increase</button></div>;
-}
-export default function initialize() { registerPanel({id:'counter',title:'Project counter',component:Panel}); }
-`
-				}
-			}
-		};
+		let project = fixtureProject();
 		if (startup === 'module') {
 			project.files['main.ts'].source =
 				"import register from './logic';\nimport './ui';\nimport './ui';\nregister();";
@@ -127,3 +82,55 @@ export default function initialize() { registerPanel({id:'counter',title:'Projec
 	},
 	35000
 );
+
+function fixtureProject(): CodeProject {
+	return {
+		version: 1,
+		entry: 'main.ts',
+		files: {
+			'main.ts': {
+				language: 'typescript',
+				source:
+					"export { default as logic } from './logic';\nexport { default as ui } from './ui';\n"
+			},
+			'shared/math.ts': {
+				language: 'typescript',
+				source: 'export function increase(value: number): number { return value + 2; }\n'
+			},
+			'logic.ts': {
+				language: 'typescript',
+				source: `
+import { increase } from './shared/math';
+export default function register() {
+ helia.defineAction({name:'increment',arguments:{type:'object',properties:{},additionalProperties:false},run({state}){state.value=increase(state.value);return state;}});
+ helia.defineAction({name:'inspect',arguments:{type:'object',properties:{label:{type:'string'}},required:['label'],additionalProperties:false},run({state,args}){state.checks.push(args.label);return state;}});
+}
+`
+			},
+			'ui.tsx': {
+				language: 'tsx',
+				source: `
+import { h } from 'preact';
+import { useEffect } from 'preact/hooks';
+import { registerPanel, action, useGameState } from '@helia/ui';
+function Panel() {
+ const state=useGameState();
+ useEffect(()=>{
+  const timer=setTimeout(()=>document.querySelector('[data-increment]')?.click(),50);
+  return ()=>clearTimeout(timer);
+ },[]);
+ useEffect(()=>{
+  if(state.value!==3)return;
+  let hostBlocked=false,storageBlocked=false;
+  try{parent.document.body;}catch{hostBlocked=true;}
+  try{localStorage.getItem('private');}catch{storageBlocked=true;}
+  void action('inspect',{label:[document.querySelector('[data-value]')?.textContent,hostBlocked,storageBlocked,typeof globalThis.__TAURI_INTERNALS__,Object.isFrozen(helia.getState())].join(':')});
+ },[state.value]);
+ return <div><p data-value>Value {state.value}</p><button data-increment onClick={()=>void action('increment')}>Increase</button></div>;
+}
+export default function initialize() { registerPanel({id:'counter',title:'Project counter',component:Panel}); }
+`
+			}
+		}
+	};
+}

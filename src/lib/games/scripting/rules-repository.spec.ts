@@ -1,9 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { openStorage } from '#lib/server/sqlite.js';
+
 import { createGameRepository } from '#lib/games/repository-core.js';
+import { openStorage } from '#lib/server/sqlite.js';
 import { parseReply, type StorageTransport } from '#lib/storage/protocol.js';
-import { evaluateAction } from './engine.js';
+
 import type { SessionUIEvent } from './events.js';
+
+import { evaluateAction } from './engine.js';
 
 let storage: ReturnType<typeof openStorage>;
 const transport: StorageTransport = async (input) => parseReply(storage.request(input));
@@ -82,6 +85,9 @@ describe('transactional creator rules', () => {
 		await setup.run(2);
 		expect(observed).toHaveLength(2);
 	});
+});
+
+describe('transactional creator rules', () => {
 	it.each(['hook', 'filter', 'sql'])(
 		'rolls back all included work and suppresses UI events after %s failure',
 		async (phase) => {
@@ -94,15 +100,19 @@ describe('transactional creator rules', () => {
 				listener = vi.fn();
 			setup.repository.subscribeSessionEvents(setup.gameId, setup.sessionId, listener);
 			const before = await setup.read();
-			if (phase === 'sql')
+			if (phase === 'sql') {
 				storage.connection.exec(
 					"CREATE TRIGGER fail_rules BEFORE INSERT ON transactions BEGIN SELECT RAISE(ABORT,'forced'); END"
 				);
+			}
 			await expect(setup.run()).rejects.toThrow();
 			expect(await setup.read()).toEqual(before);
 			expect(listener).not.toHaveBeenCalled();
 		}
 	);
+});
+
+describe('transactional creator rules', () => {
 	it('does not bypass Filters through direct state proposals or message commits', async () => {
 		const setup = await fixture(
 			`helia.defineFilter({name:'guard',run({action,after}){return {allow:action.name!=='sendMessage'&&after.value>=0,reason:'Denied'};}});`
@@ -121,6 +131,9 @@ describe('transactional creator rules', () => {
 		).rejects.toMatchObject({ code: 'filter-rejected' });
 		expect(await setup.read()).toEqual(before);
 	});
+});
+
+describe('transactional creator rules', () => {
 	it('runs independent work after the root commit in its own atomic scope', async () => {
 		const setup = await fixture(
 			`helia.defineHook({name:'independent',mode:'independent',actions:['start'],run(){helia.emit('independent');return [{name:'bonus',args:{}}];}});`
@@ -146,6 +159,9 @@ describe('transactional creator rules', () => {
 			{ name: 'bonus', revision: 2 }
 		]);
 	});
+});
+
+describe('transactional creator rules', () => {
 	it('preserves the root and continues sibling jobs when one independent Hook fails', async () => {
 		const setup = await fixture(`
 helia.defineHook({name:'bad',mode:'independent',actions:['start'],run(){helia.emit('discard');throw Error('bad');}});
@@ -164,6 +180,9 @@ helia.defineHook({name:'good',mode:'independent',actions:['start'],run(){return 
 		]);
 		expect(seen).toEqual(['root', 'bonus']);
 	});
+});
+
+describe('transactional creator rules', () => {
 	it('rolls back an independent SQL failure while keeping its trigger committed', async () => {
 		const setup = await fixture(
 			`helia.defineHook({name:'independent',mode:'independent',actions:['start'],run(){helia.emit('discard');return [{name:'bonus',args:{}}];}});`
@@ -181,6 +200,9 @@ helia.defineHook({name:'good',mode:'independent',actions:['start'],run(){return 
 		expect(saved.execution.independent).toMatchObject([{ status: 'failed', code: 'storage' }]);
 		expect(seen).toEqual(['root']);
 	});
+});
+
+describe('transactional creator rules', () => {
 	it('never executes independent Hooks if the root SQL commit fails', async () => {
 		const setup = await fixture(
 			`helia.defineHook({name:'independent',mode:'independent',actions:['start'],run(){throw Error('must not execute');}});`
@@ -193,6 +215,9 @@ helia.defineHook({name:'good',mode:'independent',actions:['start'],run(){return 
 		expect(setup.runner).toHaveBeenCalledOnce();
 		expect(await setup.read()).toEqual(before);
 	});
+});
+
+describe('transactional creator rules', () => {
 	it('stops independent work on cancellation after the root commit', async () => {
 		const setup = await fixture(
 			`helia.defineHook({name:'independent',mode:'independent',actions:['start'],run(){return [{name:'bonus',args:{}}];}});`
@@ -206,6 +231,9 @@ helia.defineHook({name:'good',mode:'independent',actions:['start'],run(){return 
 		expect(saved.transactions).toHaveLength(1);
 		expect(saved.execution.independent).toMatchObject([{ status: 'failed', code: 'canceled' }]);
 	});
+});
+
+describe('transactional creator rules', () => {
 	it('isolates listener failures and session subscriptions from committed state', async () => {
 		const setup = await fixture(''),
 			other = await setup.repository.createSession(setup.gameId),
@@ -222,6 +250,9 @@ helia.defineHook({name:'good',mode:'independent',actions:['start'],run(){return 
 		expect(good).toHaveBeenCalledOnce();
 		expect(foreign).not.toHaveBeenCalled();
 	});
+});
+
+describe('transactional creator rules', () => {
 	it('bounds independent reentry without rolling back earlier commits', async () => {
 		const setup = await fixture(
 			`helia.defineHook({name:'loop',mode:'independent',run(){return [{name:'bonus',args:{}}];}});`
@@ -234,6 +265,9 @@ helia.defineHook({name:'good',mode:'independent',actions:['start'],run(){return 
 			{ status: 'failed', code: 'reentry' }
 		]);
 	});
+});
+
+describe('transactional creator rules', () => {
 	it('consumes accidental async listener failures after committing', async () => {
 		const setup = await fixture('');
 		setup.repository.subscribeSessionEvents(setup.gameId, setup.sessionId, async () => {
@@ -243,6 +277,9 @@ helia.defineHook({name:'good',mode:'independent',actions:['start'],run(){return 
 		expect(saved.execution.deliveryFailures).toBe(1);
 		expect(saved.progress.revision).toBe(1);
 	});
+});
+
+describe('transactional creator rules', () => {
 	it('caps independent follow-up commits for one invocation', async () => {
 		const hooks = Array.from(
 			{ length: 17 },
@@ -262,6 +299,9 @@ helia.defineHook({name:'good',mode:'independent',actions:['start'],run(){return 
 			code: 'chain-limit'
 		});
 	});
+});
+
+describe('transactional creator rules', () => {
 	it('discards pending independent work if the player changes branch', async () => {
 		const setup = await fixture(
 			`helia.defineHook({name:'independent',mode:'independent',actions:['start'],run(){return [{name:'bonus',args:{}}];}});`

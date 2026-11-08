@@ -1,14 +1,16 @@
 <script lang="ts">
 	import { onDestroy } from 'svelte';
+
 	import ConfirmDialog from '#lib/components/ConfirmDialog.svelte';
-	import SourceEditor from './SourceEditor.svelte';
-	import { MonacoProject } from './monaco-project.js';
+
 	import {
 		readAuthoringBundle,
 		writeAuthoringBundle,
 		type CodeDiagnostic,
 		type SourceModule
 	} from '../../code-authoring.js';
+	import { MonacoProject } from './monaco-project.js';
+	import SourceEditor from './SourceEditor.svelte';
 	let {
 		source,
 		kind,
@@ -44,9 +46,10 @@
 	);
 	let active = $derived(modules[activeId]);
 	function sourcePath(id: string, language: string) {
-		if (/\.(?:js|ts|jsx|tsx)$/.test(id)) return id;
-		const extension =
-			language === 'javascript' ? 'js' : language === 'typescript' ? 'ts' : language;
+		if (/\.(?:js|ts|jsx|tsx)$/.test(id)) {
+			return id;
+		}
+		const extension = { javascript: 'js', typescript: 'ts' }[language] ?? language;
 		return `${id}.${extension}`;
 	}
 	let projectFiles = $derived(
@@ -73,7 +76,9 @@
 		kind === 'scripts' ? ['javascript', 'typescript'] : ['jsx', 'tsx', 'javascript', 'typescript']
 	);
 	function emit(next: Record<string, SourceModule>, entry?: string) {
-		if (!bundle || disabled) return;
+		if (!bundle || disabled) {
+			return;
+		}
 		const text = writeAuthoringBundle(bundle, kind, next, entry);
 		try {
 			readAuthoringBundle(text, kind);
@@ -84,10 +89,14 @@
 		}
 	}
 	function edit(value: Partial<SourceModule>) {
-		if (active) emit({ ...modules, [activeId]: { ...active, ...value } });
+		if (active) {
+			emit({ ...modules, [activeId]: { ...active, ...value } });
+		}
 	}
 	function createUI() {
-		if (disabled) return;
+		if (disabled) {
+			return;
+		}
 		onchange(
 			JSON.stringify(
 				{
@@ -114,9 +123,12 @@
 				(!/^[\w][\w./-]{0,127}$/.test(name) ||
 					['preact', 'preact/hooks'].includes(name) ||
 					name.split('/').some((part) => !part || part === '.' || part === '..')))
-		)
+		) {
 			throw Error('사용할 수 없는 이름이에요.');
-		if (Object.hasOwn(modules, name)) throw Error('같은 이름이 이미 있어요.');
+		}
+		if (Object.hasOwn(modules, name)) {
+			throw Error('같은 이름이 이미 있어요.');
+		}
 	}
 	function addModule() {
 		const name = moduleName.trim();
@@ -137,7 +149,9 @@
 	}
 	function renameModule() {
 		const name = moduleName.trim();
-		if (name === activeId || !active) return;
+		if (name === activeId || !active) {
+			return;
+		}
 		try {
 			validateName(name);
 			const next = Object.fromEntries(
@@ -151,10 +165,15 @@
 		}
 	}
 	function removeModule() {
-		if (!deleteTarget || disabled) return;
+		if (!deleteTarget || disabled) {
+			return;
+		}
 		const next = Object.fromEntries(Object.entries(modules).filter(([id]) => id !== deleteTarget));
-		if (kind === 'ui' && Object.keys(next).length === 0) onchange('null');
-		else emit(next, bundle?.value.entry === deleteTarget ? Object.keys(next)[0] : undefined);
+		if (kind === 'ui' && Object.keys(next).length === 0) {
+			onchange('null');
+		} else {
+			emit(next, bundle?.value.entry === deleteTarget ? Object.keys(next)[0] : undefined);
+		}
 		deleteTarget = null;
 	}
 </script>
@@ -181,11 +200,7 @@
 			{#if active}<label
 					>언어<select
 						aria-label="코드 언어"
-						value={active.language === 'js'
-							? 'javascript'
-							: active.language === 'ts'
-								? 'typescript'
-								: active.language}
+						value={{ js: 'javascript', ts: 'typescript' }[active.language] ?? active.language}
 						{disabled}
 						onchange={(event) => edit({ language: event.currentTarget.value })}
 						>{#each languages as language (language)}<option value={language}>{language}</option

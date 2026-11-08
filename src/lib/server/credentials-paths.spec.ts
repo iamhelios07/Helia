@@ -1,11 +1,13 @@
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { join, resolve, sep } from 'node:path';
 import { expect, it, vi } from 'vitest';
+
 import { openCredentialStore } from './credentials.js';
 
 function removeTestDirectory(root: string) {
-	if (!resolve(root).startsWith(resolve(process.cwd()) + sep + '.credential-path-test-'))
+	if (!resolve(root).startsWith(resolve(process.cwd()) + sep + '.credential-path-test-')) {
 		throw new Error('Unexpected test cleanup path');
+	}
 	rmSync(root, { recursive: true, force: true });
 }
 

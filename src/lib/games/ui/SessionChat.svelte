@@ -1,28 +1,13 @@
 <script lang="ts">
-	import { onMount, tick } from 'svelte';
-	import Icon from '#lib/components/Icon.svelte';
-	import { invokeSessionAI } from '#lib/games/ai/browser.js';
-	import {
-		isSessionBusy,
-		subscribeSessionActivity,
-		subscribeSessionAIEvents
-	} from '#lib/games/ai/activity.js';
-	import type { AgentEvent } from '#lib/games/ai/protocol.js';
-	import { loadAISettings } from '#lib/app/settings/repository.js';
-	import { emptyAISettings, type AISettings } from '#lib/app/settings/model.js';
-	import SessionHistoryPanel from './SessionHistoryPanel.svelte';
-	import type { GameUI } from './runtime/model.js';
-	import { safeChatStyle } from './chat-style.js';
-	import {
-		getSessionConversation,
-		getSessionTimeline,
-		selectSessionBranch,
-		deleteSessionEvent,
-		subscribeSessionChanges
-	} from '../repository.js';
-	import type { SessionTimeline } from '#lib/games/state/history.js';
-	import type { Message, Session } from '../model.js';
+	import { onMount } from 'svelte';
 
+	import Icon from '#lib/components/Icon.svelte';
+
+	import type { Session } from '../model.js';
+	import type { GameUI } from './runtime/model.js';
+
+	import { SessionChatController } from './sessionchat-controller.svelte.js';
+	import SessionHistoryPanel from './SessionHistoryPanel.svelte';
 	let {
 		gameId,
 		sessionId,
@@ -42,387 +27,49 @@
 		blocked?: boolean;
 		chatStyle?: GameUI['chatStyle'];
 	} = $props();
-
-	let messages = $state.raw<Message[]>([]);
-	let loading = $state(true);
-	let saving = $state(false);
-	let loadError = $state('');
-	let saveError = $state('');
-	let modelSettings = $state.raw<AISettings>(emptyAISettings());
-	let selectedModelId = $state('');
-	let modelError = $state('');
-	let externalBusy = $state(false);
-	let streamedText = $state('');
-	let thinking = $state('');
-	let progressText = $state('');
-	let toolProgress = $state<
-		{ id: number; name: string; status: 'running' | 'completed' | 'failed' }[]
-	>([]);
-	let attemptStatus = $state<
-		'idle' | 'generating' | 'committing' | 'committed' | 'failed' | 'cancelled' | 'incomplete'
-	>('idle');
-	let externalAttempt = false;
-	let generation: AbortController | undefined;
-	let locked = $derived(saving || externalBusy);
-	let attemptLabel = $derived(
-		attemptStatus === 'generating'
-			? '응답 생성 중…'
-			: attemptStatus === 'committing'
-				? '응답 저장 중…'
-				: attemptStatus === 'committed'
-					? '응답 저장 완료'
-					: attemptStatus === 'cancelled'
-						? '생성 취소됨 · 저장되지 않은 응답'
-						: attemptStatus === 'incomplete'
-							? '생성 중단 · 저장되지 않은 응답'
-							: '생성 실패 · 저장되지 않은 응답'
-	);
-	let showTimeline = $state(false);
-	let timeline = $state.raw<SessionTimeline | null>(null);
-	let timelineBusy = $state(false);
-	let timelineError = $state('');
 	const uid = $props.id();
-	let history: HTMLDivElement | undefined;
-	let composer: HTMLTextAreaElement | undefined;
-	let disposed = false;
-	let requestId = 0;
-	let refreshPending = false;
-	let refreshRunning = false;
-	let refreshTimer: ReturnType<typeof setTimeout> | undefined;
-	let theme = $derived(safeChatStyle(chatStyle));
-
-	$effect(() => {
-		if (!blocked && !locked) queueMicrotask(scheduleRefresh);
-	});
-
-	function scheduleRefresh() {
-		if (disposed || !refreshPending || refreshTimer !== undefined) return;
-		refreshTimer = setTimeout(() => {
-			refreshTimer = undefined;
-			void refreshConversation();
-		}, 0);
-	}
-
-	async function refreshConversation() {
-		if (
-			disposed ||
-			!refreshPending ||
-			refreshRunning ||
-			loading ||
-			locked ||
-			timelineBusy ||
-			blocked
-		)
-			return;
-		refreshPending = false;
-		refreshRunning = true;
-		const game = gameId;
-		const session = sessionId;
-		const request = ++requestId;
-		try {
-			const next = await getSessionTimeline(game, session);
-			if (isCurrent(game, session) && request === requestId) {
-				const previousTail = messages.at(-1);
-				const nextTail = next.messages.at(-1);
-				applyTimeline(
-					next,
-					previousTail?.id !== nextTail?.id || previousTail?.content !== nextTail?.content
-				);
-				loadError = '';
-				timelineError = '';
-			}
-		} catch {
-			if (isCurrent(game, session) && request === requestId)
-				timelineError = '이력을 불러오지 못했어요. 다시 시도해주세요.';
-		} finally {
-			refreshRunning = false;
-			scheduleRefresh();
+	const toolLabels = { running: '실행 중', completed: '완료', failed: '실패' };
+	const chat = new SessionChatController(() => ({
+		gameId,
+		sessionId,
+		gameTitle,
+		draft,
+		onsessionupdate,
+		onsavingchange,
+		blocked,
+		chatStyle,
+		uid,
+		setDraft: (value) => {
+			draft = value;
 		}
-	}
-
-	function isCurrent(game: string, session: string) {
-		return !disposed && gameId === game && sessionId === session;
-	}
-
-	function applyTimeline(next: SessionTimeline, scroll = true) {
-		timeline = next;
-		messages = next.messages;
-		onsessionupdate(next.session);
-		if (scroll) void scrollToEnd();
-	}
-
-	async function reloadTimeline() {
-		if (timelineBusy || locked || loading) return;
-		const game = gameId;
-		const session = sessionId;
-		const request = ++requestId;
-		timelineBusy = true;
-		timelineError = '';
-		try {
-			const next = await getSessionTimeline(game, session);
-			if (isCurrent(game, session) && request === requestId) applyTimeline(next);
-		} catch {
-			if (isCurrent(game, session)) timelineError = '이력을 불러오지 못했어요. 다시 시도해주세요.';
-		} finally {
-			if (isCurrent(game, session) && request === requestId) timelineBusy = false;
-			scheduleRefresh();
-		}
-	}
-
-	async function changeTimeline(
-		id: string | null,
-		remove = false,
-		expectedRevision?: number
-	): Promise<boolean> {
-		if (!timeline || timelineBusy || locked || loading || blocked) return false;
-		if (!remove && timeline.history.progress.headId === id) return true;
-		const game = gameId;
-		const session = sessionId;
-		const revision = expectedRevision ?? timeline.history.progress.revision;
-		requestId += 1;
-		timelineBusy = true;
-		timelineError = '';
-		onsavingchange(true);
-		try {
-			let next: SessionTimeline;
-			if (remove && id !== null) {
-				next = await deleteSessionEvent(game, session, id, revision);
-			} else {
-				await selectSessionBranch(game, session, id, revision);
-				next = await getSessionTimeline(game, session);
-			}
-			if (!isCurrent(game, session)) return false;
-			applyTimeline(next);
-			return true;
-		} catch {
-			if (isCurrent(game, session))
-				timelineError = '이력을 변경하지 못했어요. 새로고침 후 다시 시도해주세요.';
-			return false;
-		} finally {
-			if (isCurrent(game, session)) {
-				timelineBusy = false;
-				onsavingchange(false);
-				scheduleRefresh();
-			}
-		}
-	}
-
-	function toggleTimeline() {
-		showTimeline = !showTimeline;
-		if (showTimeline) void reloadTimeline();
-	}
-
-	onMount(() => {
-		loadModels();
-		externalBusy = isSessionBusy(gameId, sessionId);
-		const unsubscribeActivity = subscribeSessionActivity(gameId, sessionId, () => {
-			externalBusy = isSessionBusy(gameId, sessionId);
-			if (!externalBusy && externalAttempt) {
-				if (attemptStatus !== 'committed') {
-					attemptStatus = 'incomplete';
-					finishInterruptedTools();
-				}
-				externalAttempt = false;
-			}
-		});
-		const unsubscribeAIEvents = subscribeSessionAIEvents(gameId, sessionId, (event) => {
-			if (saving) return;
-			if (event.type === 'status' && event.status === 'generating') {
-				externalAttempt = true;
-				resetAttempt();
-			}
-			receiveAgentEvent(event);
-		});
-		const unsubscribe = subscribeSessionChanges(gameId, sessionId, () => {
-			refreshPending = true;
-			scheduleRefresh();
-		});
-		void loadConversation();
-		return () => {
-			disposed = true;
-			generation?.abort();
-			unsubscribeActivity();
-			unsubscribeAIEvents();
-			unsubscribe();
-			if (refreshTimer !== undefined) clearTimeout(refreshTimer);
-		};
-	});
-
-	function loadModels() {
-		if (saving) return;
-		try {
-			modelSettings = loadAISettings();
-			if (!modelSettings.models.some((model) => model.id === selectedModelId))
-				selectedModelId = modelSettings.defaultModelId ?? modelSettings.models[0]?.id ?? '';
-			modelError = '';
-		} catch (error) {
-			modelError = error instanceof Error ? error.message : '모델 설정을 불러오지 못했어요.';
-		}
-	}
-
-	function receiveAgentEvent(event: AgentEvent) {
-		if (event.type === 'error') {
-			saveError = event.message;
-			attemptStatus = 'incomplete';
-			finishInterruptedTools();
-		} else if (event.type === 'reset') streamedText = '';
-		else if (event.type === 'text') streamedText += event.text;
-		else if (event.type === 'thinking') thinking += event.text;
-		else if (event.type === 'progress')
-			progressText += `${progressText ? '\n\n' : ''}${event.text}`;
-		else if (event.type === 'tool') {
-			const running = toolProgress.findLast(
-				(tool) => tool.name === event.name && tool.status === 'running'
-			);
-			if (event.status === 'running' || !running)
-				toolProgress.push({ id: toolProgress.length, name: event.name, status: event.status });
-			else running.status = event.status;
-		} else attemptStatus = event.status;
-		void scrollToEnd();
-	}
-
-	function resetAttempt() {
-		saveError = '';
-		streamedText = '';
-		thinking = '';
-		progressText = '';
-		toolProgress = [];
-		attemptStatus = 'generating';
-	}
-
-	function finishInterruptedTools() {
-		for (const tool of toolProgress) {
-			if (tool.status === 'running') tool.status = 'failed';
-		}
-	}
-
-	function stopGeneration() {
-		generation?.abort();
-	}
-
-	function attachHistory(element: HTMLDivElement) {
-		history = element;
-		return () => {
-			history = undefined;
-		};
-	}
-
-	function attachComposer(element: HTMLTextAreaElement) {
-		composer = element;
-		return () => {
-			composer = undefined;
-		};
-	}
-
-	async function scrollToEnd() {
-		await tick();
-		if (!disposed && history) history.scrollTop = history.scrollHeight;
-	}
-
-	async function loadConversation() {
-		const game = gameId;
-		const session = sessionId;
-		loading = true;
-		loadError = '';
-		try {
-			const conversation = await getSessionConversation(game, session);
-			if (!isCurrent(game, session)) return;
-			messages = conversation.messages;
-			onsessionupdate(conversation.session);
-			void scrollToEnd();
-		} catch {
-			if (isCurrent(game, session)) loadError = '채팅 기록을 불러오지 못했어요.';
-		} finally {
-			if (isCurrent(game, session)) loading = false;
-			scheduleRefresh();
-		}
-	}
-
-	async function sendMessage(event?: SubmitEvent) {
-		event?.preventDefault();
-		if (loading || locked || timelineBusy || blocked || loadError || !draft.trim()) return;
-		loadModels();
-		if (modelError || !selectedModelId) return;
-		requestId += 1;
-		const game = gameId;
-		const session = sessionId;
-		saving = true;
-		resetAttempt();
-		const controller = new AbortController();
-		generation = controller;
-		onsavingchange(true);
-		const content = draft;
-		try {
-			const saved = await invokeSessionAI(
-				game,
-				session,
-				{ text: content, modelId: selectedModelId },
-				{
-					signal: controller.signal,
-					onEvent: (event) => {
-						if (isCurrent(game, session)) receiveAgentEvent(event);
-					}
-				}
-			);
-			if (!isCurrent(game, session)) return;
-			applyTimeline(saved);
-			attemptStatus = 'committed';
-			draft = '';
-			void scrollToEnd();
-			composer?.focus();
-		} catch (error) {
-			if (isCurrent(game, session)) {
-				attemptStatus = controller.signal.aborted ? 'cancelled' : 'failed';
-				finishInterruptedTools();
-				saveError = controller.signal.aborted
-					? '생성을 취소했어요. 입력 내용은 유지돼요.'
-					: error instanceof Error
-						? error.message
-						: '응답을 생성하지 못했어요. 다시 시도해주세요.';
-			}
-		} finally {
-			if (generation === controller) generation = undefined;
-			if (isCurrent(game, session)) {
-				saving = false;
-				onsavingchange(false);
-				scheduleRefresh();
-			}
-		}
-		if (isCurrent(game, session) && showTimeline) void reloadTimeline();
-	}
-
-	function handleKeydown(event: KeyboardEvent) {
-		if (event.key !== 'Enter' || event.shiftKey || event.isComposing || event.keyCode === 229)
-			return;
-		event.preventDefault();
-		void sendMessage();
-	}
+	}));
+	onMount(chat.mount);
 </script>
 
-<svelte:window onfocus={loadModels} onstorage={loadModels} />
+<svelte:window onfocus={chat.loadModels} onstorage={chat.loadModels} />
 
 <section
 	class="chat"
 	aria-label="채팅"
-	style:--chat-background={theme?.background}
-	style:--chat-color={theme?.color}
-	style:--chat-font={theme?.fontFamily}
-	style:--chat-user-background={theme?.userBackground}
-	style:--chat-assistant-background={theme?.assistantBackground}
+	style:--chat-background={chat.theme?.background}
+	style:--chat-color={chat.theme?.color}
+	style:--chat-font={chat.theme?.fontFamily}
+	style:--chat-user-background={chat.theme?.userBackground}
+	style:--chat-assistant-background={chat.theme?.assistantBackground}
 >
 	<div class="history-toolbar">
-		<label class="model-select" for={`${uid}-model`}
+		<label class="model-select" for={`${chat.uid}-model`}
 			>모델
 			<select
-				id={`${uid}-model`}
-				bind:value={selectedModelId}
-				disabled={locked}
-				onfocus={loadModels}
+				id={`${chat.uid}-model`}
+				bind:value={chat.selectedModelId}
+				disabled={chat.locked}
+				onfocus={chat.loadModels}
 			>
-				{#if !modelSettings.models.length}<option value="">등록된 모델 없음</option>{/if}
-				{#each modelSettings.models as model (model.id)}
+				{#if !chat.modelSettings.models.length}<option value="">등록된 모델 없음</option>{/if}
+				{#each chat.modelSettings.models as model (model.id)}
 					<option value={model.id}
-						>{model.name} · {modelSettings.providers.find(
+						>{model.name} · {chat.modelSettings.providers.find(
 							(provider) => provider.id === model.providerId
 						)?.name ?? ''}</option
 					>
@@ -431,33 +78,37 @@
 		</label>
 		<button
 			type="button"
-			disabled={loading || locked || timelineBusy || blocked || !!loadError}
-			aria-controls={`${uid}-timeline`}
-			aria-expanded={showTimeline}
-			onclick={toggleTimeline}>이력과 분기</button
+			disabled={chat.loading ||
+				chat.locked ||
+				chat.timelineBusy ||
+				chat.blocked ||
+				!!chat.loadError}
+			aria-controls={`${chat.uid}-timeline`}
+			aria-expanded={chat.showTimeline}
+			onclick={chat.toggleTimeline}>이력과 분기</button
 		>
 	</div>
-	{#if showTimeline}
-		<div class="timeline-container" id={`${uid}-timeline`}>
+	{#if chat.showTimeline}
+		<div class="timeline-container" id={`${chat.uid}-timeline`}>
 			<SessionHistoryPanel
-				{timeline}
-				busy={timelineBusy || locked || blocked}
-				error={timelineError}
+				timeline={chat.timeline}
+				busy={chat.timelineBusy || chat.locked || chat.blocked}
+				error={chat.timelineError}
 				onselect={async (id) => {
-					await changeTimeline(id);
+					await chat.changeTimeline(id);
 				}}
-				ondelete={(id, revision) => changeTimeline(id, true, revision)}
-				onreload={reloadTimeline}
+				ondelete={(id, revision) => chat.changeTimeline(id, true, revision)}
+				onreload={chat.reloadTimeline}
 			/>
 		</div>
 	{/if}
-	<div class="history" {@attach attachHistory}>
-		{#if loading}
+	<div class="history" {@attach chat.attachHistory}>
+		{#if chat.loading}
 			<p class="status" role="status">채팅 기록을 불러오는 중…</p>
-		{:else if loadError}
+		{:else if chat.loadError}
 			<div class="error">
-				<p role="alert">{loadError}</p>
-				<button type="button" onclick={loadConversation}>다시 불러오기</button>
+				<p role="alert">{chat.loadError}</p>
+				<button type="button" onclick={chat.loadConversation}>다시 불러오기</button>
 			</div>
 		{:else}
 			<div
@@ -467,7 +118,7 @@
 				aria-live="polite"
 				aria-relevant="additions"
 			>
-				{#each messages as message (message.id)}
+				{#each chat.messages as message (message.id)}
 					<article
 						class={['message', { player: message.role === 'user' }]}
 						aria-label={message.role === 'user' ? '플레이어 메시지' : '게임 메시지'}
@@ -476,37 +127,33 @@
 							<Icon name={message.role === 'user' ? 'user' : 'game'} size={20} />
 						</div>
 						<div class="message-body">
-							<h3>{message.role === 'user' ? '플레이어' : gameTitle}</h3>
+							<h3>{message.role === 'user' ? '플레이어' : chat.gameTitle}</h3>
 							<div class="message-content">{message.content}</div>
 						</div>
 					</article>
 				{/each}
 			</div>
-			{#if attemptStatus !== 'idle'}
+			{#if chat.attemptStatus !== 'idle'}
 				<aside class="generation" aria-label="AI 생성 진행">
-					<p class="generation-status" role="status">{attemptLabel}</p>
-					{#if streamedText && attemptStatus !== 'committed'}
-						<div class="message-content" aria-label="저장 전 AI 응답">{streamedText}</div>
+					<p class="generation-status" role="status">{chat.attemptLabel}</p>
+					{#if chat.streamedText && chat.attemptStatus !== 'committed'}
+						<div class="message-content" aria-label="저장 전 AI 응답">{chat.streamedText}</div>
 					{/if}
-					{#if thinking}<details>
+					{#if chat.thinking}<details>
 							<summary>Thinking</summary>
-							<div class="message-content">{thinking}</div>
+							<div class="message-content">{chat.thinking}</div>
 						</details>{/if}
-					{#if progressText}<details>
+					{#if chat.progressText}<details>
 							<summary>중간 응답</summary>
-							<div class="message-content" aria-label="중간 응답 내용">{progressText}</div>
+							<div class="message-content" aria-label="중간 응답 내용">{chat.progressText}</div>
 						</details>{/if}
-					{#if toolProgress.length}
+					{#if chat.toolProgress.length}
 						<details>
-							<summary>도구 진행 · {toolProgress.length}개</summary>
+							<summary>도구 진행 · {chat.toolProgress.length}개</summary>
 							<ul aria-label="도구 진행">
-								{#each toolProgress as tool (tool.id)}
+								{#each chat.toolProgress as tool (tool.id)}
 									<li>
-										{tool.name} · {tool.status === 'running'
-											? '실행 중'
-											: tool.status === 'completed'
-												? '완료'
-												: '실패'}
+										{tool.name} · {toolLabels[tool.status]}
 									</li>
 								{/each}
 							</ul>
@@ -516,41 +163,41 @@
 			{/if}
 		{/if}
 	</div>
-	<form class="composer" onsubmit={sendMessage} aria-label="메시지 작성">
-		{#if modelError}<p class="save-error" role="alert">{modelError}</p>
-		{:else if !selectedModelId}<p class="save-error">
+	<form class="composer" onsubmit={chat.sendMessage} aria-label="메시지 작성">
+		{#if chat.modelError}<p class="save-error" role="alert">{chat.modelError}</p>
+		{:else if !chat.selectedModelId}<p class="save-error">
 				앱 설정에서 API 연결과 모델을 등록해주세요.
 			</p>{/if}
-		{#if saveError}<p class="save-error" role="alert">{saveError}</p>{/if}
+		{#if chat.saveError}<p class="save-error" role="alert">{chat.saveError}</p>{/if}
 		<div class="input-row">
 			<textarea
-				{@attach attachComposer}
-				bind:value={draft}
+				{@attach chat.attachComposer}
+				bind:value={chat.draft}
 				aria-label="메시지"
 				placeholder="메시지 입력"
 				rows="1"
-				readonly={locked || timelineBusy || blocked}
-				onkeydown={handleKeydown}></textarea>
+				readonly={chat.locked || chat.timelineBusy || chat.blocked}
+				onkeydown={chat.handleKeydown}></textarea>
 			<button
 				class="send"
 				type="submit"
 				aria-label="메시지 전송"
 				title="전송"
-				disabled={loading ||
-					locked ||
-					timelineBusy ||
-					blocked ||
-					!!loadError ||
-					!!modelError ||
-					!selectedModelId ||
-					!draft.trim()}
+				disabled={chat.loading ||
+					chat.locked ||
+					chat.timelineBusy ||
+					chat.blocked ||
+					!!chat.loadError ||
+					!!chat.modelError ||
+					!chat.selectedModelId ||
+					!chat.draft.trim()}
 			>
 				<Icon name="send" size={20} />
 			</button>
-			{#if saving}<button
+			{#if chat.saving}<button
 					type="button"
-					onclick={stopGeneration}
-					disabled={attemptStatus === 'committing' || attemptStatus === 'committed'}
+					onclick={chat.stopGeneration}
+					disabled={chat.attemptStatus === 'committing' || chat.attemptStatus === 'committed'}
 					>생성 중지</button
 				>{/if}
 		</div>

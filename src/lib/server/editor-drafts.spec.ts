@@ -1,11 +1,15 @@
 import { afterEach, expect, it } from 'vitest';
-import { openStorage } from './sqlite.js';
-import { editorDraftStorage } from './editor-drafts.js';
-import { createGameRepository } from '#lib/games/repository-core.js';
+
 import { createEditorDraft } from '#lib/games/editor.js';
+import { createGameRepository } from '#lib/games/repository-core.js';
+
+import { editorDraftStorage } from './editor-drafts.js';
+import { openStorage } from './sqlite.js';
 const stores: ReturnType<typeof openStorage>[] = [];
 afterEach(() => {
-	for (const store of stores.splice(0)) store.close();
+	for (const store of stores.splice(0)) {
+		store.close();
+	}
 });
 it('durably stores invalid source separately and rejects stale draft writers and tombstone deletes', async () => {
 	const storage = openStorage(':memory:');

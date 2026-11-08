@@ -1,9 +1,10 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
+
 	import Layout from '../../routes/+layout.svelte';
 	import Home from '../../routes/+page.svelte';
-	import GameWorkspace from '../games/ui/GameWorkspace.svelte';
 	import { useAppSidebarVisibility } from '../app/sidebar.svelte.js';
+	import GameWorkspace from '../games/ui/GameWorkspace.svelte';
 	import AppFixture from './AppFixture.svelte';
 
 	interface Props {

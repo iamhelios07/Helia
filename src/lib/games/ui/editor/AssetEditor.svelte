@@ -1,5 +1,6 @@
 ﻿<script lang="ts">
 	import ConfirmDialog from '#lib/components/ConfirmDialog.svelte';
+
 	import { parseResources } from '../../resources.js';
 	import AssetExplorer from './AssetExplorer.svelte';
 	let {
@@ -29,7 +30,9 @@
 	let id = $derived(selectedId ?? localSelected);
 	let asset = $derived(id ? parsed.resources?.[id] : undefined);
 	function rename(name: string) {
-		if (!parsed.resources || !id || !asset || disabled) return;
+		if (!parsed.resources || !id || !asset || disabled) {
+			return;
+		}
 		try {
 			const next = parseResources({ ...parsed.resources, [id]: { ...asset, name } });
 			onchange(JSON.stringify(next, null, 2));
@@ -39,7 +42,9 @@
 		}
 	}
 	function remove() {
-		if (!parsed.resources || !id || disabled) return;
+		if (!parsed.resources || !id || disabled) {
+			return;
+		}
 		onchange(
 			JSON.stringify(
 				Object.fromEntries(Object.entries(parsed.resources).filter(([key]) => key !== id)),

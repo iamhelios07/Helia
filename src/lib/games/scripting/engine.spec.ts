@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+
 import { evaluateAction } from './engine.js';
 import { CreatorRuntimeError, encodeInput, type ActionRequest } from './protocol.js';
 
@@ -40,6 +41,9 @@ describe('isolated creator Actions', () => {
 			)
 		).toEqual({ state: { gold: 80 } });
 	});
+});
+
+describe('isolated creator Actions', () => {
 	it.each([
 		'fetch',
 		'XMLHttpRequest',
@@ -65,6 +69,9 @@ describe('isolated creator Actions', () => {
 		);
 		expect((await evaluateAction(request(source))).state).toEqual({ gold: 100 });
 	});
+});
+
+describe('isolated creator Actions', () => {
 	it('disables imports and cannot obtain host globals through constructor escapes', async () => {
 		await expect(
 			evaluateAction(request(`import x from 'https://example.com/x.js';`))
@@ -74,11 +81,17 @@ describe('isolated creator Actions', () => {
 		);
 		expect((await evaluateAction(request(source))).state).toEqual({ gold: 100 });
 	});
+});
+
+describe('isolated creator Actions', () => {
 	it('rejects invalid arguments before invoking the action', async () => {
 		const input = request(register('throw Error("must not execute");'));
 		input.action.args.price = '20';
 		await expect(evaluateAction(input)).rejects.toMatchObject({ code: 'arguments' });
 	});
+});
+
+describe('isolated creator Actions', () => {
 	it.each([
 		'return {gold:"bad"};',
 		'return {gold:80,extra:true};',
@@ -93,6 +106,9 @@ describe('isolated creator Actions', () => {
 			CreatorRuntimeError
 		);
 	});
+});
+
+describe('isolated creator Actions', () => {
 	it('poisons invalid registration even if creator code catches the error', async () => {
 		await expect(
 			evaluateAction(
@@ -104,6 +120,9 @@ describe('isolated creator Actions', () => {
 			evaluateAction({ ...request(), action: { name: 'unknown', args: {} } })
 		).rejects.toMatchObject({ code: 'action-not-found' });
 	});
+});
+
+describe('isolated creator Actions', () => {
 	it('interrupts infinite loops and bounds memory and recursive execution', async () => {
 		await expect(evaluateAction(request(register('while(true) {}')))).rejects.toMatchObject({
 			code: 'timeout'
@@ -115,6 +134,9 @@ describe('isolated creator Actions', () => {
 			evaluateAction(request(register('function recurse(){return recurse();} return recurse();')))
 		).rejects.toBeInstanceOf(CreatorRuntimeError);
 	});
+});
+
+describe('isolated creator Actions', () => {
 	it('does not leak script globals between invocations and never converts creator-thrown objects in the host', async () => {
 		await evaluateAction(request(`globalThis.secret='private'; ${register('return state;')}`));
 		expect(
@@ -134,6 +156,9 @@ describe('isolated creator Actions', () => {
 			)
 		).rejects.toMatchObject({ code: 'execution' });
 	});
+});
+
+describe('isolated creator Actions', () => {
 	it('bounds input size before sending code to a worker', () => {
 		expect(() => encodeInput(request('x'.repeat(600 * 1024)))).toThrow(CreatorRuntimeError);
 	});

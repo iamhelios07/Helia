@@ -1,9 +1,10 @@
+import type { ToolDefinition } from '#lib/games/ai/protocol.js';
+
+import { parseScripts, type Game } from '#lib/games/model.js';
 import { parseAction, identifier, type Action } from '#lib/games/state/model.js';
 import { parseObjectSchema, validateState, type ObjectSchema } from '#lib/games/state/schema.js';
 import { parseGameState, type GameState } from '#lib/games/state/value.js';
 import { parseStateValue, type StateValue } from '#lib/games/state/value.js';
-import type { ToolDefinition } from '#lib/games/ai/protocol.js';
-import { parseScripts, type Game } from '#lib/games/model.js';
 
 /** Host policy; creator code cannot override these ceilings. */
 export const SANDBOX_LIMITS = Object.freeze({
@@ -104,52 +105,40 @@ export function boundedText(text: string, limit = SANDBOX_LIMITS.wireBytes): str
 		typeof text !== 'string' ||
 		text.length > limit ||
 		new TextEncoder().encode(text).length > limit
-	)
+	) {
 		throw new CreatorRuntimeError('input');
+	}
 	return text;
 }
 export function encodeInput(value: ActionRequest): string {
 	try {
 		return boundedText(JSON.stringify(parseInput(value)));
 	} catch (error) {
-		if (error instanceof CreatorRuntimeError) throw error;
+		if (error instanceof CreatorRuntimeError) {
+			throw error;
+		}
 		throw new CreatorRuntimeError('input');
 	}
 }
 export function parseInput(value: unknown): ActionRequest {
 	const input = parseGameState(value);
 	const scripts = parseScripts(input.scripts);
-	if (Object.keys(scripts).length > SANDBOX_LIMITS.scriptCount)
+	if (Object.keys(scripts).length > SANDBOX_LIMITS.scriptCount) {
 		throw new CreatorRuntimeError('input');
+	}
 	let bytes = 0;
 	for (const [id, script] of Object.entries(scripts)) {
-		if (id.length > 128 || !['javascript', 'typescript', 'js', 'ts'].includes(script.language))
+		if (id.length > 128 || !['javascript', 'typescript', 'js', 'ts'].includes(script.language)) {
 			throw new CreatorRuntimeError('input');
+		}
 		bytes += new TextEncoder().encode(script.source).length;
 	}
-	if (bytes > SANDBOX_LIMITS.sourceBytes) throw new CreatorRuntimeError('input');
-	const schema = parseObjectSchema(input.schema);
-	let operation: ActionRequest['operation'];
-	if (input.operation !== undefined) {
-		const item = parseGameState(input.operation);
-		if (item.kind === 'proposal' || item.kind === 'validate')
-			operation = { kind: item.kind, state: validateState(schema, item.state, 'commit') };
-		else if (item.kind === 'catalog') operation = { kind: 'catalog' };
-		else if (item.kind === 'query')
-			operation = { kind: 'query', name: shortName(item.name), args: parseGameState(item.args) };
-		else if (item.kind === 'hook') {
-			const trigger = parseGameState(item.trigger);
-			operation = {
-				kind: 'hook',
-				name: shortName(item.name),
-				trigger: {
-					before: validateState(schema, trigger.before, 'load'),
-					after: validateState(schema, trigger.after, 'load'),
-					action: parseAction(trigger.action)
-				}
-			};
-		} else throw new CreatorRuntimeError('input');
+	if (bytes > SANDBOX_LIMITS.sourceBytes) {
+		throw new CreatorRuntimeError('input');
 	}
+	const schema = parseObjectSchema(input.schema);
+	const operation =
+		input.operation === undefined ? undefined : parseOperation(input.operation, schema);
 	return {
 		scripts,
 		schema,
@@ -163,8 +152,9 @@ export function parseResult(value: unknown, schema: ObjectSchema): ActionResult 
 	if (
 		result.description !== undefined &&
 		(typeof result.description !== 'string' || result.description.length > 1024)
-	)
+	) {
 		throw new CreatorRuntimeError('protocol');
+	}
 	return {
 		state: validateState(schema, result.state, 'commit'),
 		...(result.value === undefined ? {} : { value: parseStateValue(result.value) }),
@@ -177,12 +167,14 @@ export function parseResult(value: unknown, schema: ObjectSchema): ActionResult 
 	};
 }
 function parseTools(value: unknown): ToolDefinition[] {
-	if (!Array.isArray(value) || value.length > SANDBOX_LIMITS.actionCount)
+	if (!Array.isArray(value) || value.length > SANDBOX_LIMITS.actionCount) {
 		throw new CreatorRuntimeError('protocol');
+	}
 	return value.map((item) => {
 		const row = parseGameState(item);
-		if (!['action', 'query'].includes(String(row.kind)) || typeof row.description !== 'string')
+		if (!['action', 'query'].includes(String(row.kind)) || typeof row.description !== 'string') {
 			throw new CreatorRuntimeError('protocol');
+		}
 		return {
 			name: shortName(row.name),
 			kind: row.kind as ToolDefinition['kind'],
@@ -193,21 +185,57 @@ function parseTools(value: unknown): ToolDefinition[] {
 }
 export function shortName(value: unknown): string {
 	const name = identifier(value);
-	if (name.length > 128) throw new CreatorRuntimeError('protocol');
+	if (name.length > 128) {
+		throw new CreatorRuntimeError('protocol');
+	}
 	return name;
 }
 export function parseEvents(value: unknown): UIEvent[] {
-	if (!Array.isArray(value) || value.length > SANDBOX_LIMITS.eventCount)
+	if (!Array.isArray(value) || value.length > SANDBOX_LIMITS.eventCount) {
 		throw new CreatorRuntimeError('protocol');
+	}
 	return value.map((item) => {
 		const event = parseGameState(item);
 		return { name: shortName(event.name), payload: parseGameState(event.payload) };
 	});
 }
 function parseNames(value: unknown): string[] {
-	if (!Array.isArray(value) || value.length > SANDBOX_LIMITS.ruleCount)
+	if (!Array.isArray(value) || value.length > SANDBOX_LIMITS.ruleCount) {
 		throw new CreatorRuntimeError('protocol');
+	}
 	const names = value.map(shortName);
-	if (new Set(names).size !== names.length) throw new CreatorRuntimeError('protocol');
+	if (new Set(names).size !== names.length) {
+		throw new CreatorRuntimeError('protocol');
+	}
 	return names;
+}
+
+function parseOperation(
+	value: unknown,
+	schema: ReturnType<typeof parseObjectSchema>
+): ActionRequest['operation'] {
+	let operation: ActionRequest['operation'];
+	const item = parseGameState(value);
+	if (item.kind === 'proposal' || item.kind === 'validate') {
+		operation = { kind: item.kind, state: validateState(schema, item.state, 'commit') };
+	} else if (item.kind === 'catalog') {
+		operation = { kind: 'catalog' };
+	} else if (item.kind === 'query') {
+		operation = { kind: 'query', name: shortName(item.name), args: parseGameState(item.args) };
+	} else if (item.kind === 'hook') {
+		const trigger = parseGameState(item.trigger);
+		operation = {
+			kind: 'hook',
+			name: shortName(item.name),
+			trigger: {
+				before: validateState(schema, trigger.before, 'load'),
+				after: validateState(schema, trigger.after, 'load'),
+				action: parseAction(trigger.action)
+			}
+		};
+	} else {
+		throw new CreatorRuntimeError('input');
+	}
+
+	return operation;
 }

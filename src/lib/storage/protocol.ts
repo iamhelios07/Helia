@@ -50,6 +50,23 @@ export interface StorageReply {
 export type StorageTransport = (request: StorageRequest) => Promise<StorageReply>;
 export const CONFLICT = 'STORAGE_CONFLICT';
 
+function storedSessionId(
+	table: Table,
+	object: Record<string, unknown>,
+	owner: { id: string; ownerSessionId?: string }
+): string | null {
+	if (table === 'games') {
+		return null;
+	}
+	if (table === 'sessions') {
+		return owner.id;
+	}
+	if (table === 'snapshots') {
+		return identifier(owner.ownerSessionId);
+	}
+	return identifier(object.sessionId);
+}
+
 export function storedRecord(table: Table, value: unknown, ownerSessionId?: string): StoredRecord {
 	const parsers = {
 		games: parseGame,
@@ -64,22 +81,19 @@ export function storedRecord(table: Table, value: unknown, ownerSessionId?: stri
 	const object = record(parsed);
 	const id = identifier(table === 'progress' ? object.sessionId : object.id);
 	const gameId = table === 'games' ? id : identifier(object.gameId);
-	const sessionId =
-		table === 'games'
-			? null
-			: table === 'sessions'
-				? id
-				: table === 'snapshots'
-					? identifier(ownerSessionId)
-					: identifier(object.sessionId);
+	const sessionId = storedSessionId(table, object, { id, ownerSessionId });
 	return { table, id, gameId, sessionId, value: parsed };
 }
 
 function parseRecords(input: unknown, gameId?: string): StoredRecord[] {
-	if (!Array.isArray(input)) throw new Error('저장 요청의 형식이 올바르지 않아요.');
+	if (!Array.isArray(input)) {
+		throw new Error('저장 요청의 형식이 올바르지 않아요.');
+	}
 	return input.map((value: unknown) => {
 		const row = record(value);
-		if (!tables.includes(row.table as Table)) throw new Error('지원하지 않는 저장 항목이에요.');
+		if (!tables.includes(row.table as Table)) {
+			throw new Error('지원하지 않는 저장 항목이에요.');
+		}
 		const parsed = storedRecord(row.table as Table, row.value, row.sessionId as string);
 		if (
 			parsed.id !== row.id ||
@@ -93,11 +107,24 @@ function parseRecords(input: unknown, gameId?: string): StoredRecord[] {
 	});
 }
 
+function createRequest(gameId: string, records: StoredRecord[]): StorageRequest {
+	if (
+		records.filter((row) => row.table === 'games').length !== 1 ||
+		records.filter((row) => row.table === 'sessions').length !== 1 ||
+		records.length !== 2
+	) {
+		throw new Error('새 게임의 구성이 올바르지 않아요.');
+	}
+	return { kind: 'create', gameId, records };
+}
+
 export function parseRequest(value: unknown): StorageRequest {
 	const input = record(value);
-	if (input.kind === 'list') return { kind: 'list' };
+	if (input.kind === 'list') {
+		return { kind: 'list' };
+	}
 	const gameId = identifier(input.gameId);
-	if (input.kind === 'prune')
+	if (input.kind === 'prune') {
 		return {
 			kind: 'prune',
 			gameId,
@@ -105,24 +132,20 @@ export function parseRequest(value: unknown): StorageRequest {
 			eventId: identifier(input.eventId),
 			expectedRevision: counter(input.expectedRevision)
 		};
-	if (input.kind === 'read')
+	}
+	if (input.kind === 'read') {
 		return {
 			kind: 'read',
 			gameId,
 			...(input.includeHistory === true ? { includeHistory: true } : {}),
 			...(input.sessionId === undefined ? {} : { sessionId: identifier(input.sessionId) })
 		};
+	}
 	const records = parseRecords(input.records, gameId);
 	if (input.kind === 'create') {
-		if (
-			records.filter((row) => row.table === 'games').length !== 1 ||
-			records.filter((row) => row.table === 'sessions').length !== 1 ||
-			records.length !== 2
-		)
-			throw new Error('새 게임의 구성이 올바르지 않아요.');
-		return { kind: 'create', gameId, records };
+		return createRequest(gameId, records);
 	}
-	if (input.kind === 'commit' && Array.isArray(input.deleteSessions))
+	if (input.kind === 'commit' && Array.isArray(input.deleteSessions)) {
 		return {
 			kind: 'commit',
 			gameId,
@@ -131,6 +154,7 @@ export function parseRequest(value: unknown): StorageRequest {
 			deleteSessions: input.deleteSessions.map(identifier),
 			...(input.aiLease === undefined ? {} : { aiLease: identifier(input.aiLease) })
 		};
+	}
 	throw new Error('지원하지 않는 저장 요청이에요.');
 }
 

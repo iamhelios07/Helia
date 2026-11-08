@@ -496,7 +496,10 @@ fn game_ui(value: Option<&Value>) -> bool {
     {
         return false;
     }
-    if let Some(style) = value.get("chatStyle") {
+    chat_style(value.get("chatStyle"))
+}
+fn chat_style(value: Option<&Value>) -> bool {
+    if let Some(style) = value {
         let Some(style) = style.as_object() else {
             return false;
         };
@@ -704,6 +707,50 @@ fn resources(value: Option<&Value>) -> bool {
     }
     true
 }
+fn valid_snapshot(value: &Value) -> bool {
+    timestamp(&value["createdAt"])
+        && settings(&value["settings"])
+        && object_state(&value["initialState"])
+        && scripts(&value["scripts"])
+        && game_ui(value.get("ui"))
+        && resources(value.get("resources"))
+        && code_project(value.get("code"))
+        && value.get("restoredStates").is_none_or(|states| {
+            states.as_object().is_some_and(|states| {
+                states
+                    .iter()
+                    .all(|(key, state)| !key.trim().is_empty() && object_state(state))
+            }) && id(&value["migrationFrom"])
+        })
+}
+fn valid_transaction(value: &Value) -> bool {
+    timestamp(&value["createdAt"])
+        && counter(&value["createdRevision"])
+        && value.get("parentId").is_some()
+        && (value["parentId"].is_null() || id(&value["parentId"]))
+        && id(&value["action"]["name"])
+        && object_state(&value["action"]["args"])
+        && (value.get("messageId").is_none() || id(&value["messageId"]))
+        && (value.get("description").is_none() || id(&value["description"]))
+        && value["changes"].as_array().is_some_and(|changes| {
+            changes.iter().all(|change| {
+                change["path"].as_array().is_some_and(|path| {
+                    !path.is_empty()
+                        && path.iter().all(|key| {
+                            key.as_str().is_some_and(|key| {
+                                !["__proto__", "prototype", "constructor"].contains(&key)
+                            })
+                        })
+                }) && ["before", "after"]
+                    .iter()
+                    .all(|key| match change[key]["exists"].as_bool() {
+                        Some(false) => true,
+                        Some(true) => change[key].get("value").is_some_and(state),
+                        None => false,
+                    })
+            })
+        })
+}
 fn valid_value(table: Table, value: &Value) -> bool {
     match table {
         Table::Games => {
@@ -745,22 +792,7 @@ fn valid_value(table: Table, value: &Value) -> bool {
                     || matches!(value["kind"].as_str(), Some("opening" | "dialogue")))
                 && (value["kind"] != "opening" || value["role"] == "assistant")
         }
-        Table::Snapshots => {
-            timestamp(&value["createdAt"])
-                && settings(&value["settings"])
-                && object_state(&value["initialState"])
-                && scripts(&value["scripts"])
-                && game_ui(value.get("ui"))
-                && resources(value.get("resources"))
-                && code_project(value.get("code"))
-                && value.get("restoredStates").is_none_or(|states| {
-                    states.as_object().is_some_and(|states| {
-                        states
-                            .iter()
-                            .all(|(key, state)| !key.trim().is_empty() && object_state(state))
-                    }) && id(&value["migrationFrom"])
-                })
-        }
+        Table::Snapshots => valid_snapshot(value),
         Table::Progress => {
             id(&value["snapshotId"])
                 && (value["headId"].is_null() || id(&value["headId"]))
@@ -768,34 +800,7 @@ fn valid_value(table: Table, value: &Value) -> bool {
                 && counter(&value["revision"])
                 && object_state(&value["state"])
         }
-        Table::Transactions => {
-            timestamp(&value["createdAt"])
-                && counter(&value["createdRevision"])
-                && value.get("parentId").is_some()
-                && (value["parentId"].is_null() || id(&value["parentId"]))
-                && id(&value["action"]["name"])
-                && object_state(&value["action"]["args"])
-                && (value.get("messageId").is_none() || id(&value["messageId"]))
-                && (value.get("description").is_none() || id(&value["description"]))
-                && value["changes"].as_array().is_some_and(|changes| {
-                    changes.iter().all(|change| {
-                        change["path"].as_array().is_some_and(|path| {
-                            !path.is_empty()
-                                && path.iter().all(|key| {
-                                    key.as_str().is_some_and(|key| {
-                                        !["__proto__", "prototype", "constructor"].contains(&key)
-                                    })
-                                })
-                        }) && ["before", "after"].iter().all(|key| {
-                            match change[key]["exists"].as_bool() {
-                                Some(false) => true,
-                                Some(true) => change[key].get("value").is_some_and(state),
-                                None => false,
-                            }
-                        })
-                    })
-                })
-        }
+        Table::Transactions => valid_transaction(value),
         Table::Memories => {
             id(&value["content"])
                 && timestamp(&value["createdAt"])
@@ -888,6 +893,63 @@ fn write_row(connection: &Connection, row: &StoredRecord, create: bool) -> Resul
     Ok(())
 }
 
+fn write_draft(
+    connection: &Connection,
+    game_id: &str,
+    version: u64,
+    draft: &Value,
+) -> Result<Value, String> {
+    let previous = read_draft(connection, game_id)?;
+    if version >= 9_007_199_254_740_991 || previous["version"].as_u64() != Some(version) {
+        return Err("다른 편집기에서 초안이 변경되었어요.".into());
+    }
+    validate_draft(game_id, draft)?;
+    let text = if draft.is_null() {
+        None
+    } else {
+        Some(serde_json::to_string(draft).map_err(|_| "잘못된 편집 초안")?)
+    };
+    connection.execute("INSERT INTO editor_drafts (game_id,version,value) VALUES (?1,?2,?3) ON CONFLICT(game_id) DO UPDATE SET version=excluded.version,value=excluded.value",params![game_id,(version+1) as i64,text]).map_err(db_error)?;
+    Ok(json!({"version":version+1,"draft":draft}))
+}
+fn read_game(
+    connection: &Connection,
+    game_id: &str,
+    session_id: Option<&str>,
+    include_history: bool,
+) -> Result<Value, String> {
+    let version: Option<i64> = connection
+        .query_row("SELECT version FROM games WHERE id=?1", [game_id], |row| {
+            row.get(0)
+        })
+        .optional()
+        .map_err(db_error)?;
+    Ok(if let Some(version) = version {
+        let mut records = read_rows(connection, Table::Games, Some(game_id), None)?;
+        records.extend(read_rows(connection, Table::Sessions, Some(game_id), None)?);
+        if session_id.is_some() || include_history {
+            if let Some(session) = session_id {
+                validate_history(connection, game_id, session)?;
+            } else {
+                for row in records.iter().filter(|row| row.table == Table::Sessions) {
+                    validate_history(connection, game_id, &row.id)?;
+                }
+            }
+            for table in [
+                Table::Messages,
+                Table::Snapshots,
+                Table::Progress,
+                Table::Transactions,
+                Table::Memories,
+            ] {
+                records.extend(read_rows(connection, table, Some(game_id), session_id)?);
+            }
+        }
+        json!({ "version": version, "records": records })
+    } else {
+        json!({ "version": 0, "records": [] })
+    })
+}
 pub(crate) fn execute_request(path: &Path, input: Value) -> Result<Value, String> {
     let _lease_guard = crate::generation::guard_storage(&input)?;
     let mut input = input;
@@ -914,20 +976,7 @@ pub(crate) fn execute_request(path: &Path, input: Value) -> Result<Value, String
             game_id,
             version,
             draft,
-        } => {
-            let previous = read_draft(&transaction, &game_id)?;
-            if version >= 9_007_199_254_740_991 || previous["version"].as_u64() != Some(version) {
-                return Err("다른 편집기에서 초안이 변경되었어요.".into());
-            }
-            validate_draft(&game_id, &draft)?;
-            let text = if draft.is_null() {
-                None
-            } else {
-                Some(serde_json::to_string(&draft).map_err(|_| "잘못된 편집 초안")?)
-            };
-            transaction.execute("INSERT INTO editor_drafts (game_id,version,value) VALUES (?1,?2,?3) ON CONFLICT(game_id) DO UPDATE SET version=excluded.version,value=excluded.value",params![game_id,(version+1) as i64,text]).map_err(db_error)?;
-            json!({"version":version+1,"draft":draft})
-        }
+        } => write_draft(&transaction, &game_id, version, &draft)?,
         Request::List => {
             json!({ "version": 0, "records": read_rows(&transaction, Table::Games, None, None)? })
         }
@@ -935,49 +984,12 @@ pub(crate) fn execute_request(path: &Path, input: Value) -> Result<Value, String
             game_id,
             session_id,
             include_history,
-        } => {
-            let version: Option<i64> = transaction
-                .query_row("SELECT version FROM games WHERE id=?1", [&game_id], |row| {
-                    row.get(0)
-                })
-                .optional()
-                .map_err(db_error)?;
-            if let Some(version) = version {
-                let mut records = read_rows(&transaction, Table::Games, Some(&game_id), None)?;
-                records.extend(read_rows(
-                    &transaction,
-                    Table::Sessions,
-                    Some(&game_id),
-                    None,
-                )?);
-                if session_id.is_some() || include_history {
-                    if let Some(session) = session_id.as_deref() {
-                        validate_history(&transaction, &game_id, session)?;
-                    } else {
-                        for row in records.iter().filter(|row| row.table == Table::Sessions) {
-                            validate_history(&transaction, &game_id, &row.id)?;
-                        }
-                    }
-                    for table in [
-                        Table::Messages,
-                        Table::Snapshots,
-                        Table::Progress,
-                        Table::Transactions,
-                        Table::Memories,
-                    ] {
-                        records.extend(read_rows(
-                            &transaction,
-                            table,
-                            Some(&game_id),
-                            session_id.as_deref(),
-                        )?);
-                    }
-                }
-                json!({ "version": version, "records": records })
-            } else {
-                json!({ "version": 0, "records": [] })
-            }
-        }
+        } => read_game(
+            &transaction,
+            &game_id,
+            session_id.as_deref(),
+            include_history,
+        )?,
         Request::Create { game_id, records } => write(&transaction, &game_id, records, None, &[])?,
         Request::Prune {
             game_id,
@@ -1072,6 +1084,70 @@ fn restored_state<'a>(
     }
     Ok(state)
 }
+fn validate_restored(
+    snapshot: &Value,
+    snapshots: &[StoredRecord],
+    transactions: &[StoredRecord],
+) -> Result<(), String> {
+    if let Some(states) = snapshot.get("restoredStates") {
+        let source = snapshot["migrationFrom"]
+            .as_str()
+            .ok_or("상태 변환 원본이 없어요.")?;
+        if source == snapshot["id"].as_str().unwrap_or("")
+            || !snapshots.iter().any(|row| row.id == source)
+        {
+            return Err("상태 변환 원본을 찾을 수 없어요.".into());
+        }
+        for (id, state) in states.as_object().ok_or("잘못된 상태 변환 기록이에요.")? {
+            if !transactions.iter().any(|row| row.id == *id) {
+                return Err("상태 변환의 기록을 찾을 수 없어요.".into());
+            }
+            crate::state_schema::validate_value(&snapshot["schema"], state, "load")?;
+        }
+    }
+
+    Ok(())
+}
+fn validate_message_links(
+    connection: &Connection,
+    game_id: &str,
+    session_id: &str,
+    nodes: &std::collections::HashMap<String, Value>,
+) -> Result<(), String> {
+    let sessions = read_rows(connection, Table::Sessions, Some(game_id), None)?;
+    let session = sessions
+        .iter()
+        .find(|row| row.id == session_id)
+        .ok_or("Session not found")?;
+    let mut messages = read_rows(connection, Table::Messages, Some(game_id), Some(session_id))?;
+    messages.sort_by_key(|row| row.value["sequence"].as_u64().unwrap());
+    if session.value["messageCount"].as_u64().unwrap_or(0) != messages.len() as u64
+        || messages
+            .iter()
+            .enumerate()
+            .any(|(index, row)| row.value["sequence"].as_u64() != Some(index as u64 + 1))
+    {
+        return Err("Invalid stored message sequence".into());
+    }
+    let message_ids: std::collections::HashSet<_> =
+        messages.iter().map(|row| row.id.as_str()).collect();
+    let mut linked = std::collections::HashSet::new();
+    for node in nodes.values() {
+        if let Some(id) = node["messageId"].as_str()
+            && (!message_ids.contains(id) || !linked.insert(id))
+        {
+            return Err("Invalid event message link".into());
+        }
+    }
+    if messages
+        .iter()
+        .any(|row| row.value["kind"] != "opening" && !linked.contains(row.id.as_str()))
+    {
+        return Err("Message has no event".into());
+    }
+
+    Ok(())
+}
 fn validate_history(
     connection: &Connection,
     game_id: &str,
@@ -1102,22 +1178,7 @@ fn validate_history(
         .find(|row| Some(row.id.as_str()) == progress.value["snapshotId"].as_str())
         .ok_or("세션의 게임 정의가 일치하지 않아요.")?
         .value;
-    if let Some(states) = snapshot.get("restoredStates") {
-        let source = snapshot["migrationFrom"]
-            .as_str()
-            .ok_or("상태 변환 원본이 없어요.")?;
-        if source == snapshot["id"].as_str().unwrap_or("")
-            || !snapshots.iter().any(|row| row.id == source)
-        {
-            return Err("상태 변환 원본을 찾을 수 없어요.".into());
-        }
-        for (id, state) in states.as_object().ok_or("잘못된 상태 변환 기록이에요.")? {
-            if !transactions.iter().any(|row| row.id == *id) {
-                return Err("상태 변환의 기록을 찾을 수 없어요.".into());
-            }
-            crate::state_schema::validate_value(&snapshot["schema"], state, "load")?;
-        }
-    }
+    validate_restored(snapshot, &snapshots, &transactions)?;
     crate::state_schema::validate_value(&snapshot["schema"], &progress.value["state"], "load")?;
     let mut nodes = std::collections::HashMap::new();
     let mut revisions = std::collections::HashSet::new();
@@ -1131,37 +1192,7 @@ fn validate_history(
         }
         nodes.insert(row.id.clone(), row.value.clone());
     }
-    let sessions = read_rows(connection, Table::Sessions, Some(game_id), None)?;
-    let session = sessions
-        .iter()
-        .find(|row| row.id == session_id)
-        .ok_or("Session not found")?;
-    let mut messages = read_rows(connection, Table::Messages, Some(game_id), Some(session_id))?;
-    messages.sort_by_key(|row| row.value["sequence"].as_u64().unwrap());
-    if session.value["messageCount"].as_u64().unwrap_or(0) != messages.len() as u64
-        || messages
-            .iter()
-            .enumerate()
-            .any(|(index, row)| row.value["sequence"].as_u64() != Some(index as u64 + 1))
-    {
-        return Err("Invalid stored message sequence".into());
-    }
-    let message_ids: std::collections::HashSet<_> =
-        messages.iter().map(|row| row.id.as_str()).collect();
-    let mut linked = std::collections::HashSet::new();
-    for node in nodes.values() {
-        if let Some(id) = node["messageId"].as_str() {
-            if !message_ids.contains(id) || !linked.insert(id) {
-                return Err("Invalid event message link".into());
-            }
-        }
-    }
-    if messages
-        .iter()
-        .any(|row| row.value["kind"] != "opening" && !linked.contains(row.id.as_str()))
-    {
-        return Err("Message has no event".into());
-    }
+    validate_message_links(connection, game_id, session_id, &nodes)?;
     for memory in read_rows(connection, Table::Memories, Some(game_id), Some(session_id))? {
         if memory.value["sourceTransactionIds"]
             .as_array()
@@ -1182,50 +1213,10 @@ fn validate_history(
     Ok(())
 }
 
-fn prune(
-    connection: &Connection,
-    game_id: &str,
-    session_id: &str,
+fn descendant_events(
+    transactions: &[StoredRecord],
     event_id: &str,
-    expected: u64,
-) -> Result<Value, String> {
-    validate_history(connection, game_id, session_id)?;
-    let mut game = read_rows(connection, Table::Games, Some(game_id), None)?
-        .into_iter()
-        .next()
-        .ok_or("게임을 찾을 수 없어요.")?;
-    let mut session = read_rows(connection, Table::Sessions, Some(game_id), None)?
-        .into_iter()
-        .find(|row| row.id == session_id)
-        .ok_or("세션을 찾을 수 없어요.")?;
-    let mut progress = read_rows(connection, Table::Progress, Some(game_id), Some(session_id))?
-        .into_iter()
-        .next()
-        .ok_or("세션의 진행 기록이 없어요.")?;
-    if expected >= 9_007_199_254_740_991 || progress.value["revision"].as_u64() != Some(expected) {
-        return Err("게임 상태가 변경되었어요. 최신 상태에서 다시 시도해주세요.".into());
-    }
-    let snapshots = read_rows(
-        connection,
-        Table::Snapshots,
-        Some(game_id),
-        Some(session_id),
-    )?;
-    let snapshot = &snapshots
-        .iter()
-        .find(|row| Some(row.id.as_str()) == progress.value["snapshotId"].as_str())
-        .ok_or("스냅샷을 찾을 수 없어요.")?
-        .value;
-    let transactions = read_rows(
-        connection,
-        Table::Transactions,
-        Some(game_id),
-        Some(session_id),
-    )?;
-    let target = transactions
-        .iter()
-        .find(|row| row.id == event_id)
-        .ok_or("삭제할 이벤트를 찾을 수 없어요.")?;
+) -> Result<std::collections::HashSet<String>, String> {
     let mut removed = std::collections::HashSet::new();
     let mut stack = vec![event_id.to_string()];
     while let Some(id) = stack.pop() {
@@ -1239,18 +1230,16 @@ fn prune(
                 .map(|row| row.id.clone()),
         );
     }
-    let head = progress.value["headId"].clone();
-    let selected = head.as_str().is_some_and(|id| removed.contains(id));
-    let next_head = if selected {
-        target.value["parentId"].clone()
-    } else {
-        head
-    };
-    let nodes = transactions
-        .iter()
-        .map(|row| (row.id.clone(), row.value.clone()))
-        .collect();
-    let state = restored_state(snapshot, &nodes, next_head.as_str())?;
+
+    Ok(removed)
+}
+fn delete_pruned_records(
+    connection: &Connection,
+    game_id: &str,
+    session_id: &str,
+    removed: &std::collections::HashSet<String>,
+    transactions: &[StoredRecord],
+) -> Result<Vec<StoredRecord>, String> {
     let removed_messages: std::collections::HashSet<_> = transactions
         .iter()
         .filter(|row| removed.contains(&row.id))
@@ -1286,10 +1275,19 @@ fn prune(
             return Err("삭제할 기록을 찾을 수 없어요.".into());
         }
     }
-    let mut surviving: Vec<_> = messages
+    let surviving: Vec<_> = messages
         .into_iter()
         .filter(|row| !removed_messages.contains(&row.id))
         .collect();
+    Ok(surviving)
+}
+fn prune_restored_states(
+    connection: &Connection,
+    game_id: &str,
+    session_id: &str,
+    snapshots: Vec<StoredRecord>,
+    removed: &std::collections::HashSet<String>,
+) -> Result<(), String> {
     for mut row in snapshots {
         if let Some(states) = row
             .value
@@ -1310,12 +1308,16 @@ fn prune(
                 .map_err(db_error)?;
         }
     }
-    surviving.sort_by_key(|row| row.value["sequence"].as_u64().unwrap());
-    session.value["messageCount"] = json!(surviving.len());
-    for (index, row) in surviving.iter_mut().enumerate() {
-        row.value["sequence"] = json!(index + 1);
-        write_row(connection, row, false)?;
-    }
+
+    Ok(())
+}
+fn publish_prune(
+    connection: &Connection,
+    game_id: &str,
+    session_id: &str,
+    records: [StoredRecord; 3],
+) -> Result<Value, String> {
+    let [mut game, mut session, progress] = records;
     let now: String = connection
         .query_row("SELECT strftime('%Y-%m-%dT%H:%M:%fZ','now')", [], |row| {
             row.get(0)
@@ -1323,9 +1325,6 @@ fn prune(
         .map_err(db_error)?;
     game.value["updatedAt"] = json!(now);
     session.value["updatedAt"] = json!(now);
-    progress.value["headId"] = next_head;
-    progress.value["state"] = state;
-    progress.value["revision"] = json!(expected + 1);
     for row in [game, session, progress] {
         write_row(connection, &row, false)?;
     }
@@ -1362,6 +1361,77 @@ fn prune(
         )?);
     }
     Ok(json!({"version":version,"records":records}))
+}
+fn prune(
+    connection: &Connection,
+    game_id: &str,
+    session_id: &str,
+    event_id: &str,
+    expected: u64,
+) -> Result<Value, String> {
+    validate_history(connection, game_id, session_id)?;
+    let game = read_rows(connection, Table::Games, Some(game_id), None)?
+        .into_iter()
+        .next()
+        .ok_or("게임을 찾을 수 없어요.")?;
+    let mut session = read_rows(connection, Table::Sessions, Some(game_id), None)?
+        .into_iter()
+        .find(|row| row.id == session_id)
+        .ok_or("세션을 찾을 수 없어요.")?;
+    let mut progress = read_rows(connection, Table::Progress, Some(game_id), Some(session_id))?
+        .into_iter()
+        .next()
+        .ok_or("세션의 진행 기록이 없어요.")?;
+    if expected >= 9_007_199_254_740_991 || progress.value["revision"].as_u64() != Some(expected) {
+        return Err("게임 상태가 변경되었어요. 최신 상태에서 다시 시도해주세요.".into());
+    }
+    let snapshots = read_rows(
+        connection,
+        Table::Snapshots,
+        Some(game_id),
+        Some(session_id),
+    )?;
+    let snapshot = &snapshots
+        .iter()
+        .find(|row| Some(row.id.as_str()) == progress.value["snapshotId"].as_str())
+        .ok_or("스냅샷을 찾을 수 없어요.")?
+        .value;
+    let transactions = read_rows(
+        connection,
+        Table::Transactions,
+        Some(game_id),
+        Some(session_id),
+    )?;
+    let target = transactions
+        .iter()
+        .find(|row| row.id == event_id)
+        .ok_or("삭제할 이벤트를 찾을 수 없어요.")?;
+    let removed = descendant_events(&transactions, event_id)?;
+    let head = progress.value["headId"].clone();
+    let selected = head.as_str().is_some_and(|id| removed.contains(id));
+    let next_head = if selected {
+        target.value["parentId"].clone()
+    } else {
+        head
+    };
+    let nodes = transactions
+        .iter()
+        .map(|row| (row.id.clone(), row.value.clone()))
+        .collect();
+    let state = restored_state(snapshot, &nodes, next_head.as_str())?;
+    let mut surviving =
+        delete_pruned_records(connection, game_id, session_id, &removed, &transactions)?;
+    prune_restored_states(connection, game_id, session_id, snapshots, &removed)?;
+    surviving.sort_by_key(|row| row.value["sequence"].as_u64().unwrap());
+    session.value["messageCount"] = json!(surviving.len());
+    for (index, row) in surviving.iter_mut().enumerate() {
+        row.value["sequence"] = json!(index + 1);
+        write_row(connection, row, false)?;
+    }
+    progress.value["headId"] = next_head;
+    progress.value["state"] = state;
+    progress.value["revision"] = json!(expected + 1);
+    publish_prune(connection, game_id, session_id, [game, session, progress])
 }
 
 fn write(
@@ -1484,7 +1554,7 @@ mod tests {
         invalid = ui.clone();
         invalid["chatStyle"]["background"] = json!("url(https://example.com)");
         assert!(!game_ui(Some(&invalid)));
-        invalid = ui.clone();
+        invalid = ui;
         invalid["layout"] = json!({"kind":"split","axis":"horizontal","ratio":0.5,"first":{"kind":"panel","id":"same"},"second":{"kind":"panel","id":"same"}});
         assert!(!game_ui(Some(&invalid)));
     }
@@ -1513,7 +1583,7 @@ mod tests {
             invalid["portrait"]["name"] = json!(path);
             assert!(!resources(Some(&invalid)));
         }
-        let mut duplicate = valid.clone();
+        let mut duplicate = valid;
         duplicate["other"] = duplicate["portrait"].clone();
         assert!(!resources(Some(&duplicate)));
         duplicate["other"]["name"] = json!("Portrait/child.png");
@@ -1573,14 +1643,14 @@ mod tests {
     fn game(title: &str) -> Value {
         json!({ "schemaVersion": 2, "id": "game", "activeSessionId": "session", "title": title, "genre": "", "description": "", "settings": { "description": "", "firstMessage": "", "authorNote": "" }, "schema":{"type":"object","properties":{},"additionalProperties":false}, "initialState": {}, "scripts": {}, "createdAt": "2026-11-02T00:00:00.000Z", "updatedAt": "2026-11-02T00:00:00.000Z" })
     }
-    fn row(table: &str, id: &str, session_id: Option<&str>, value: Value) -> Value {
+    fn row(table: &str, id: &str, session_id: Option<&str>, value: &Value) -> Value {
         json!({ "table": table, "id": id, "gameId": "game", "sessionId": session_id, "value": value })
     }
     fn session(id: &str) -> Value {
         json!({ "schemaVersion": 1, "id": id, "gameId": "game", "title": "세션", "messageCount": 0, "createdAt": "2026-11-02T00:00:00.000Z", "updatedAt": "2026-11-02T00:00:00.000Z" })
     }
     fn create() -> Value {
-        json!({ "kind": "create", "gameId": "game", "records": [row("games", "game", None, game("게임 🧪")), row("sessions", "session", Some("session"), session("session"))] })
+        json!({ "kind": "create", "gameId": "game", "records": [row("games", "game", None, &game("게임 🧪")), row("sessions", "session", Some("session"), &session("session"))] })
     }
     #[test]
     fn validates_unified_state_authoring_drafts() {
@@ -1634,7 +1704,7 @@ mod tests {
                 .is_err()
         );
     }
-    fn commit(version: u64, records: Vec<Value>) -> Value {
+    fn commit(version: u64, records: &[Value]) -> Value {
         json!({ "kind": "commit", "gameId": "game", "version": version, "records": records, "deleteSessions": [] })
     }
     fn branched_fixture() -> Fixture {
@@ -1647,9 +1717,9 @@ mod tests {
         let mut current_session = session("session");
         current_session["messageCount"] = json!(6);
         let mut records = vec![
-            row("sessions", "session", Some("session"), current_session),
-            row("snapshots", "snapshot", Some("session"), snapshot),
-            row("progress", "session", Some("session"), progress),
+            row("sessions", "session", Some("session"), &current_session),
+            row("snapshots", "snapshot", Some("session"), &snapshot),
+            row("progress", "session", Some("session"), &progress),
         ];
         for (index, (name, parent, before, after)) in [
             ("A", None, 100, 90),
@@ -1663,12 +1733,12 @@ mod tests {
         .enumerate()
         {
             let message_id = format!("message-{name}");
-            records.push(row("transactions",name,Some("session"),json!({"schemaVersion":2,"id":name,"gameId":"game","sessionId":"session","parentId":parent,"createdAt":now,"createdRevision":index+1,"action":{"name":name,"args":{}},"description":format!("Event {name}"),"changes":[{"path":["gold"],"before":{"exists":true,"value":before},"after":{"exists":true,"value":after}}],"messageId":message_id})));
-            records.push(row("messages",&message_id,Some("session"),json!({"schemaVersion":1,"id":message_id,"gameId":"game","sessionId":"session","sequence":index+1,"role":"assistant","kind":"dialogue","content":name,"createdAt":now})));
+            records.push(row("transactions",name,Some("session"),&json!({"schemaVersion":2,"id":name,"gameId":"game","sessionId":"session","parentId":parent,"createdAt":now,"createdRevision":index+1,"action":{"name":name,"args":{}},"description":format!("Event {name}"),"changes":[{"path":["gold"],"before":{"exists":true,"value":before},"after":{"exists":true,"value":after}}],"messageId":message_id})));
+            records.push(row("messages",&message_id,Some("session"),&json!({"schemaVersion":1,"id":message_id,"gameId":"game","sessionId":"session","sequence":index+1,"role":"assistant","kind":"dialogue","content":name,"createdAt":now})));
             let memory_id = format!("memory-{name}");
-            records.push(row("memories",&memory_id,Some("session"),json!({"schemaVersion":1,"id":memory_id,"gameId":"game","sessionId":"session","sourceTransactionIds":[name],"content":name,"createdAt":now})));
+            records.push(row("memories",&memory_id,Some("session"),&json!({"schemaVersion":1,"id":memory_id,"gameId":"game","sessionId":"session","sourceTransactionIds":[name],"content":name,"createdAt":now})));
         }
-        fixture.request(commit(0, records)).unwrap();
+        fixture.request(commit(0, &records)).unwrap();
         fixture
     }
     fn prune_request(event: &str, revision: u64) -> Value {
@@ -1681,7 +1751,7 @@ mod tests {
         let rows = before["records"].as_array().unwrap();
         let original =
             rows.iter().find(|row| row["table"] == "snapshots").unwrap()["value"].clone();
-        let mut snapshot = original.clone();
+        let mut snapshot = original;
         snapshot["id"] = json!("updated-content");
         snapshot["schema"] = json!({"type":"object","properties":{"gold":{"type":"string"},"score":{"type":"integer"}},"required":["gold","score"],"additionalProperties":false});
         snapshot["initialState"] = json!({"gold":"100","score":0});
@@ -1705,9 +1775,9 @@ mod tests {
         fixture
             .request(commit(
                 1,
-                vec![
-                    row("snapshots", "updated-content", Some("session"), snapshot),
-                    row("progress", "session", Some("session"), progress),
+                &[
+                    row("snapshots", "updated-content", Some("session"), &snapshot),
+                    row("progress", "session", Some("session"), &progress),
                 ],
             ))
             .unwrap();
@@ -1847,9 +1917,9 @@ mod tests {
         fixture
             .request(commit(
                 0,
-                vec![
-                    row("snapshots", "snapshot", Some("session"), snapshot),
-                    row("progress", "session", Some("session"), progress.clone()),
+                &[
+                    row("snapshots", "snapshot", Some("session"), &snapshot),
+                    row("progress", "session", Some("session"), &progress),
                 ],
             ))
             .unwrap();
@@ -1865,9 +1935,9 @@ mod tests {
                 fixture
                     .request(commit(
                         1,
-                        vec![
-                            row("games", "game", None, game("changed")),
-                            row("progress", "session", Some("session"), bad)
+                        &[
+                            row("games", "game", None, &game("changed")),
+                            row("progress", "session", Some("session"), &bad)
                         ]
                     ))
                     .is_err()
@@ -1875,15 +1945,15 @@ mod tests {
             assert_eq!(fixture.read(), before);
         }
         let event = json!({"schemaVersion":2,"id":"inactive","gameId":"game","sessionId":"session","parentId":null,"createdAt":now,"createdRevision":1,"action":{"name":"invalid","args":{}},"changes":[{"path":["hp"],"before":{"exists":true,"value":100},"after":{"exists":true,"value":"bad"}}]});
-        let mut unchanged = progress.clone();
+        let mut unchanged = progress;
         unchanged["revision"] = json!(1);
         assert!(
             fixture
                 .request(commit(
                     1,
-                    vec![
-                        row("progress", "session", Some("session"), unchanged),
-                        row("transactions", "inactive", Some("session"), event)
+                    &[
+                        row("progress", "session", Some("session"), &unchanged),
+                        row("transactions", "inactive", Some("session"), &event)
                     ]
                 ))
                 .is_err()
@@ -1905,13 +1975,13 @@ mod tests {
         fixture
             .request(commit(
                 0,
-                vec![
-                    row("sessions", "session", Some("session"), current_session),
-                    row("snapshots", "snapshot", Some("session"), snapshot),
-                    row("messages", "message", Some("session"), message),
-                    row("progress", "session", Some("session"), progress),
-                    row("transactions", "event", Some("session"), event),
-                    row("memories", "memory", Some("session"), memory),
+                &[
+                    row("sessions", "session", Some("session"), &current_session),
+                    row("snapshots", "snapshot", Some("session"), &snapshot),
+                    row("messages", "message", Some("session"), &message),
+                    row("progress", "session", Some("session"), &progress),
+                    row("transactions", "event", Some("session"), &event),
+                    row("memories", "memory", Some("session"), &memory),
                 ],
             ))
             .unwrap();
@@ -1930,13 +2000,13 @@ mod tests {
         new_game["activeSessionId"] = json!("replacement");
         let mut request = commit(
             1,
-            vec![
-                row("games", "game", None, new_game),
+            &[
+                row("games", "game", None, &new_game),
                 row(
                     "sessions",
                     "replacement",
                     Some("replacement"),
-                    session("replacement"),
+                    &session("replacement"),
                 ),
             ],
         );
@@ -1969,9 +2039,9 @@ mod tests {
             fixture
                 .request(commit(
                     0,
-                    vec![
-                        row("games", "game", None, game("changed")),
-                        row("messages", "message", Some("foreign"), message)
+                    &[
+                        row("games", "game", None, &game("changed")),
+                        row("messages", "message", Some("foreign"), &message)
                     ]
                 ))
                 .is_err()
@@ -1983,9 +2053,9 @@ mod tests {
         let fixture = Fixture::new();
         fixture.create();
         fixture
-            .request(commit(0, vec![row("games", "game", None, game("new"))]))
+            .request(commit(0, &[row("games", "game", None, &game("new"))]))
             .unwrap();
-        assert_eq!(fixture.request(commit(0, vec![])).unwrap_err(), CONFLICT);
+        assert_eq!(fixture.request(commit(0, &[])).unwrap_err(), CONFLICT);
         assert_eq!(fixture.read()["version"], 1);
     }
     #[test]
@@ -1997,7 +2067,7 @@ mod tests {
         bad["initialState"] = json!({"__proto__": {"polluted": true}});
         assert!(
             fixture
-                .request(commit(0, vec![row("games", "game", None, bad)]))
+                .request(commit(0, &[row("games", "game", None, &bad)]))
                 .is_err()
         );
         assert!(
@@ -2018,7 +2088,7 @@ mod tests {
                 std::thread::spawn(move || {
                     execute_request(
                         &path,
-                        commit(0, vec![row("games", "game", None, game(title))]),
+                        commit(0, &[row("games", "game", None, &game(title))]),
                     )
                 })
             })

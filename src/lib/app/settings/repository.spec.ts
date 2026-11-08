@@ -1,4 +1,5 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
+
 import { emptyAISettings, upsertProvider } from './model.js';
 import { AI_SETTINGS_KEY, loadAISettings, saveAISettings } from './repository.js';
 

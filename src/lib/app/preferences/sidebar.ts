@@ -13,7 +13,9 @@ export function loadSidebarWidth(): number {
 		const stored = localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY);
 		if (stored !== null) {
 			const width = Number(stored);
-			if (isSidebarWidth(width)) return Math.round(width);
+			if (isSidebarWidth(width)) {
+				return Math.round(width);
+			}
 		}
 	} catch {
 		// The workspace remains usable when storage is blocked or during SSR.
@@ -22,7 +24,9 @@ export function loadSidebarWidth(): number {
 }
 
 export function saveSidebarWidth(width: number): void {
-	if (!isSidebarWidth(width)) return;
+	if (!isSidebarWidth(width)) {
+		return;
+	}
 	try {
 		localStorage.setItem(SIDEBAR_WIDTH_STORAGE_KEY, String(Math.round(width)));
 	} catch {

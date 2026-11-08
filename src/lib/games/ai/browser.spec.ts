@@ -1,15 +1,18 @@
 import { it, expect, vi, afterEach, beforeEach } from 'vitest';
-import { invokeSessionAI } from './browser.js';
-import { createGame, updateGameRules, getSessionTimeline } from '#lib/games/repository.js';
-import { isSessionBusy } from './activity.js';
+
+import { savePromptSettings } from '#lib/app/settings/prompt-repository.js';
 import {
 	emptyPromptSettings,
 	upsertPromptPreset,
 	selectPromptPreset
 } from '#lib/app/settings/prompts.js';
-import { savePromptSettings } from '#lib/app/settings/prompt-repository.js';
-import { parsePromptConfig } from './prompts.js';
+import { createGame, updateGameRules, getSessionTimeline } from '#lib/games/repository.js';
+
 import type { RoundRequest } from './protocol.js';
+
+import { isSessionBusy } from './activity.js';
+import { invokeSessionAI } from './browser.js';
+import { parsePromptConfig } from './prompts.js';
 
 const faults = vi.hoisted(() => ({
 	failRefresh: false,
@@ -39,16 +42,18 @@ vi.mock('#lib/storage/transport.js', async () => {
 	const storage = openStorage(':memory:');
 	return {
 		storageRequest: async (input: import('#lib/storage/protocol.js').StorageRequest) => {
-			if (faults.failRefresh && faults.committed && input.kind === 'read')
+			if (faults.failRefresh && faults.committed && input.kind === 'read') {
 				throw Error('Read unavailable after commit');
+			}
 			const reply = parseReply(storage.request(input));
 			if (
 				input.kind === 'commit' &&
 				input.records.some(
 					(r) => r.table === 'messages' && (r.value as { role?: string }).role === 'assistant'
 				)
-			)
+			) {
 				faults.committed = true;
+			}
 			return reply;
 		}
 	};

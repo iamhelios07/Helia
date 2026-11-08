@@ -1,6 +1,8 @@
 import { expect, it, vi } from 'vitest';
-import { discoverModels } from './model-catalog.js';
+
 import { SERVICE_PRESETS } from '#lib/app/settings/services.js';
+
+import { discoverModels } from './model-catalog.js';
 
 const credential = {
 	id: 'connection',

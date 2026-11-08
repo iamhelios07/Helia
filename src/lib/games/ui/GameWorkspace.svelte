@@ -1,415 +1,89 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
-	import { createSubscriber } from 'svelte/reactivity';
-	import { isSessionBusy, subscribeSessionActivity } from '#lib/games/ai/activity.js';
 	import { resolve } from '$app/paths';
-	import { goto } from '$app/navigation';
+	import { onMount } from 'svelte';
+
+	import { MIN_SIDEBAR_WIDTH } from '#lib/app/preferences/sidebar.js';
 	import Icon from '#lib/components/Icon.svelte';
-	import { configureAppSidebar } from '#lib/app/sidebar.svelte.js';
-	import { toLibraryGame, type LibraryGame } from '#lib/library/library-games.js';
-	import GameSettingsPanel from './GameSettingsPanel.svelte';
-	import SessionChat from './SessionChat.svelte';
-	import GameWorkbench from './GameWorkbench.svelte';
+
 	import type { GameUI } from './runtime/model.js';
-	import {
-		getGameWorkspace,
-		createSession,
-		selectSession,
-		updateGame,
-		renameSession,
-		deleteSession,
-		listGames,
-		createGame
-	} from '../repository.js';
-	import {
-		SESSION_TITLE_MAX_LENGTH,
-		validateSessionTitle,
-		type Game,
-		type Session,
-		type GameMetadata
-	} from '../model.js';
-	import {
-		DEFAULT_SIDEBAR_WIDTH,
-		MIN_SIDEBAR_WIDTH,
-		loadSidebarWidth,
-		saveSidebarWidth,
-		loadSidebarCollapsed,
-		saveSidebarCollapsed
-	} from '#lib/app/preferences/sidebar.js';
 
+	import { SESSION_TITLE_MAX_LENGTH } from '../model.js';
+	import GameSettingsPanel from './GameSettingsPanel.svelte';
+	import GameWorkbench from './GameWorkbench.svelte';
+	import { GameWorkspaceController } from './gameworkspace-controller.svelte.js';
+	import SessionChat from './SessionChat.svelte';
 	let { gameId }: { gameId: string } = $props();
-	let game = $state.raw<Game | null>(null);
-	let sessions = $state.raw<Session[]>([]);
-	let loading = $state(true);
-	let loadError = $state('');
-	let missing = $state(false);
-	let sessionBusy = $state(false);
-	let chatSaving = $state(false);
-	let uiSaving = $state(false);
-	let chatDrafts = $state<Record<string, string>>({});
-	let sessionActivity = $derived.by(() => {
-		const sessionId = game?.activeSessionId;
-		const currentGameId = gameId;
-		const subscribe = createSubscriber((update) =>
-			sessionId ? subscribeSessionActivity(currentGameId, sessionId, update) : undefined
-		);
-		return () => {
-			subscribe();
-			return sessionId ? isSessionBusy(currentGameId, sessionId) : false;
-		};
-	});
-	let busy = $derived(sessionBusy || chatSaving || uiSaving || sessionActivity());
-	let actionError = $state('');
-	let renamingSessionId = $state<string | null>(null);
-	let sessionName = $state('');
-	let renameError = $state('');
-	let deletingSession = $state<Session | null>(null);
-	let deleteError = $state('');
-	let railGames = $state.raw<LibraryGame[]>([]);
-	let creatingGame = $state(false);
-	let selectedTab = $state<'sessions' | 'game'>('sessions');
-	let activeSession = $derived(sessions.find((session) => session.id === game?.activeSessionId));
-	let preferredWidth = $state(DEFAULT_SIDEBAR_WIDTH);
-	let sidebarCollapsed = $state(false);
-	let layoutWidth = $state(0);
-	let resizing = $state(false);
-	let maxSidebarWidth = $derived(
-		Math.max(MIN_SIDEBAR_WIDTH, (layoutWidth || DEFAULT_SIDEBAR_WIDTH + 280) - 280)
-	);
-	let displayedWidth = $derived(
-		Math.min(maxSidebarWidth, Math.max(MIN_SIDEBAR_WIDTH, preferredWidth))
-	);
-	let drag: {
-		pointerId: number;
-		target: HTMLElement;
-		startX: number;
-		startWidth: number;
-		previousUserSelect: string;
-		previousCursor: string;
-	} | null = null;
-	configureAppSidebar(() => ({
-		games: railGames.length ? railGames : undefined,
-		activeGameId: gameId,
-		busy: busy || creatingGame,
-		onhome: () => {
-			void goto(resolve('/'));
-		},
-		onadd: () => {
-			void addGameFromRail();
-		},
-		onselect: (selected) => {
-			void navigateToGame(selected.id);
-		}
-	}));
 
-	onMount(() => {
-		preferredWidth = loadSidebarWidth();
-		sidebarCollapsed = loadSidebarCollapsed();
-		void loadWorkspace();
-		return () => finishResize();
-	});
-
-	function clampWidth(width: number) {
-		return Math.round(Math.max(MIN_SIDEBAR_WIDTH, Math.min(maxSidebarWidth, width)));
-	}
-
-	function toggleSidebar() {
-		finishResize();
-		sidebarCollapsed = !sidebarCollapsed;
-		saveSidebarCollapsed(sidebarCollapsed);
-	}
-
-	function startResize(event: PointerEvent) {
-		if (!event.isPrimary || event.button !== 0 || drag) return;
-		event.preventDefault();
-		const target = event.currentTarget as HTMLElement;
-		target.setPointerCapture(event.pointerId);
-		drag = {
-			pointerId: event.pointerId,
-			target,
-			startX: event.clientX,
-			startWidth: displayedWidth,
-			previousUserSelect: document.body.style.userSelect,
-			previousCursor: document.body.style.cursor
-		};
-		document.body.style.userSelect = 'none';
-		document.body.style.cursor = 'col-resize';
-		resizing = true;
-	}
-
-	function resize(event: PointerEvent) {
-		if (!drag || event.pointerId !== drag.pointerId) return;
-		preferredWidth = clampWidth(drag.startWidth + event.clientX - drag.startX);
-	}
-
-	function finishResize(event?: PointerEvent) {
-		if (!drag || (event && event.pointerId !== drag.pointerId)) return;
-		const previous = drag;
-		drag = null;
-		resizing = false;
-		document.body.style.userSelect = previous.previousUserSelect;
-		document.body.style.cursor = previous.previousCursor;
-		if (previous.target.hasPointerCapture(previous.pointerId))
-			previous.target.releasePointerCapture(previous.pointerId);
-		saveSidebarWidth(preferredWidth);
-	}
-
-	function resizeWithKeyboard(event: KeyboardEvent) {
-		if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
-		event.preventDefault();
-		const step = event.shiftKey ? 50 : 10;
-		preferredWidth =
-			event.key === 'Home'
-				? MIN_SIDEBAR_WIDTH
-				: event.key === 'End'
-					? maxSidebarWidth
-					: clampWidth(displayedWidth + (event.key === 'ArrowRight' ? step : -step));
-		saveSidebarWidth(preferredWidth);
-	}
-
-	async function loadWorkspace() {
-		loading = true;
-		loadError = '';
-		missing = false;
-		try {
-			const workspace = await getGameWorkspace(gameId);
-			if (!workspace) {
-				missing = true;
-				return;
-			}
-			game = workspace.game;
-			sessions = workspace.sessions;
-			railGames = [toLibraryGame(game)];
-			void loadRailGames();
-		} catch {
-			loadError = '게임을 불러오지 못했어요. 다시 시도해주세요.';
-		} finally {
-			loading = false;
-		}
-	}
-
-	async function loadRailGames() {
-		try {
-			railGames = (await listGames()).map(toLibraryGame);
-		} catch {
-			// Keep the current game's shortcut available if the library cannot be read.
-		}
-	}
-
-	async function navigateToGame(id: string) {
-		if (busy || creatingGame) return;
-		try {
-			await goto(resolve('/games/[id]', { id }));
-		} catch {
-			actionError = '게임 화면을 열지 못했어요. 다시 시도해주세요.';
-		}
-	}
-
-	async function addGameFromRail() {
-		if (busy || creatingGame) return;
-		creatingGame = true;
-		let created: Game | null = null;
-		try {
-			created = await createGame();
-			railGames = [toLibraryGame(created), ...railGames];
-			await goto(resolve('/games/[id]', { id: created.id }));
-		} catch {
-			actionError = created
-				? '게임은 저장되었지만 화면을 열지 못했어요. 왼쪽 목록에서 다시 열어주세요.'
-				: '게임을 추가하지 못했어요. 다시 시도해주세요.';
-		} finally {
-			creatingGame = false;
-		}
-	}
-
-	async function addSession() {
-		if (!game || busy) return;
-		sessionBusy = true;
-		actionError = '';
-		try {
-			const session = await createSession(game.id);
-			sessions = [session, ...sessions];
-			game = { ...game, activeSessionId: session.id, updatedAt: session.updatedAt };
-		} catch {
-			actionError = '새 세션을 저장하지 못했어요. 다시 시도해주세요.';
-		} finally {
-			sessionBusy = false;
-		}
-	}
-
-	async function changeSession(sessionId: string) {
-		if (!game || busy || sessionId === game.activeSessionId) return;
-		sessionBusy = true;
-		actionError = '';
-		try {
-			await selectSession(game.id, sessionId);
-			game = { ...game, activeSessionId: sessionId };
-		} catch {
-			actionError = '세션을 전환하지 못했어요. 다시 시도해주세요.';
-		} finally {
-			sessionBusy = false;
-		}
-	}
-
-	function startRename(session: Session) {
-		renamingSessionId = session.id;
-		sessionName = session.title;
-		renameError = '';
-	}
-
-	function focusSessionName(input: HTMLInputElement) {
-		input.focus();
-		input.select();
-	}
-
-	async function saveSessionName(event: SubmitEvent) {
-		event.preventDefault();
-		if (!game || !renamingSessionId || busy) return;
-		renameError = '';
-		let title: string;
-		try {
-			title = validateSessionTitle(sessionName);
-		} catch (error) {
-			renameError = error instanceof Error ? error.message : '세션 이름을 확인해주세요.';
-			return;
-		}
-		sessionBusy = true;
-		try {
-			const updated = await renameSession(game.id, renamingSessionId, title);
-			sessions = sessions.map((session) => (session.id === updated.id ? updated : session));
-			renamingSessionId = null;
-		} catch {
-			renameError = '세션 이름을 저장하지 못했어요. 다시 시도해주세요.';
-		} finally {
-			sessionBusy = false;
-		}
-	}
-
-	function requestDelete(session: Session) {
-		renamingSessionId = null;
-		renameError = '';
-		deleteError = '';
-		deletingSession = session;
-	}
-
-	function openDeleteDialog(dialog: HTMLDialogElement) {
-		dialog.showModal();
-		return () => dialog.close();
-	}
-
-	async function confirmDelete() {
-		if (!game || !deletingSession || busy) return;
-		const deletingSessionId = deletingSession.id;
-		sessionBusy = true;
-		deleteError = '';
-		try {
-			const workspace = await deleteSession(game.id, deletingSession.id);
-			game = workspace.game;
-			sessions = workspace.sessions;
-			deletingSession = null;
-			delete chatDrafts[deletingSessionId];
-		} catch {
-			deleteError = '세션을 삭제하지 못했어요. 다시 시도해주세요.';
-		} finally {
-			sessionBusy = false;
-		}
-	}
-
-	async function saveSettings(input: GameMetadata): Promise<Game> {
-		if (!game) throw new Error('Game is unavailable');
-		const updated = await updateGame(game.id, input);
-		game = {
-			...game,
-			title: updated.title,
-			genre: updated.genre,
-			description: updated.description,
-			updatedAt: updated.updatedAt > game.updatedAt ? updated.updatedAt : game.updatedAt
-		};
-		const current = toLibraryGame(game);
-		railGames = railGames.map((item) => (item.id === updated.id ? current : item));
-		return updated;
-	}
-
-	function moveTab(event: KeyboardEvent) {
-		if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
-		event.preventDefault();
-		selectedTab =
-			event.key === 'Home'
-				? 'sessions'
-				: event.key === 'End'
-					? 'game'
-					: selectedTab === 'sessions'
-						? 'game'
-						: 'sessions';
-		(event.currentTarget as HTMLElement).parentElement
-			?.querySelector<HTMLButtonElement>(`[data-tab="${selectedTab}"]`)
-			?.focus();
-	}
+	const workspace = new GameWorkspaceController(() => ({ gameId }));
+	onMount(workspace.mount);
 </script>
 
-<svelte:head><title>{game?.title ?? '게임'} · Helia</title></svelte:head>
+<svelte:head><title>{workspace.game?.title ?? '게임'} · Helia</title></svelte:head>
 
 <div class="workspace">
 	<header>
 		<a class="home-link" href={resolve('/')} aria-label="내 게임"
 			><Icon name="sun" size={24} /><span>내 게임</span></a
 		>
-		{#if game}
+		{#if workspace.game}
 			<div class="game-heading">
-				<h1>{game.title}</h1>
+				<h1>{workspace.game.title}</h1>
 				<span class="badge">제작 중</span>
 			</div>
 		{/if}
 	</header>
 
-	{#if loading}
+	{#if workspace.loading}
 		<main class="status"><p role="status">게임을 불러오는 중…</p></main>
-	{:else if loadError}
+	{:else if workspace.loadError}
 		<main class="status">
-			<p role="alert">{loadError}</p>
-			<button type="button" onclick={loadWorkspace}>다시 불러오기</button>
+			<p role="alert">{workspace.loadError}</p>
+			<button type="button" onclick={workspace.loadWorkspace}>다시 불러오기</button>
 		</main>
-	{:else if missing}
+	{:else if workspace.missing}
 		<main class="status">
 			<h1>게임을 찾을 수 없어요</h1>
 			<a href={resolve('/')}>내 게임으로 돌아가기</a>
 		</main>
-	{:else if game}
+	{:else if workspace.game}
 		<div
-			class={['game-layout', { resizing, 'sidebar-collapsed': sidebarCollapsed }]}
-			bind:clientWidth={layoutWidth}
-			style:--sidebar-width={`${displayedWidth}px`}
+			class={[
+				'game-layout',
+				{ resizing: workspace.resizing, 'sidebar-collapsed': workspace.sidebarCollapsed }
+			]}
+			bind:clientWidth={workspace.layoutWidth}
+			style:--sidebar-width={`${workspace.displayedWidth}px`}
 		>
 			<aside
 				id="workspace-sidebar"
 				class="sessions-panel"
 				aria-label="게임 세션"
-				hidden={sidebarCollapsed}
+				hidden={workspace.sidebarCollapsed}
 			>
 				<div class="panel-tabs" role="tablist" aria-label="사이드바 보기">
 					<button
 						id="sessions-tab"
-						onkeydown={moveTab}
+						onkeydown={workspace.moveTab}
 						data-tab="sessions"
-						class={{ selected: selectedTab === 'sessions' }}
+						class={{ selected: workspace.selectedTab === 'sessions' }}
 						type="button"
 						role="tab"
-						aria-selected={selectedTab === 'sessions'}
+						aria-selected={workspace.selectedTab === 'sessions'}
 						aria-controls="sessions-panel"
-						tabindex={selectedTab === 'sessions' ? 0 : -1}
-						onclick={() => (selectedTab = 'sessions')}>세션</button
+						tabindex={workspace.selectedTab === 'sessions' ? 0 : -1}
+						onclick={() => (workspace.selectedTab = 'sessions')}>세션</button
 					>
 					<button
 						id="game-tab"
-						onkeydown={moveTab}
+						onkeydown={workspace.moveTab}
 						data-tab="game"
-						class={{ selected: selectedTab === 'game' }}
+						class={{ selected: workspace.selectedTab === 'game' }}
 						type="button"
 						role="tab"
-						aria-selected={selectedTab === 'game'}
+						aria-selected={workspace.selectedTab === 'game'}
 						aria-controls="game-panel"
-						tabindex={selectedTab === 'game' ? 0 : -1}
-						onclick={() => (selectedTab = 'game')}>게임</button
+						tabindex={workspace.selectedTab === 'game' ? 0 : -1}
+						onclick={() => (workspace.selectedTab = 'game')}>게임</button
 					>
 				</div>
 				<div
@@ -417,29 +91,35 @@
 					role="tabpanel"
 					aria-labelledby="sessions-tab"
 					tabindex="0"
-					hidden={selectedTab !== 'sessions'}
+					hidden={workspace.selectedTab !== 'sessions'}
 				>
-					<button class="new-session" type="button" disabled={busy} onclick={addSession}
+					<button
+						class="new-session"
+						type="button"
+						disabled={workspace.busy}
+						onclick={workspace.addSession}
 						><Icon name="plus" size={17} /><span>새 세션</span></button
 					>
-					<nav aria-label="세션 목록" aria-busy={busy}>
-						{#each sessions as session (session.id)}
-							<div class={['session-row', { active: session.id === game.activeSessionId }]}>
-								{#if renamingSessionId === session.id}
-									<form class="session-rename" onsubmit={saveSessionName}>
+					<nav aria-label="세션 목록" aria-busy={workspace.busy}>
+						{#each workspace.sessions as session (session.id)}
+							<div
+								class={['session-row', { active: session.id === workspace.game.activeSessionId }]}
+							>
+								{#if workspace.renamingSessionId === session.id}
+									<form class="session-rename" onsubmit={workspace.saveSessionName}>
 										<span class="session-prefix" aria-hidden="true">#</span>
 										<input
-											{@attach focusSessionName}
+											{@attach workspace.focusSessionName}
 											aria-label="세션 이름"
-											bind:value={sessionName}
+											bind:value={workspace.sessionName}
 											maxlength={SESSION_TITLE_MAX_LENGTH}
-											disabled={busy}
-											aria-describedby={renameError ? 'session-rename-error' : undefined}
+											disabled={workspace.busy}
+											aria-describedby={workspace.renameError ? 'session-rename-error' : undefined}
 											onkeydown={(event) => {
-												if (event.key === 'Escape' && !busy) {
+												if (event.key === 'Escape' && !workspace.busy) {
 													event.preventDefault();
-													renamingSessionId = null;
-													renameError = '';
+													workspace.renamingSessionId = null;
+													workspace.renameError = '';
 												}
 											}}
 										/>
@@ -447,16 +127,16 @@
 											class="session-action"
 											type="submit"
 											aria-label="이름 저장"
-											disabled={busy}><Icon name="check" size={16} /></button
+											disabled={workspace.busy}><Icon name="check" size={16} /></button
 										>
 										<button
 											class="session-action"
 											type="button"
 											aria-label="이름 수정 취소"
-											disabled={busy}
+											disabled={workspace.busy}
 											onclick={() => {
-												renamingSessionId = null;
-												renameError = '';
+												workspace.renamingSessionId = null;
+												workspace.renameError = '';
 											}}><Icon name="close" size={16} /></button
 										>
 									</form>
@@ -464,10 +144,12 @@
 									<button
 										class="session"
 										type="button"
-										aria-current={session.id === game.activeSessionId ? 'true' : undefined}
-										disabled={busy}
+										aria-current={session.id === workspace.game.activeSessionId
+											? 'true'
+											: undefined}
+										disabled={workspace.busy}
 										aria-label={`${session.title} 열기`}
-										onclick={() => changeSession(session.id)}
+										onclick={() => workspace.changeSession(session.id)}
 									>
 										<span class="session-prefix" aria-hidden="true">#</span><strong
 											>{session.title}</strong
@@ -478,23 +160,29 @@
 										type="button"
 										aria-label={`${session.title} 이름 수정`}
 										title="이름 수정"
-										disabled={busy}
-										onclick={() => startRename(session)}><Icon name="pencil" size={16} /></button
+										disabled={workspace.busy}
+										onclick={() => workspace.startRename(session)}
+										><Icon name="pencil" size={16} /></button
 									>
 									<button
 										class="session-action"
 										type="button"
 										aria-label={`${session.title} 삭제`}
 										title="삭제"
-										disabled={busy}
-										onclick={() => requestDelete(session)}><Icon name="trash" size={16} /></button
+										disabled={workspace.busy}
+										onclick={() => workspace.requestDelete(session)}
+										><Icon name="trash" size={16} /></button
 									>
 								{/if}
 							</div>
 						{/each}
 					</nav>
-					{#if renameError}<p class="session-error" id="session-rename-error" role="alert">
-							{renameError}
+					{#if workspace.renameError}<p
+							class="session-error"
+							id="session-rename-error"
+							role="alert"
+						>
+							{workspace.renameError}
 						</p>{/if}
 				</div>
 				<div
@@ -503,46 +191,55 @@
 					role="tabpanel"
 					aria-labelledby="game-tab"
 					tabindex="0"
-					hidden={selectedTab !== 'game'}
+					hidden={workspace.selectedTab !== 'game'}
 				>
-					<GameSettingsPanel {game} onsave={saveSettings} blocked={busy} />
+					<GameSettingsPanel
+						game={workspace.game}
+						onsave={workspace.saveSettings}
+						blocked={workspace.busy}
+					/>
 				</div>
 			</aside>
 			<div
 				class="resize-handle"
 				role="slider"
-				hidden={sidebarCollapsed}
+				hidden={workspace.sidebarCollapsed}
 				tabindex="0"
 				aria-label="사이드바 너비 조절"
 				aria-orientation="horizontal"
 				aria-controls="workspace-sidebar"
 				aria-valuemin={MIN_SIDEBAR_WIDTH}
-				aria-valuemax={Math.round(maxSidebarWidth)}
-				aria-valuenow={Math.round(displayedWidth)}
-				onpointerdown={startResize}
-				onpointermove={resize}
-				onpointerup={finishResize}
-				onpointercancel={finishResize}
-				onlostpointercapture={finishResize}
-				onkeydown={resizeWithKeyboard}
+				aria-valuemax={Math.round(workspace.maxSidebarWidth)}
+				aria-valuenow={Math.round(workspace.displayedWidth)}
+				onpointerdown={workspace.startResize}
+				onpointermove={workspace.resize}
+				onpointerup={workspace.finishResize}
+				onpointercancel={workspace.finishResize}
+				onlostpointercapture={workspace.finishResize}
+				onkeydown={workspace.resizeWithKeyboard}
 			></div>
 			<button
 				class="sidebar-toggle"
 				type="button"
-				aria-label={sidebarCollapsed ? '사이드바 펼치기' : '사이드바 접기'}
+				aria-label={workspace.sidebarCollapsed ? '사이드바 펼치기' : '사이드바 접기'}
 				aria-controls="workspace-sidebar"
-				aria-expanded={!sidebarCollapsed}
-				onclick={toggleSidebar}
-				><Icon name={sidebarCollapsed ? 'arrow-right' : 'arrow-left'} size={20} /></button
+				aria-expanded={!workspace.sidebarCollapsed}
+				onclick={workspace.toggleSidebar}
+				><Icon name={workspace.sidebarCollapsed ? 'arrow-right' : 'arrow-left'} size={20} /></button
 			>
-			<main class={['session-workspace', { 'has-game-ui': !!game.ui }]} aria-label="현재 세션">
-				{#if actionError}<p class="action-error" role="alert">{actionError}</p>{/if}
-				{#if activeSession}
-					{@const currentSessionId = activeSession.id}
-					{@const currentGame = game}
+			<main
+				class={['session-workspace', { 'has-game-ui': !!workspace.game.ui }]}
+				aria-label="현재 세션"
+			>
+				{#if workspace.actionError}<p class="action-error" role="alert">
+						{workspace.actionError}
+					</p>{/if}
+				{#if workspace.activeSession}
+					{@const currentSessionId = workspace.activeSession.id}
+					{@const currentGame = workspace.game}
 					<div class="session-heading">
 						<Icon name="chat" size={18} />
-						<h2>{activeSession.title}</h2>
+						<h2>{workspace.activeSession.title}</h2>
 					</div>
 					{#snippet chat(theme?: GameUI['chatStyle'])}
 						{#key currentSessionId}
@@ -550,28 +247,28 @@
 								gameId={currentGame.id}
 								sessionId={currentSessionId}
 								gameTitle={currentGame.title}
-								blocked={sessionBusy || uiSaving}
+								blocked={workspace.sessionBusy || workspace.uiSaving}
 								chatStyle={theme}
 								bind:draft={
-									() => chatDrafts[currentSessionId] ?? '',
-									(value) => (chatDrafts[currentSessionId] = value)
+									() => workspace.chatDrafts[currentSessionId] ?? '',
+									(value) => (workspace.chatDrafts[currentSessionId] = value)
 								}
 								onsessionupdate={(updated) => {
-									sessions = sessions.map((session) =>
+									workspace.sessions = workspace.sessions.map((session) =>
 										session.id === updated.id ? updated : session
 									);
 								}}
-								onsavingchange={(saving) => (chatSaving = saving)}
+								onsavingchange={(saving) => (workspace.chatSaving = saving)}
 							/>
 						{/key}
 					{/snippet}
 					{#key currentSessionId}
 						<GameWorkbench
-							gameId={game.id}
+							gameId={workspace.game.id}
 							sessionId={currentSessionId}
-							ui={game.ui}
-							blocked={sessionBusy || chatSaving}
-							onsavingchange={(saving) => (uiSaving = saving)}
+							ui={workspace.game.ui}
+							blocked={workspace.sessionBusy || workspace.chatSaving}
+							onsavingchange={(saving) => (workspace.uiSaving = saving)}
 						>
 							{#snippet children(theme)}{@render chat(theme)}{/snippet}
 						</GameWorkbench>
@@ -582,25 +279,35 @@
 	{/if}
 </div>
 
-{#if deletingSession}
+{#if workspace.deletingSession}
 	<dialog
 		class="delete-dialog"
-		{@attach openDeleteDialog}
+		{@attach workspace.openDeleteDialog}
 		aria-labelledby="delete-session-heading"
 		oncancel={(event) => {
-			if (busy) event.preventDefault();
+			if (workspace.busy) {
+				event.preventDefault();
+			}
 		}}
 		onclose={() => {
-			if (!busy) deletingSession = null;
+			if (!workspace.busy) {
+				workspace.deletingSession = null;
+			}
 		}}
 	>
 		<h2 id="delete-session-heading">세션 삭제</h2>
-		<p class="delete-title">{deletingSession.title}</p>
-		{#if deleteError}<p class="session-error" role="alert">{deleteError}</p>{/if}
+		<p class="delete-title">{workspace.deletingSession.title}</p>
+		{#if workspace.deleteError}<p class="session-error" role="alert">
+				{workspace.deleteError}
+			</p>{/if}
 		<div class="dialog-actions">
-			<button type="button" disabled={busy} onclick={() => (deletingSession = null)}>취소</button>
-			<button type="button" disabled={busy} onclick={confirmDelete}
-				>{busy ? '삭제 중…' : '삭제'}</button
+			<button
+				type="button"
+				disabled={workspace.busy}
+				onclick={() => (workspace.deletingSession = null)}>취소</button
+			>
+			<button type="button" disabled={workspace.busy} onclick={workspace.confirmDelete}
+				>{workspace.busy ? '삭제 중…' : '삭제'}</button
 			>
 		</div>
 	</dialog>

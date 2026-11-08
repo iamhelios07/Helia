@@ -1,12 +1,14 @@
 import '../../../app.css';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { page, userEvent } from 'vitest/browser';
 import { render } from 'vitest-browser-svelte';
-import SettingsDialog from './SettingsDialog.svelte';
-import AppFixture from '#lib/testing/AppFixture.svelte';
+import { page, userEvent } from 'vitest/browser';
+
 import { createGame } from '#lib/games/repository.js';
-import { emptyAISettings, upsertProvider, upsertModel } from './model.js';
-import { AI_SETTINGS_KEY, loadAISettings, saveAISettings } from './repository.js';
+import AppFixture from '#lib/testing/AppFixture.svelte';
+import fixture from '#lib/testing/fixtures/service-account.json';
+
+import type { CatalogModel } from './credentials.js';
+
 import {
 	getCredentialStatus,
 	saveCredential,
@@ -15,9 +17,10 @@ import {
 	saveServiceAccountCredential,
 	verifyProviderCredential
 } from './credentials.js';
-import fixture from '#lib/testing/fixtures/service-account.json';
-import type { CatalogModel } from './credentials.js';
+import { emptyAISettings, upsertProvider, upsertModel } from './model.js';
+import { AI_SETTINGS_KEY, loadAISettings, saveAISettings } from './repository.js';
 import { SERVICE_PRESETS } from './services.js';
+import SettingsDialog from './SettingsDialog.svelte';
 
 vi.mock('$app/navigation', () => ({ goto: vi.fn() }));
 vi.mock('./credentials.js', () => ({

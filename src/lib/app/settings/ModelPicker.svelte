@@ -1,7 +1,8 @@
 <script lang="ts">
 	import Icon from '#lib/components/Icon.svelte';
-	import type { ModelSettings, ProviderSettings } from './model.js';
+
 	import type { CatalogModel } from './credentials.js';
+	import type { ModelSettings, ProviderSettings } from './model.js';
 	let {
 		models,
 		providers,
@@ -42,6 +43,12 @@
 			`${model.name} ${model.modelId}`.toLowerCase().includes(search.toLowerCase())
 		)
 	);
+	let catalogLabel = $derived.by(() => {
+		if (loading) {
+			return '불러오는 중…';
+		}
+		return catalog.length ? '새로고침' : '모델 목록 불러오기';
+	});
 	let available = $derived(
 		catalog.filter((model) =>
 			`${model.name} ${model.id}`.toLowerCase().includes(catalogSearch.toLowerCase())
@@ -127,8 +134,7 @@
 				class="subtle-button"
 				type="button"
 				disabled={busy || loading || !canDiscover}
-				onclick={ondiscover}
-				>{loading ? '불러오는 중…' : catalog.length ? '새로고침' : '모델 목록 불러오기'}</button
+				onclick={ondiscover}>{catalogLabel}</button
 			>
 		</div>
 		{#if catalogError}<p class="notice" role="alert">{catalogError}</p>{/if}

@@ -133,3 +133,16 @@ When implementing a feature or fixing an issue:
 Avoid unnecessary complexity. Every new abstraction should solve an actual problem.
 
 When architectural decisions are unclear, favor solutions that preserve creator freedom, game-system extensibility, and a seamless player experience.
+
+## Code Quality Enforcement
+
+- Run `pnpm check` and `pnpm lint` after modifying application code.
+- Treat ESLint complexity, duplication, nesting, and length warnings as refactoring requests.
+- Prefer early returns and simple control flow over deep nesting.
+- Keep business logic separate from Svelte presentation components.
+- Do not split functions arbitrarily just to satisfy lint thresholds.
+- Do not introduce unnecessary abstractions to silence warnings.
+- Avoid `eslint-disable` unless there is a documented technical justification.
+- Never weaken lint configuration merely to make checks pass.
+- Preserve existing behavior and run relevant tests after refactoring.
+- Avoid repository-wide formatting unless explicitly requested.

@@ -1,6 +1,5 @@
 import { expect, it, vi } from 'vitest';
-import { runCreatorAction } from './browser.js';
-import { CreatorRuntimeError, type ActionRequest } from './protocol.js';
+
 import {
 	createGame,
 	updateGameRules,
@@ -9,6 +8,9 @@ import {
 	getSessionTimeline,
 	subscribeSessionEvents
 } from '#lib/games/repository.js';
+
+import { runCreatorAction } from './browser.js';
+import { CreatorRuntimeError, type ActionRequest } from './protocol.js';
 
 vi.mock('../../storage/transport.js', async () => {
 	const { memoryStorage } = await import('../../testing/memory-storage.js');

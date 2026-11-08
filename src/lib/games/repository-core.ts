@@ -1,5 +1,47 @@
-import { useStorage, type StorageUnit } from '#lib/storage/unit.js';
+import type { TransactionValidator } from '#lib/games/state/workspace.js';
+
+import { createSessionEvents } from '#lib/games/scripting/events.js';
+import { executeSessionWork, type ExecutionReport } from '#lib/games/scripting/execution.js';
+import {
+	CreatorRuntimeError,
+	type ActionRunner,
+	type RunOptions,
+	type ActionRequest
+} from '#lib/games/scripting/protocol.js';
+import {
+	activeMemories,
+	activeTransactions,
+	assertRevision,
+	checkoutHistory,
+	createSessionState,
+	prepareTransaction,
+	stateAt,
+	type CommitTransaction
+} from '#lib/games/state/engine.js';
+import { historyEvents, type SessionTimeline } from '#lib/games/state/history.js';
+import {
+	counter,
+	identifier,
+	parseAction,
+	parseGameSnapshot,
+	parseMemory,
+	parseSessionState,
+	parseTransaction,
+	type SessionHistory
+} from '#lib/games/state/model.js';
+import { emptyStateDocument, parseStateDocument } from '#lib/games/state/schema.js';
+import { parseGameState, sameValue } from '#lib/games/state/value.js';
 import { storedRecord, type StorageTransport } from '#lib/storage/protocol.js';
+import { useStorage, type StorageUnit } from '#lib/storage/unit.js';
+
+import type { AgentWorkspaceResult } from './ai/loop.js';
+import type { RuleTrigger } from './scripting/protocol.js';
+
+import { isSessionBusy } from './ai/activity.js';
+import { parseGameAIContent } from './ai/prompts.js';
+import { aiError } from './ai/protocol.js';
+import { compileCodeProject } from './code-project.js';
+import { editorContent, type GameEditorContent } from './editor.js';
 import {
 	parseGame,
 	parseSession,
@@ -15,48 +57,8 @@ import {
 	type GameMetadata,
 	type UpdateGameSettings
 } from './model.js';
-import {
-	activeMemories,
-	activeTransactions,
-	assertRevision,
-	checkoutHistory,
-	createSessionState,
-	prepareTransaction,
-	stateAt,
-	type CommitTransaction
-} from '#lib/games/state/engine.js';
-import {
-	counter,
-	identifier,
-	parseAction,
-	parseGameSnapshot,
-	parseMemory,
-	parseSessionState,
-	parseTransaction,
-	type SessionHistory
-} from '#lib/games/state/model.js';
-import { parseGameState, sameValue } from '#lib/games/state/value.js';
-import { emptyStateDocument, parseStateDocument } from '#lib/games/state/schema.js';
-import type { TransactionValidator } from '#lib/games/state/workspace.js';
-import { historyEvents, type SessionTimeline } from '#lib/games/state/history.js';
-import {
-	CreatorRuntimeError,
-	type ActionRunner,
-	type RunOptions,
-	type ActionRequest
-} from '#lib/games/scripting/protocol.js';
-import { executeSessionWork, type ExecutionReport } from '#lib/games/scripting/execution.js';
-import { createSessionEvents } from '#lib/games/scripting/events.js';
-import { parseGameUI } from './ui/runtime/model.js';
-import { parseGameAIContent } from './ai/prompts.js';
-import { isSessionBusy } from './ai/activity.js';
-import { aiError } from './ai/protocol.js';
-import type { AgentWorkspaceResult } from './ai/loop.js';
-import type { RuleTrigger } from './scripting/protocol.js';
-import { editorContent, type GameEditorContent } from './editor.js';
 import { migrateState } from './state/migration.js';
-import { compileCodeProject } from './code-project.js';
-
+import { parseGameUI } from './ui/runtime/model.js';
 function makeSession(gameId: string): Session {
 	const now = new Date().toISOString();
 	return {
@@ -72,9 +74,7 @@ function makeSession(gameId: string): Session {
 function makeMessage(
 	session: Session,
 	sequence: number,
-	role: Message['role'],
-	content: string,
-	kind: Message['kind']
+	{ role, content, kind }: Pick<Message, 'role' | 'content' | 'kind'>
 ): Message {
 	return parseMessage({
 		schemaVersion: 1,
@@ -90,15 +90,21 @@ function makeMessage(
 }
 function gameIn(unit: StorageUnit, id: string): Game {
 	const value = unit.get('games', id);
-	if (value === undefined) throw new Error('게임을 찾을 수 없어요.');
+	if (value === undefined) {
+		throw new Error('게임을 찾을 수 없어요.');
+	}
 	return parseGame(value);
 }
 function owner(unit: StorageUnit, gameId: string, sessionId: string) {
 	const game = gameIn(unit, gameId);
 	const value = unit.get('sessions', sessionId);
-	if (value === undefined) throw new Error('세션을 찾을 수 없어요.');
+	if (value === undefined) {
+		throw new Error('세션을 찾을 수 없어요.');
+	}
 	const session = parseSession(value);
-	if (session.gameId !== gameId) throw new Error('이 게임에 속한 세션이 아니에요.');
+	if (session.gameId !== gameId) {
+		throw new Error('이 게임에 속한 세션이 아니에요.');
+	}
 	return { game, session };
 }
 function messagesIn(unit: StorageUnit, session: Session): Message[] {
@@ -114,8 +120,9 @@ function messagesIn(unit: StorageUnit, session: Session): Message[] {
 				message.gameId !== session.gameId ||
 				message.sequence !== index + 1
 		)
-	)
+	) {
 		throw new Error('저장된 채팅 기록을 확인할 수 없어요.');
+	}
 	return messages;
 }
 function initialize(unit: StorageUnit, gameId: string, sessionId: string) {
@@ -123,21 +130,37 @@ function initialize(unit: StorageUnit, gameId: string, sessionId: string) {
 	let session = previous;
 	let messages = messagesIn(unit, session);
 	if (game.settings.firstMessage.trim() && messages[0]?.kind !== 'opening') {
-		for (const message of messages)
+		for (const message of messages) {
 			unit.put('messages', { ...message, sequence: counter(message.sequence + 1) });
+		}
 		unit.put(
 			'messages',
-			makeMessage(session, 1, 'assistant', game.settings.firstMessage, 'opening')
+			makeMessage(session, 1, {
+				role: 'assistant',
+				content: game.settings.firstMessage,
+				kind: 'opening'
+			})
 		);
 		session = { ...session, messageCount: counter(messages.length + 1) };
 		unit.put('sessions', session);
 		messages = messagesIn(unit, session);
 	}
+	const history = sessionHistory(unit, game, session, messages);
+	return { game, session, messages, history };
+}
+function sessionHistory(
+	unit: StorageUnit,
+	game: Game,
+	session: Session,
+	messages: Message[]
+): SessionHistory {
+	const gameId = game.id;
 	let history: SessionHistory;
 	const saved = unit.get('progress', session.id);
 	if (saved === undefined) {
-		if (messages.some((message) => message.kind !== 'opening'))
+		if (messages.some((message) => message.kind !== 'opening')) {
 			throw new Error('세션의 진행 기록이 없어요.');
+		}
 		const snapshot = parseGameSnapshot({
 			schemaVersion: 1,
 			id: crypto.randomUUID(),
@@ -156,26 +179,26 @@ function initialize(unit: StorageUnit, gameId: string, sessionId: string) {
 		unit.put('snapshots', snapshot, session.id);
 		unit.put('progress', progress);
 		history = { snapshot, progress, transactions: [] };
-	} else {
-		const progress = parseSessionState(saved);
-		const snapshot = parseGameSnapshot(unit.get('snapshots', progress.snapshotId));
-		const transactions = unit
-			.all('transactions')
-			.map(parseTransaction)
-			.sort((a, b) => a.createdRevision - b.createdRevision);
-		history = { snapshot, progress, transactions };
-		if (
-			progress.gameId !== gameId ||
-			progress.sessionId !== session.id ||
-			!sameValue(stateAt(history), progress.state)
-		)
-			throw new Error('저장된 상태가 진행 기록과 일치하지 않아요.');
-		const ids = new Set(messages.map((message) => message.id));
-		if (transactions.some((node) => node.messageId !== undefined && !ids.has(node.messageId)))
-			throw new Error('진행 기록에 연결된 메시지를 찾을 수 없어요.');
+		return history;
 	}
-	return { game, session, messages, history };
+	const progress = parseSessionState(saved);
+	const snapshot = parseGameSnapshot(unit.get('snapshots', progress.snapshotId));
+	const transactions = unit
+		.all('transactions')
+		.map(parseTransaction)
+		.sort((a, b) => a.createdRevision - b.createdRevision);
+	history = { snapshot, progress, transactions };
+	if (
+		progress.gameId !== gameId ||
+		progress.sessionId !== session.id ||
+		!sameValue(stateAt(history), progress.state)
+	) {
+		throw new Error('저장된 상태가 진행 기록과 일치하지 않아요.');
+	}
+	assertHistoryMessages(transactions, messages);
+	return history;
 }
+
 type Context = ReturnType<typeof initialize>;
 function visibleMessages(context: Context): Message[] {
 	const byId = new Map(context.messages.map((message) => [message.id, message]));
@@ -184,35 +207,49 @@ function visibleMessages(context: Context): Message[] {
 	for (const node of activeTransactions(context.history)) {
 		if (node.messageId !== undefined) {
 			const message = byId.get(node.messageId);
-			if (!message) throw new Error('진행 기록에 연결된 메시지를 찾을 수 없어요.');
+			if (!message) {
+				throw new Error('진행 기록에 연결된 메시지를 찾을 수 없어요.');
+			}
 			messages.push(message);
 		}
 	}
 	return messages;
 }
-
 /** Shared application operations; the host owns the short SQL transactions. */
+export interface GameRepositoryOptions {
+	validateTransaction?: TransactionValidator;
+	runAction?: ActionRunner;
+	requestAI?: (
+		gameId: string,
+		sessionId: string,
+		input: {
+			text: string;
+			visible: boolean;
+		}
+	) => void;
+}
 export function createGameRepository(
 	rawTransport: StorageTransport,
-	options: {
-		validateTransaction?: TransactionValidator;
-		runAction?: ActionRunner;
-		requestAI?: (
-			gameId: string,
-			sessionId: string,
-			input: { text: string; visible: boolean }
-		) => void;
-	} = {}
+	options: GameRepositoryOptions = {}
 ) {
-	const uiEvents = createSessionEvents();
-	function publish(
+	return new GameRepository(rawTransport, options);
+}
+class GameRepository {
+	private rawTransport: StorageTransport;
+	private options: GameRepositoryOptions;
+	constructor(rawTransport: StorageTransport, options: GameRepositoryOptions = {}) {
+		this.rawTransport = rawTransport;
+		this.options = options;
+	}
+	private uiEvents = createSessionEvents();
+	private publish = (
 		gameId: string,
 		sessionId: string,
 		transactionId: string,
 		events: import('./scripting/protocol.js').UIEvent[]
-	) {
-		const failures = uiEvents.publish(gameId, sessionId, transactionId, events);
-		for (const event of events)
+	) => {
+		const failures = this.uiEvents.publish(gameId, sessionId, transactionId, events);
+		for (const event of events) {
 			if (
 				event.name === '$helia.ai' &&
 				typeof event.payload.text === 'string' &&
@@ -221,17 +258,18 @@ export function createGameRepository(
 				const input = { text: event.payload.text, visible: event.payload.visible === true };
 				queueMicrotask(() => {
 					try {
-						options.requestAI?.(gameId, sessionId, input);
+						this.options.requestAI?.(gameId, sessionId, input);
 					} catch {
 						/* Post-commit invocation cannot undo its originating transaction. */
 					}
 				});
 			}
+		}
 		return failures;
-	}
-	const changeListeners = new Map<string, Set<() => void>>();
-	const changeKey = (gameId: string, sessionId: string) => JSON.stringify([gameId, sessionId]);
-	const transport: StorageTransport = async (request) => {
+	};
+	private changeListeners = new Map<string, Set<() => void>>();
+	private changeKey = (gameId: string, sessionId: string) => JSON.stringify([gameId, sessionId]);
+	private transport: StorageTransport = async (request) => {
 		if (
 			request.kind === 'commit' &&
 			!request.aiLease &&
@@ -241,11 +279,13 @@ export function createGameRepository(
 					.map((row) => row.sessionId),
 				...request.deleteSessions
 			].some((id) => id && isSessionBusy(request.gameId, id))
-		)
+		) {
 			throw aiError('busy');
-		if (request.kind === 'prune' && isSessionBusy(request.gameId, request.sessionId))
+		}
+		if (request.kind === 'prune' && isSessionBusy(request.gameId, request.sessionId)) {
 			throw aiError('busy');
-		const reply = await rawTransport(request);
+		}
+		const reply = await this.rawTransport(request);
 		if (request.kind === 'commit' || request.kind === 'prune' || request.kind === 'create') {
 			const sessionIds =
 				request.kind === 'prune'
@@ -254,31 +294,38 @@ export function createGameRepository(
 							...request.records.flatMap((row) => (row.sessionId ? [row.sessionId] : [])),
 							...(request.kind === 'commit' ? request.deleteSessions : [])
 						];
-			for (const sessionId of new Set(sessionIds))
-				for (const listener of [
-					...(changeListeners.get(changeKey(request.gameId, sessionId)) ?? [])
-				]) {
-					try {
-						listener();
-					} catch {
-						/* Observers never turn a successful commit into a failure. */
-					}
-				}
+			for (const sessionId of new Set(sessionIds)) {
+				this.notifySession(request.gameId, sessionId);
+			}
 		}
 		return reply;
 	};
-	function withGame<T>(gameId: string, operation: (unit: StorageUnit) => T) {
-		return useStorage(transport, gameId, undefined, operation);
-	}
-	function withHistory<T>(
+	private notifySession = (gameId: string, sessionId: string) => {
+		for (const listener of [
+			...(this.changeListeners.get(this.changeKey(gameId, sessionId)) ?? [])
+		]) {
+			try {
+				listener();
+			} catch {
+				/* Observers never turn a successful commit into a failure. */
+			}
+		}
+	};
+
+	private withGame = <T>(gameId: string, operation: (unit: StorageUnit) => T) => {
+		return useStorage(this.transport, gameId, undefined, operation);
+	};
+	private withHistory = <T>(
 		gameId: string,
 		sessionId: string,
 		operation: (unit: StorageUnit, context: Context) => T,
 		runOptions: RunOptions = {}
-	) {
+	) => {
 		const scoped: StorageTransport = (command) => {
-			if (runOptions.signal?.aborted) throw aiError('canceled');
-			return transport(
+			if (runOptions.signal?.aborted) {
+				throw aiError('canceled');
+			}
+			return this.transport(
 				command.kind === 'commit' && runOptions.lease
 					? { ...command, aiLease: runOptions.lease }
 					: command
@@ -287,20 +334,20 @@ export function createGameRepository(
 		return useStorage(scoped, gameId, sessionId, (unit) =>
 			operation(unit, initialize(unit, gameId, sessionId))
 		);
-	}
-	function commit(
+	};
+	private commit = (
 		unit: StorageUnit,
 		context: Context,
-		input: CommitTransaction & { message?: Pick<Message, 'role' | 'content'> }
-	) {
+		input: CommitTransaction & {
+			message?: Pick<Message, 'role' | 'content'>;
+		}
+	) => {
 		const message = input.message
-			? makeMessage(
-					context.session,
-					counter((context.session.messageCount ?? 0) + 1),
-					input.message.role,
-					validateMessageContent(input.message.content),
-					'dialogue'
-				)
+			? makeMessage(context.session, counter((context.session.messageCount ?? 0) + 1), {
+					role: input.message.role,
+					content: validateMessageContent(input.message.content),
+					kind: 'dialogue'
+				})
 			: undefined;
 		const prepared = prepareTransaction(
 			context.history,
@@ -310,11 +357,13 @@ export function createGameRepository(
 				createdAt: new Date().toISOString(),
 				...(message ? { messageId: message.id } : {})
 			},
-			options.validateTransaction
+			this.options.validateTransaction
 		);
 		unit.put('transactions', prepared.transaction);
 		unit.put('progress', prepared.progress);
-		if (message) unit.put('messages', message);
+		if (message) {
+			unit.put('messages', message);
+		}
 		const now = prepared.transaction.createdAt;
 		const session = {
 			...context.session,
@@ -332,25 +381,27 @@ export function createGameRepository(
 			session,
 			message
 		};
-	}
-	function getTimeline(gameId: string, sessionId: string): Promise<SessionTimeline> {
-		return withHistory(gameId, sessionId, (unit, context) => ({
+	};
+	private getTimeline = (gameId: string, sessionId: string): Promise<SessionTimeline> => {
+		return this.withHistory(gameId, sessionId, (unit, context) => ({
 			session: context.session,
 			history: context.history,
 			events: historyEvents(context.history, context.messages),
 			messages: visibleMessages(context),
 			memories: activeMemories(context.history, unit.all('memories').map(parseMemory))
 		}));
-	}
-	async function executeWork(
+	};
+	private executeWork = async (
 		context: Context,
 		input: Omit<CommitTransaction, 'nextState'> & {
 			message?: Pick<Message, 'role' | 'content'>;
 			operation?: ActionRequest['operation'];
 		},
 		runOptions: RunOptions = {}
-	) {
-		if (!options.runAction) throw new CreatorRuntimeError('unavailable');
+	) => {
+		if (!this.options.runAction) {
+			throw new CreatorRuntimeError('unavailable');
+		}
 		const gameId = context.game.id,
 			sessionId = context.session.id;
 		let session = context.session,
@@ -359,525 +410,578 @@ export function createGameRepository(
 			context.history,
 			input,
 			{
-				run: options.runAction,
-				read: () => withHistory(gameId, sessionId, (_unit, next) => next.history),
+				run: this.options.runAction,
+				read: () => this.withHistory(gameId, sessionId, (_unit, next) => next.history),
 				commit: (proposal, snapshotId) =>
-					withHistory(
+					this.withHistory(
 						gameId,
 						sessionId,
 						(unit, next) => {
-							if (runOptions.signal?.aborted) throw new CreatorRuntimeError('canceled');
+							if (runOptions.signal?.aborted) {
+								throw new CreatorRuntimeError('canceled');
+							}
 							if (
 								next.history.progress.revision !== proposal.expectedRevision ||
 								next.history.snapshot.id !== snapshotId
-							)
+							) {
 								throw new CreatorRuntimeError('conflict');
-							const saved = commit(unit, next, proposal);
+							}
+							const saved = this.commit(unit, next, proposal);
 							session = saved.session;
-							if (saved.message) message = saved.message;
+							if (saved.message) {
+								message = saved.message;
+							}
 							return saved.history;
 						},
 						runOptions
 					),
-				publish: (transactionId, events) => publish(gameId, sessionId, transactionId, events)
+				publish: (transactionId, events) => this.publish(gameId, sessionId, transactionId, events)
 			},
 			runOptions
 		);
 		return { history, session, message };
-	}
-	async function deleteEvent(
+	};
+	private deleteEvent = async (
 		gameId: string,
 		sessionId: string,
 		eventId: string,
 		expectedRevision: number
-	): Promise<SessionTimeline> {
-		await transport({ kind: 'prune', gameId, sessionId, eventId, expectedRevision });
-		return getTimeline(gameId, sessionId);
-	}
-	return {
-		async commitSessionAgent(
-			gameId: string,
-			sessionId: string,
-			input: {
-				expectedRevision: number;
-				snapshotId: string;
-				input: string;
-				visible: boolean;
-				result: AgentWorkspaceResult;
-			},
-			runOptions: RunOptions = {}
-		) {
-			const saved = await withHistory(
-				gameId,
-				sessionId,
-				(unit, context) => {
-					if (runOptions.signal?.aborted) throw aiError('canceled');
-					assertRevision(context.history.progress, input.expectedRevision);
-					if (context.history.snapshot.id !== input.snapshotId)
-						throw new CreatorRuntimeError('conflict');
-					let current = context;
-					if (input.visible) {
-						const user = commit(unit, current, {
-							expectedRevision: current.history.progress.revision,
-							parentId: current.history.progress.headId,
-							nextState: current.history.progress.state,
-							action: { name: 'sendMessage', args: { content: input.input } },
-							message: { role: 'user', content: input.input }
-						});
-						current = {
-							...current,
-							history: user.history,
-							session: user.session,
-							messages: [...current.messages, user.message!]
-						};
-					}
-					const assistant = commit(unit, current, {
+	): Promise<SessionTimeline> => {
+		await this.transport({ kind: 'prune', gameId, sessionId, eventId, expectedRevision });
+		return this.getTimeline(gameId, sessionId);
+	};
+	commitSessionAgent = async (
+		gameId: string,
+		sessionId: string,
+		input: {
+			expectedRevision: number;
+			snapshotId: string;
+			input: string;
+			visible: boolean;
+			result: AgentWorkspaceResult;
+		},
+		runOptions: RunOptions = {}
+	) => {
+		const saved = await this.withHistory(
+			gameId,
+			sessionId,
+			(unit, context) => {
+				if (runOptions.signal?.aborted) {
+					throw aiError('canceled');
+				}
+				assertRevision(context.history.progress, input.expectedRevision);
+				if (context.history.snapshot.id !== input.snapshotId) {
+					throw new CreatorRuntimeError('conflict');
+				}
+				let current = context;
+				if (input.visible) {
+					const user = this.commit(unit, current, {
 						expectedRevision: current.history.progress.revision,
 						parentId: current.history.progress.headId,
-						nextState: input.result.state,
-						action: { name: '$helia.ai', args: { input: input.input } },
-						description: 'AI 응답',
-						message: { role: 'assistant', content: input.result.text }
+						nextState: current.history.progress.state,
+						action: { name: 'sendMessage', args: { content: input.input } },
+						message: { role: 'user', content: input.input }
 					});
-					const completed = {
+					current = {
 						...current,
-						history: assistant.history,
-						session: assistant.session,
-						messages: [...current.messages, assistant.message!]
+						history: user.history,
+						session: user.session,
+						messages: [...current.messages, user.message!]
 					};
-					return {
-						session: completed.session,
-						history: completed.history,
-						events: historyEvents(completed.history, completed.messages),
-						messages: visibleMessages(completed),
-						memories: activeMemories(completed.history, unit.all('memories').map(parseMemory))
-					};
-				},
-				runOptions
-			);
-			publish(gameId, sessionId, saved.history.progress.headId!, input.result.events);
-			return saved;
-		},
-		async executeSessionAgentHook(
-			gameId: string,
-			sessionId: string,
-			name: string,
-			trigger: RuleTrigger,
-			runOptions: RunOptions = {}
-		) {
-			const context = await withHistory(gameId, sessionId, (_unit, context) => context);
-			return executeWork(
+				}
+				const assistant = this.commit(unit, current, {
+					expectedRevision: current.history.progress.revision,
+					parentId: current.history.progress.headId,
+					nextState: input.result.state,
+					action: { name: '$helia.ai', args: { input: input.input } },
+					description: 'AI 응답',
+					message: { role: 'assistant', content: input.result.text }
+				});
+				const completed = {
+					...current,
+					history: assistant.history,
+					session: assistant.session,
+					messages: [...current.messages, assistant.message!]
+				};
+				return {
+					session: completed.session,
+					history: completed.history,
+					events: historyEvents(completed.history, completed.messages),
+					messages: visibleMessages(completed),
+					memories: activeMemories(completed.history, unit.all('memories').map(parseMemory))
+				};
+			},
+			runOptions
+		);
+		this.publish(gameId, sessionId, saved.history.progress.headId!, input.result.events);
+		return saved;
+	};
+	executeSessionAgentHook = async (
+		gameId: string,
+		sessionId: string,
+		{ name, trigger }: { name: string; trigger: RuleTrigger },
+		runOptions: RunOptions = {}
+	) => {
+		const context = await this.withHistory(gameId, sessionId, (_unit, context) => context);
+		return this.executeWork(
+			context,
+			{
+				expectedRevision: context.history.progress.revision,
+				parentId: context.history.progress.headId,
+				action: { name: `hook:${name}`, args: {} },
+				operation: { kind: 'hook', name, trigger }
+			},
+			runOptions
+		);
+	};
+	subscribeSessionChanges = (gameId: string, sessionId: string, listener: () => void) => {
+		identifier(gameId);
+		identifier(sessionId);
+		const key = this.changeKey(gameId, sessionId);
+		const listeners = this.changeListeners.get(key) ?? new Set<() => void>();
+		listeners.add(listener);
+		this.changeListeners.set(key, listeners);
+		return () => {
+			listeners.delete(listener);
+			if (!listeners.size) {
+				this.changeListeners.delete(key);
+			}
+		};
+	};
+	subscribeSessionEvents = this.uiEvents.subscribe;
+	getSessionTimeline = this.getTimeline;
+	deleteSessionEvent = this.deleteEvent;
+	listGames = async () => {
+		const result = await this.transport({ kind: 'list' });
+		return result.records
+			.map((row) => parseGame(row.value))
+			.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+	};
+	createGame = async (input: GameMetadata = { title: '새 게임', genre: '', description: '' }) => {
+		const metadata = validateGameMetadata(input);
+		const now = new Date().toISOString();
+		const gameId = crypto.randomUUID();
+		const session = makeSession(gameId);
+		const game: Game = {
+			...metadata,
+			schemaVersion: 2,
+			id: gameId,
+			activeSessionId: session.id,
+			createdAt: now,
+			updatedAt: now,
+			settings: { description: '', firstMessage: '', authorNote: '' },
+			...emptyStateDocument(),
+			scripts: {}
+		};
+		await this.transport({
+			kind: 'create',
+			gameId,
+			records: [storedRecord('games', game), storedRecord('sessions', session)]
+		});
+		return game;
+	};
+	getGameWorkspace = (gameId: string) => {
+		return this.withGame(gameId, (unit) => {
+			if (unit.get('games', gameId) === undefined) {
+				return null;
+			}
+			const game = gameIn(unit, gameId);
+			const sessions = unit
+				.all('sessions')
+				.map(parseSession)
+				.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+			if (!sessions.some((session) => session.id === game.activeSessionId)) {
+				throw new Error('선택된 세션을 찾을 수 없어요.');
+			}
+			return { game, sessions };
+		});
+	};
+	updateGame = (gameId: string, input: GameMetadata) => {
+		const metadata = validateGameMetadata(input);
+		return this.withGame(gameId, (unit) => {
+			const game = { ...gameIn(unit, gameId), ...metadata, updatedAt: new Date().toISOString() };
+			unit.put('games', game);
+			return game;
+		});
+	};
+	updateGameSettings = (gameId: string, input: UpdateGameSettings) => {
+		const { title, ...settings } = validateGameSettings(input);
+		return this.withGame(gameId, (unit) => {
+			const game = {
+				...gameIn(unit, gameId),
+				title,
+				settings,
+				updatedAt: new Date().toISOString()
+			};
+			unit.put('games', game);
+			return game;
+		});
+	};
+	applyGameDraft = async (
+		gameId: string,
+		input: {
+			baseContent: GameEditorContent;
+			content: GameEditorContent;
+		}
+	) => {
+		const content = input.content.code
+			? {
+					...input.content,
+					...(await compileCodeProject(input.content.code, input.content.schema)),
+					code: input.content.code
+				}
+			: input.content;
+		return useStorage(
+			(request) =>
+				this.transport(request.kind === 'read' ? { ...request, includeHistory: true } : request),
+			gameId,
+			undefined,
+			(unit) => {
+				const previous = gameIn(unit, gameId);
+				const base = parseGame({
+					...previous,
+					...input.baseContent,
+					ui: input.baseContent.ui,
+					ai: input.baseContent.ai,
+					resources: input.baseContent.resources,
+					code: input.baseContent.code,
+					id: previous.id,
+					activeSessionId: previous.activeSessionId
+				});
+				if (
+					!sameValue(parseGameState(editorContent(previous)), parseGameState(editorContent(base)))
+				) {
+					throw new Error(
+						'다른 화면에서 게임이 변경되었어요. 초안을 보존한 뒤 최신 게임을 다시 불러와주세요.'
+					);
+				}
+				const game = parseGame({
+					...previous,
+					...content,
+					ui: content.ui,
+					ai: content.ai,
+					resources: content.resources,
+					code: content.code,
+					id: previous.id,
+					activeSessionId: previous.activeSessionId,
+					createdAt: previous.createdAt,
+					updatedAt: new Date().toISOString()
+				});
+				this.migrateSessions(unit, game);
+				unit.put('games', game);
+				return game;
+			}
+		);
+	};
+	private migrateSessions = (unit: StorageUnit, game: Game) => {
+		const gameId = game.id;
+		for (const raw of unit.all('sessions')) {
+			const session = parseSession(raw);
+			const saved = unit.get('progress', session.id);
+			if (saved === undefined) {
+				continue;
+			}
+			if (isSessionBusy(gameId, session.id)) {
+				throw Error('실행 중인 작업이 끝난 뒤 적용해주세요.');
+			}
+			const progress = parseSessionState(saved);
+			const snapshot = parseGameSnapshot(unit.get('snapshots', progress.snapshotId));
+			const transactions = unit
+				.all('transactions')
+				.map(parseTransaction)
+				.filter((node) => node.sessionId === session.id);
+			const history = { snapshot, progress, transactions };
+			const transform = (state: import('./state/value.js').GameState) =>
+				migrateState(state, snapshot.schema, game.schema, game.initialState);
+			const nextSnapshot = parseGameSnapshot({
+				...snapshot,
+				id: crypto.randomUUID(),
+				createdAt: new Date().toISOString(),
+				schema: game.schema,
+				initialState: transform(snapshot.initialState),
+				settings: game.settings,
+				scripts: game.scripts,
+				ui: game.ui,
+				ai: game.ai,
+				resources: game.resources,
+				code: game.code,
+				migrationFrom: snapshot.id,
+				restoredStates: Object.fromEntries(
+					transactions.map((node) => [node.id, transform(stateAt(history, node.id))])
+				)
+			});
+			unit.put('snapshots', nextSnapshot, session.id);
+			unit.put('progress', {
+				...progress,
+				snapshotId: nextSnapshot.id,
+				revision: counter(progress.revision + 1),
+				state: transform(stateAt(history))
+			});
+		}
+	};
+
+	updateGameRules = (
+		gameId: string,
+		input: Pick<Game, 'schema' | 'initialState' | 'scripts' | 'ui' | 'ai'>
+	) => {
+		const { schema, initialState } = parseStateDocument({
+			schema: input.schema,
+			initialState: input.initialState
+		});
+		const scripts = parseScripts(input.scripts);
+		const ui = input.ui === undefined ? undefined : parseGameUI(input.ui);
+		const ai = input.ai === undefined ? undefined : parseGameAIContent(input.ai);
+		return this.withGame(gameId, (unit) => {
+			const game = {
+				...gameIn(unit, gameId),
+				initialState,
+				schema,
+				scripts,
+				...(ui ? { ui } : {}),
+				...(ai ? { ai } : {}),
+				updatedAt: new Date().toISOString()
+			};
+			unit.put('games', game);
+			return game;
+		});
+	};
+	createSession = (gameId: string) => {
+		return this.withGame(gameId, (unit) => {
+			const game = gameIn(unit, gameId);
+			const session = makeSession(gameId);
+			unit.put('sessions', session);
+			unit.put('games', { ...game, activeSessionId: session.id, updatedAt: session.createdAt });
+			return session;
+		});
+	};
+	selectSession = (gameId: string, sessionId: string): Promise<void> => {
+		return this.withGame(gameId, (unit) => {
+			const { game } = owner(unit, gameId, sessionId);
+			unit.put('games', { ...game, activeSessionId: sessionId });
+		});
+	};
+	renameSession = (gameId: string, sessionId: string, input: string) => {
+		const title = validateSessionTitle(input);
+		return this.withGame(gameId, (unit) => {
+			const { game, session } = owner(unit, gameId, sessionId);
+			const now = new Date().toISOString();
+			const updated = { ...session, title, updatedAt: now };
+			unit.put('sessions', updated);
+			unit.put('games', { ...game, updatedAt: now });
+			return updated;
+		});
+	};
+	deleteSession = (gameId: string, sessionId: string) => {
+		return this.withGame(gameId, (unit) => {
+			const { game } = owner(unit, gameId, sessionId);
+			unit.deleteSession(sessionId);
+			const sessions = unit
+				.all('sessions')
+				.map(parseSession)
+				.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+			if (!sessions.length) {
+				const session = makeSession(gameId);
+				unit.put('sessions', session);
+				sessions.push(session);
+			}
+			const updated = {
+				...game,
+				activeSessionId: game.activeSessionId === sessionId ? sessions[0].id : game.activeSessionId,
+				updatedAt: new Date().toISOString()
+			};
+			unit.put('games', updated);
+			return { game: updated, sessions };
+		});
+	};
+	getSessionConversation = (gameId: string, sessionId: string) => {
+		return this.withHistory(gameId, sessionId, (_unit, context) => ({
+			session: context.session,
+			messages: visibleMessages(context)
+		}));
+	};
+	appendUserMessage = (
+		gameId: string,
+		sessionId: string,
+		input: string,
+		runOptions: RunOptions = {}
+	) => {
+		const content = validateMessageContent(input);
+		return this.withHistory(gameId, sessionId, (unit, context) => {
+			if (runOptions.signal?.aborted) {
+				throw new CreatorRuntimeError('canceled');
+			}
+			if (Object.keys(context.history.snapshot.scripts).length) {
+				return { kind: 'pending', context } as const;
+			}
+			const result = this.commit(unit, context, {
+				expectedRevision: context.history.progress.revision,
+				parentId: context.history.progress.headId,
+				nextState: context.history.progress.state,
+				action: { name: 'sendMessage', args: { content } },
+				message: { role: 'user', content }
+			});
+			return {
+				kind: 'saved',
+				result: { session: result.session, message: result.message! }
+			} as const;
+		}).then(async (prepared) => {
+			if (prepared.kind === 'saved') {
+				return prepared.result;
+			}
+			const { context } = prepared;
+			const result = await this.executeWork(
 				context,
 				{
 					expectedRevision: context.history.progress.revision,
 					parentId: context.history.progress.headId,
-					action: { name: `hook:${name}`, args: {} },
-					operation: { kind: 'hook', name, trigger }
+					action: { name: 'sendMessage', args: { content } },
+					message: { role: 'user', content },
+					operation: { kind: 'proposal', state: context.history.progress.state }
 				},
 				runOptions
 			);
+			return { session: result.session, message: result.message! };
+		});
+	};
+	getSessionHistory = (gameId: string, sessionId: string) => {
+		return this.withHistory(gameId, sessionId, (_unit, context) => context.history);
+	};
+	executeSessionAction = async (
+		gameId: string,
+		sessionId: string,
+		input: {
+			expectedRevision: number;
+			action: CommitTransaction['action'];
 		},
-		subscribeSessionChanges(gameId: string, sessionId: string, listener: () => void) {
-			identifier(gameId);
-			identifier(sessionId);
-			const key = changeKey(gameId, sessionId);
-			const listeners = changeListeners.get(key) ?? new Set<() => void>();
-			listeners.add(listener);
-			changeListeners.set(key, listeners);
-			return () => {
-				listeners.delete(listener);
-				if (!listeners.size) changeListeners.delete(key);
-			};
+		runOptions: RunOptions = {}
+	) => {
+		const revision = counter(input.expectedRevision);
+		const action = parseAction(input.action);
+		const context = await this.withHistory(gameId, sessionId, (_unit, context) => {
+			assertRevision(context.history.progress, revision);
+			return context;
+		});
+		return (
+			await this.executeWork(
+				context,
+				{ expectedRevision: revision, parentId: context.history.progress.headId, action },
+				runOptions
+			)
+		).history;
+	};
+	commitSessionTransaction = (
+		gameId: string,
+		sessionId: string,
+		input: CommitTransaction & {
+			message?: Pick<Message, 'role' | 'content'>;
 		},
-		subscribeSessionEvents: uiEvents.subscribe,
-		getSessionTimeline: getTimeline,
-		deleteSessionEvent: deleteEvent,
-		async listGames() {
-			const result = await transport({ kind: 'list' });
-			return result.records
-				.map((row) => parseGame(row.value))
-				.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-		},
-		async createGame(input: GameMetadata = { title: '새 게임', genre: '', description: '' }) {
-			const metadata = validateGameMetadata(input);
-			const now = new Date().toISOString();
-			const gameId = crypto.randomUUID();
-			const session = makeSession(gameId);
-			const game: Game = {
-				...metadata,
-				schemaVersion: 2,
-				id: gameId,
-				activeSessionId: session.id,
-				createdAt: now,
-				updatedAt: now,
-				settings: { description: '', firstMessage: '', authorNote: '' },
-				...emptyStateDocument(),
-				scripts: {}
-			};
-			await transport({
-				kind: 'create',
-				gameId,
-				records: [storedRecord('games', game), storedRecord('sessions', session)]
-			});
-			return game;
-		},
-		getGameWorkspace(gameId: string) {
-			return withGame(gameId, (unit) => {
-				if (unit.get('games', gameId) === undefined) return null;
-				const game = gameIn(unit, gameId);
-				const sessions = unit
-					.all('sessions')
-					.map(parseSession)
-					.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-				if (!sessions.some((session) => session.id === game.activeSessionId))
-					throw new Error('선택된 세션을 찾을 수 없어요.');
-				return { game, sessions };
-			});
-		},
-		updateGame(gameId: string, input: GameMetadata) {
-			const metadata = validateGameMetadata(input);
-			return withGame(gameId, (unit) => {
-				const game = { ...gameIn(unit, gameId), ...metadata, updatedAt: new Date().toISOString() };
-				unit.put('games', game);
-				return game;
-			});
-		},
-		updateGameSettings(gameId: string, input: UpdateGameSettings) {
-			const { title, ...settings } = validateGameSettings(input);
-			return withGame(gameId, (unit) => {
-				const game = {
-					...gameIn(unit, gameId),
-					title,
-					settings,
-					updatedAt: new Date().toISOString()
-				};
-				unit.put('games', game);
-				return game;
-			});
-		},
-		async applyGameDraft(
-			gameId: string,
-			input: { baseContent: GameEditorContent; content: GameEditorContent }
-		) {
-			const content = input.content.code
-				? {
-						...input.content,
-						...(await compileCodeProject(input.content.code, input.content.schema)),
-						code: input.content.code
-					}
-				: input.content;
-			return useStorage(
-				(request) =>
-					transport(request.kind === 'read' ? { ...request, includeHistory: true } : request),
-				gameId,
-				undefined,
-				(unit) => {
-					const previous = gameIn(unit, gameId);
-					const base = parseGame({
-						...previous,
-						...input.baseContent,
-						ui: input.baseContent.ui,
-						ai: input.baseContent.ai,
-						resources: input.baseContent.resources,
-						code: input.baseContent.code,
-						id: previous.id,
-						activeSessionId: previous.activeSessionId
-					});
-					if (
-						!sameValue(parseGameState(editorContent(previous)), parseGameState(editorContent(base)))
-					)
-						throw new Error(
-							'다른 화면에서 게임이 변경되었어요. 초안을 보존한 뒤 최신 게임을 다시 불러와주세요.'
-						);
-					const game = parseGame({
-						...previous,
-						...content,
-						ui: content.ui,
-						ai: content.ai,
-						resources: content.resources,
-						code: content.code,
-						id: previous.id,
-						activeSessionId: previous.activeSessionId,
-						createdAt: previous.createdAt,
-						updatedAt: new Date().toISOString()
-					});
-					for (const raw of unit.all('sessions')) {
-						const session = parseSession(raw);
-						const saved = unit.get('progress', session.id);
-						if (saved === undefined) continue;
-						if (isSessionBusy(gameId, session.id))
-							throw Error('실행 중인 작업이 끝난 뒤 적용해주세요.');
-						const progress = parseSessionState(saved);
-						const snapshot = parseGameSnapshot(unit.get('snapshots', progress.snapshotId));
-						const transactions = unit
-							.all('transactions')
-							.map(parseTransaction)
-							.filter((node) => node.sessionId === session.id);
-						const history = { snapshot, progress, transactions };
-						const transform = (state: import('./state/value.js').GameState) =>
-							migrateState(state, snapshot.schema, game.schema, game.initialState);
-						const nextSnapshot = parseGameSnapshot({
-							...snapshot,
-							id: crypto.randomUUID(),
-							createdAt: new Date().toISOString(),
-							schema: game.schema,
-							initialState: transform(snapshot.initialState),
-							settings: game.settings,
-							scripts: game.scripts,
-							ui: game.ui,
-							ai: game.ai,
-							resources: game.resources,
-							code: game.code,
-							migrationFrom: snapshot.id,
-							restoredStates: Object.fromEntries(
-								transactions.map((node) => [node.id, transform(stateAt(history, node.id))])
-							)
-						});
-						unit.put('snapshots', nextSnapshot, session.id);
-						unit.put('progress', {
-							...progress,
-							snapshotId: nextSnapshot.id,
-							revision: counter(progress.revision + 1),
-							state: transform(stateAt(history))
-						});
-					}
-					unit.put('games', game);
-					return game;
-				}
-			);
-		},
-		updateGameRules(
-			gameId: string,
-			input: Pick<Game, 'schema' | 'initialState' | 'scripts' | 'ui' | 'ai'>
-		) {
-			const { schema, initialState } = parseStateDocument({
-				schema: input.schema,
-				initialState: input.initialState
-			});
-			const scripts = parseScripts(input.scripts);
-			const ui = input.ui === undefined ? undefined : parseGameUI(input.ui);
-			const ai = input.ai === undefined ? undefined : parseGameAIContent(input.ai);
-			return withGame(gameId, (unit) => {
-				const game = {
-					...gameIn(unit, gameId),
-					initialState,
-					schema,
-					scripts,
-					...(ui ? { ui } : {}),
-					...(ai ? { ai } : {}),
-					updatedAt: new Date().toISOString()
-				};
-				unit.put('games', game);
-				return game;
-			});
-		},
-		createSession(gameId: string) {
-			return withGame(gameId, (unit) => {
-				const game = gameIn(unit, gameId);
-				const session = makeSession(gameId);
-				unit.put('sessions', session);
-				unit.put('games', { ...game, activeSessionId: session.id, updatedAt: session.createdAt });
-				return session;
-			});
-		},
-		selectSession(gameId: string, sessionId: string): Promise<void> {
-			return withGame(gameId, (unit) => {
-				const { game } = owner(unit, gameId, sessionId);
-				unit.put('games', { ...game, activeSessionId: sessionId });
-			});
-		},
-		renameSession(gameId: string, sessionId: string, input: string) {
-			const title = validateSessionTitle(input);
-			return withGame(gameId, (unit) => {
-				const { game, session } = owner(unit, gameId, sessionId);
-				const now = new Date().toISOString();
-				const updated = { ...session, title, updatedAt: now };
-				unit.put('sessions', updated);
-				unit.put('games', { ...game, updatedAt: now });
-				return updated;
-			});
-		},
-		deleteSession(gameId: string, sessionId: string) {
-			return withGame(gameId, (unit) => {
-				const { game } = owner(unit, gameId, sessionId);
-				unit.deleteSession(sessionId);
-				const sessions = unit
-					.all('sessions')
-					.map(parseSession)
-					.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-				if (!sessions.length) {
-					const session = makeSession(gameId);
-					unit.put('sessions', session);
-					sessions.push(session);
-				}
-				const updated = {
-					...game,
-					activeSessionId:
-						game.activeSessionId === sessionId ? sessions[0].id : game.activeSessionId,
-					updatedAt: new Date().toISOString()
-				};
-				unit.put('games', updated);
-				return { game: updated, sessions };
-			});
-		},
-		getSessionConversation(gameId: string, sessionId: string) {
-			return withHistory(gameId, sessionId, (_unit, context) => ({
-				session: context.session,
-				messages: visibleMessages(context)
-			}));
-		},
-		appendUserMessage(
-			gameId: string,
-			sessionId: string,
-			input: string,
-			runOptions: RunOptions = {}
-		) {
-			const content = validateMessageContent(input);
-			return withHistory(gameId, sessionId, (unit, context) => {
-				if (runOptions.signal?.aborted) throw new CreatorRuntimeError('canceled');
-				if (Object.keys(context.history.snapshot.scripts).length)
-					return { kind: 'pending', context } as const;
-				const result = commit(unit, context, {
-					expectedRevision: context.history.progress.revision,
-					parentId: context.history.progress.headId,
-					nextState: context.history.progress.state,
-					action: { name: 'sendMessage', args: { content } },
-					message: { role: 'user', content }
-				});
-				return {
-					kind: 'saved',
-					result: { session: result.session, message: result.message! }
-				} as const;
-			}).then(async (prepared) => {
-				if (prepared.kind === 'saved') return prepared.result;
-				const { context } = prepared;
-				const result = await executeWork(
-					context,
-					{
-						expectedRevision: context.history.progress.revision,
-						parentId: context.history.progress.headId,
-						action: { name: 'sendMessage', args: { content } },
-						message: { role: 'user', content },
-						operation: { kind: 'proposal', state: context.history.progress.state }
-					},
-					runOptions
-				);
-				return { session: result.session, message: result.message! };
-			});
-		},
-		getSessionHistory(gameId: string, sessionId: string) {
-			return withHistory(gameId, sessionId, (_unit, context) => context.history);
-		},
-		async executeSessionAction(
-			gameId: string,
-			sessionId: string,
-			input: { expectedRevision: number; action: CommitTransaction['action'] },
-			runOptions: RunOptions = {}
-		) {
-			const revision = counter(input.expectedRevision);
-			const action = parseAction(input.action);
-			const context = await withHistory(gameId, sessionId, (_unit, context) => {
-				assertRevision(context.history.progress, revision);
-				return context;
-			});
+		runOptions: RunOptions = {}
+	): Promise<
+		SessionHistory & {
+			execution?: ExecutionReport;
+		}
+	> => {
+		const message = input.message
+			? { role: input.message.role, content: validateMessageContent(input.message.content) }
+			: undefined;
+		if (message && !['user', 'assistant'].includes(message.role)) {
+			throw new Error('메시지 역할이 올바르지 않아요.');
+		}
+		const detached = {
+			expectedRevision: counter(input.expectedRevision),
+			parentId: input.parentId === null ? null : identifier(input.parentId),
+			nextState: parseGameState(input.nextState),
+			action: parseAction(input.action),
+			...(input.description === undefined ? {} : { description: identifier(input.description) }),
+			...(message ? { message } : {})
+		};
+		return this.withHistory(gameId, sessionId, (unit, context) => {
+			if (runOptions.signal?.aborted) {
+				throw new CreatorRuntimeError('canceled');
+			}
+			assertRevision(context.history.progress, detached.expectedRevision);
+			if (Object.keys(context.history.snapshot.scripts).length) {
+				return { kind: 'pending', context } as const;
+			}
+			return { kind: 'saved', history: this.commit(unit, context, detached).history } as const;
+		}).then(async (prepared) => {
+			if (prepared.kind === 'saved') {
+				return prepared.history;
+			}
 			return (
-				await executeWork(
-					context,
-					{ expectedRevision: revision, parentId: context.history.progress.headId, action },
+				await this.executeWork(
+					prepared.context,
+					{
+						...detached,
+						operation: { kind: 'proposal', state: detached.nextState }
+					},
 					runOptions
 				)
 			).history;
-		},
-		commitSessionTransaction(
-			gameId: string,
-			sessionId: string,
-			input: CommitTransaction & { message?: Pick<Message, 'role' | 'content'> },
-			runOptions: RunOptions = {}
-		): Promise<SessionHistory & { execution?: ExecutionReport }> {
-			const message = input.message
-				? { role: input.message.role, content: validateMessageContent(input.message.content) }
-				: undefined;
-			if (message && !['user', 'assistant'].includes(message.role))
-				throw new Error('메시지 역할이 올바르지 않아요.');
-			const detached = {
-				expectedRevision: counter(input.expectedRevision),
-				parentId: input.parentId === null ? null : identifier(input.parentId),
-				nextState: parseGameState(input.nextState),
-				action: parseAction(input.action),
-				...(input.description === undefined ? {} : { description: identifier(input.description) }),
-				...(message ? { message } : {})
-			};
-			return withHistory(gameId, sessionId, (unit, context) => {
-				if (runOptions.signal?.aborted) throw new CreatorRuntimeError('canceled');
-				assertRevision(context.history.progress, detached.expectedRevision);
-				if (Object.keys(context.history.snapshot.scripts).length)
-					return { kind: 'pending', context } as const;
-				return { kind: 'saved', history: commit(unit, context, detached).history } as const;
-			}).then(async (prepared) => {
-				if (prepared.kind === 'saved') return prepared.history;
-				return (
-					await executeWork(
-						prepared.context,
-						{
-							...detached,
-							operation: { kind: 'proposal', state: detached.nextState }
-						},
-						runOptions
-					)
-				).history;
-			});
-		},
-		selectSessionBranch(
-			gameId: string,
-			sessionId: string,
-			headId: string | null,
-			expectedRevision: number
-		) {
-			return withHistory(gameId, sessionId, (unit, context) => {
-				const progress = checkoutHistory(context.history, headId, expectedRevision);
-				unit.put('progress', progress);
-				return { ...context.history, progress };
-			});
-		},
-		async deleteSessionResponse(
-			gameId: string,
-			sessionId: string,
-			transactionId: string,
-			expectedRevision: number
-		) {
-			const timeline = await getTimeline(gameId, sessionId);
-			assertRevision(timeline.history.progress, expectedRevision);
-			const event = timeline.events.find((event) => event.id === transactionId);
-			if (event?.message?.role !== 'assistant' || event.message.kind !== 'dialogue')
-				throw new Error('이 세션의 AI 응답이 아니에요.');
-			return (await deleteEvent(gameId, sessionId, transactionId, expectedRevision)).history;
-		},
-		saveSessionMemory(
-			gameId: string,
-			sessionId: string,
-			expectedRevision: number,
-			input: { sourceTransactionIds: string[]; content: string }
-		) {
-			const memory = parseMemory({
-				schemaVersion: 1,
-				id: crypto.randomUUID(),
-				gameId,
-				sessionId,
-				createdAt: new Date().toISOString(),
-				...input
-			});
-			return withHistory(gameId, sessionId, (unit, context) => {
-				assertRevision(context.history.progress, expectedRevision);
-				if (!activeMemories(context.history, [memory]).length)
-					throw new Error('현재 진행 경로에 속한 기억만 저장할 수 있어요.');
-				unit.put('memories', memory);
-				return memory;
-			});
-		},
-		listSessionMemories(gameId: string, sessionId: string) {
-			return withHistory(gameId, sessionId, (unit, context) =>
-				activeMemories(context.history, unit.all('memories').map(parseMemory))
-			);
-		}
+		});
 	};
+	selectSessionBranch = (
+		gameId: string,
+		sessionId: string,
+		headId: string | null,
+		expectedRevision: number
+	) => {
+		return this.withHistory(gameId, sessionId, (unit, context) => {
+			const progress = checkoutHistory(context.history, headId, expectedRevision);
+			unit.put('progress', progress);
+			return { ...context.history, progress };
+		});
+	};
+	deleteSessionResponse = async (
+		gameId: string,
+		sessionId: string,
+		transactionId: string,
+		expectedRevision: number
+	) => {
+		const timeline = await this.getTimeline(gameId, sessionId);
+		assertRevision(timeline.history.progress, expectedRevision);
+		const event = timeline.events.find((event) => event.id === transactionId);
+		if (event?.message?.role !== 'assistant' || event.message.kind !== 'dialogue') {
+			throw new Error('이 세션의 AI 응답이 아니에요.');
+		}
+		return (await this.deleteEvent(gameId, sessionId, transactionId, expectedRevision)).history;
+	};
+	saveSessionMemory = (
+		gameId: string,
+		sessionId: string,
+		expectedRevision: number,
+		input: {
+			sourceTransactionIds: string[];
+			content: string;
+		}
+	) => {
+		const memory = parseMemory({
+			schemaVersion: 1,
+			id: crypto.randomUUID(),
+			gameId,
+			sessionId,
+			createdAt: new Date().toISOString(),
+			...input
+		});
+		return this.withHistory(gameId, sessionId, (unit, context) => {
+			assertRevision(context.history.progress, expectedRevision);
+			if (!activeMemories(context.history, [memory]).length) {
+				throw new Error('현재 진행 경로에 속한 기억만 저장할 수 있어요.');
+			}
+			unit.put('memories', memory);
+			return memory;
+		});
+	};
+	listSessionMemories = (gameId: string, sessionId: string) => {
+		return this.withHistory(gameId, sessionId, (unit, context) =>
+			activeMemories(context.history, unit.all('memories').map(parseMemory))
+		);
+	};
+}
+
+function assertHistoryMessages(transactions: SessionHistory['transactions'], messages: Message[]) {
+	const ids = new Set(messages.map((message) => message.id));
+	if (transactions.some((node) => node.messageId !== undefined && !ids.has(node.messageId))) {
+		throw new Error('진행 기록에 연결된 메시지를 찾을 수 없어요.');
+	}
 }

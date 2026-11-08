@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+
 import { createWorkspace, TransactionFailure } from './workspace.js';
 
 const schema = {
@@ -38,6 +39,9 @@ describe('atomic state workspace', () => {
 		expect(result.changes.map((change) => change.path)).toEqual([['gold'], ['inventory']]);
 		expect(() => work.finish(action)).toThrow(/finished/);
 	});
+});
+
+describe('atomic state workspace', () => {
 	it('validates arguments before invoking an operation and poisons the atomic scope on failure', () => {
 		const work = createWorkspace(schema, initial);
 		work.replace({ gold: 90, inventory: [] });
@@ -52,6 +56,9 @@ describe('atomic state workspace', () => {
 		expect(() => work.finish(action)).toThrow(/failed/);
 		expect(initial.gold).toBe(100);
 	});
+});
+
+describe('atomic state workspace', () => {
 	it.each(['throw', 'schema', 'extra'])(
 		'discards a partially mutated step on %s failure',
 		(kind) => {
@@ -59,7 +66,9 @@ describe('atomic state workspace', () => {
 			expect(() =>
 				work.step(action, args, (state) => {
 					state.gold = 0;
-					if (kind === 'throw') throw new Error('execution failed');
+					if (kind === 'throw') {
+						throw new Error('execution failed');
+					}
 					return kind === 'schema' ? { ...state, gold: 'invalid' } : { ...state, extra: true };
 				})
 			).toThrow();
@@ -67,6 +76,9 @@ describe('atomic state workspace', () => {
 			expect(initial).toEqual({ gold: 100, inventory: [] });
 		}
 	);
+});
+
+describe('atomic state workspace', () => {
 	it.each(['filter', 'hook'] as const)(
 		'propagates a trusted %s integration failure and prevents finalization',
 		(phase) => {
@@ -80,6 +92,9 @@ describe('atomic state workspace', () => {
 			expect(() => work.finish(action)).toThrow(/failed/);
 		}
 	);
+});
+
+describe('atomic state workspace', () => {
 	it('provides frozen detached rule inputs and rejects malformed validator results', () => {
 		const work = createWorkspace(schema, initial);
 		expect(() =>
@@ -91,6 +106,9 @@ describe('atomic state workspace', () => {
 		const other = createWorkspace(schema, initial);
 		expect(() => other.finish(action, () => false)).toThrow(/invalid-validator-result/);
 	});
+});
+
+describe('atomic state workspace', () => {
 	it('detaches input, returned state and replacements, and rejects use after abort', () => {
 		const input = { gold: 100, inventory: ['potion'] };
 		const work = createWorkspace(schema, input);

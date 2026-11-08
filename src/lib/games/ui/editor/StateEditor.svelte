@@ -1,7 +1,7 @@
 <script lang="ts">
-	import StateFieldRow from './StateFieldRow.svelte';
-	import Icon from '#lib/components/Icon.svelte';
 	import ConfirmDialog from '#lib/components/ConfirmDialog.svelte';
+	import Icon from '#lib/components/Icon.svelte';
+
 	import {
 		editAuthoringSchema,
 		readAuthoringSource,
@@ -9,6 +9,7 @@
 		type SchemaTrail
 	} from '../../state/authoring.js';
 	import { isStateObject, type StateValue } from '../../state/value.js';
+	import StateFieldRow from './StateFieldRow.svelte';
 	let {
 		source,
 		disabled = false,
@@ -25,13 +26,17 @@
 	let confirming = $state(false);
 	let pending: (() => void) | null = null;
 	function confirm(message: string, action: () => void) {
-		if (disabled) return;
+		if (disabled) {
+			return;
+		}
 		confirmation = message;
 		pending = action;
 		confirming = true;
 	}
 	function edit(trail: SchemaTrail, change: SchemaEdit) {
-		if (disabled || !parsed.document) return false;
+		if (disabled || !parsed.document) {
+			return false;
+		}
 		try {
 			const next = editAuthoringSchema(parsed.document, trail, change);
 			onchange(JSON.stringify(next, null, 2));
@@ -43,7 +48,9 @@
 		}
 	}
 	function editState(value: StateValue | undefined) {
-		if (disabled || !parsed.document || value === undefined || !isStateObject(value)) return;
+		if (disabled || !parsed.document || value === undefined || !isStateObject(value)) {
+			return;
+		}
 		onchange(JSON.stringify({ ...parsed.document, initialState: value }, null, 2));
 		error = '';
 	}
@@ -98,7 +105,9 @@
 			const action = pending;
 			confirming = false;
 			pending = null;
-			if (!disabled) action?.();
+			if (!disabled) {
+				action?.();
+			}
 		}}
 	/>{/if}
 

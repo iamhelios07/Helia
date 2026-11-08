@@ -1,5 +1,6 @@
-import { aiError, AI_LIMITS } from './protocol.js';
 import type { StorageRequest } from '#lib/storage/protocol.js';
+
+import { aiError, AI_LIMITS } from './protocol.js';
 export class SessionLeases {
 	private leases = new Map<
 		string,
@@ -7,8 +8,9 @@ export class SessionLeases {
 	>();
 	begin(gameId: string, sessionId: string): string {
 		this.prune();
-		if ([...this.leases.values()].some((l) => l.gameId === gameId && l.sessionId === sessionId))
+		if ([...this.leases.values()].some((l) => l.gameId === gameId && l.sessionId === sessionId)) {
 			throw aiError('busy');
+		}
 		const id = crypto.randomUUID();
 		this.leases.set(id, {
 			gameId,
@@ -22,13 +24,16 @@ export class SessionLeases {
 	require(id: string, gameId: string, sessionId: string) {
 		this.prune();
 		const lease = this.leases.get(id);
-		if (!lease || lease.gameId !== gameId || lease.sessionId !== sessionId)
+		if (!lease || lease.gameId !== gameId || lease.sessionId !== sessionId) {
 			throw aiError('canceled');
+		}
 		return lease;
 	}
 	round(id: string, gameId: string, sessionId: string): AbortSignal {
 		const lease = this.require(id, gameId, sessionId);
-		if (++lease.rounds > AI_LIMITS.rounds * (AI_LIMITS.retries + 1)) throw aiError('limit');
+		if (++lease.rounds > AI_LIMITS.rounds * (AI_LIMITS.retries + 1)) {
+			throw aiError('limit');
+		}
 		return lease.abort.signal;
 	}
 	release(id: string, gameId: string, sessionId: string) {
@@ -40,7 +45,9 @@ export class SessionLeases {
 	}
 	guard(request: StorageRequest) {
 		this.prune();
-		if (request.kind !== 'commit' && request.kind !== 'prune') return;
+		if (request.kind !== 'commit' && request.kind !== 'prune') {
+			return;
+		}
 		const affected =
 			request.kind === 'prune'
 				? [request.sessionId]
@@ -57,19 +64,27 @@ export class SessionLeases {
 				!lease ||
 				lease.gameId !== request.gameId ||
 				affected.some((id) => id !== lease.sessionId)
-			)
+			) {
 				throw aiError('canceled');
+			}
 		}
-		for (const [id, lease] of this.leases)
-			if (lease.gameId === request.gameId && affected.includes(lease.sessionId) && id !== supplied)
+		for (const [id, lease] of this.leases) {
+			if (
+				lease.gameId === request.gameId &&
+				affected.includes(lease.sessionId) &&
+				id !== supplied
+			) {
 				throw aiError('busy');
+			}
+		}
 	}
 	private prune() {
-		for (const [id, lease] of this.leases)
+		for (const [id, lease] of this.leases) {
 			if (Date.now() >= lease.expires) {
 				lease.abort.abort();
 				this.leases.delete(id);
 			}
+		}
 	}
 }
 export const hostAILeases = new SessionLeases();

@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+
 import { clearSettingsDraft, loadSettingsDraft, storeSettingsDraft } from './settings-draft.js';
 
 afterEach(() => {

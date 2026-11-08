@@ -1,7 +1,10 @@
 <script lang="ts">
-	import { onMount, untrack } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
+	import { onMount, untrack } from 'svelte';
+
+	import Icon from '#lib/components/Icon.svelte';
+
 	import {
 		clearMetadataDraft,
 		loadMetadataDraft,
@@ -9,7 +12,6 @@
 		storeMetadataDraft,
 		type MetadataDraft
 	} from '../metadata-draft.js';
-	import Icon from '#lib/components/Icon.svelte';
 	import {
 		GAME_TITLE_MAX_LENGTH,
 		GAME_DESCRIPTION_MAX_LENGTH,
@@ -45,8 +47,11 @@
 		if (recovered) {
 			title = recovered.title;
 			description = recovered.description;
-			if (changed) scheduleSave();
-			else clearMetadataDraft(gameId, recovered);
+			if (changed) {
+				scheduleSave();
+			} else {
+				clearMetadataDraft(gameId, recovered);
+			}
 		}
 		return () => {
 			void flushSave();
@@ -67,13 +72,16 @@
 			event.preventDefault();
 			return;
 		}
-		if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey)
+		if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) {
 			return;
+		}
 		event.preventDefault();
 		openingEditor = true;
 		error = '';
 		try {
-			if (await flush()) await goto(resolve('/games/[id]/edit', { id: gameId }));
+			if (await flush()) {
+				await goto(resolve('/games/[id]/edit', { id: gameId }));
+			}
 		} catch {
 			error = '게임 편집기를 열지 못했어요. 다시 시도해주세요.';
 		} finally {
@@ -90,20 +98,25 @@
 		error = '';
 		storeMetadataDraft(gameId, currentInput());
 		stopTimer();
-		if (!composing)
+		if (!composing) {
 			timer = setTimeout(() => {
 				void flushSave();
 			}, 350);
+		}
 	}
 
 	function flushSave(): Promise<void> {
 		stopTimer();
-		if (activeSave) return activeSave;
+		if (activeSave) {
+			return activeSave;
+		}
 		if (!changed) {
 			clearMetadataDraft(gameId, currentInput());
 			return Promise.resolve();
 		}
-		if (composing) return Promise.resolve();
+		if (composing) {
+			return Promise.resolve();
+		}
 		activeSave = saveChanges().finally(() => {
 			activeSave = null;
 		});
@@ -115,22 +128,9 @@
 		error = '';
 		try {
 			while (changed && !composing) {
-				const snapshot = currentInput();
-				let input: GameMetadata;
-				try {
-					input = validateGameMetadata(snapshot);
-				} catch (cause) {
-					error = cause instanceof Error ? cause.message : '입력값을 확인해주세요.';
+				if (!(await saveCurrentInput())) {
 					return;
 				}
-				if (!sameMetadata(input, saved)) {
-					const updated = await onsave(input);
-					saved = { title: updated.title, description: updated.description };
-				}
-				// A completed write must never replace text entered while it was in flight.
-				if (title === snapshot.title) title = saved.title;
-				if (description === snapshot.description) description = saved.description;
-				if (!changed) clearMetadataDraft(gameId, snapshot);
 			}
 		} catch {
 			error = '설정을 저장하지 못했어요.';
@@ -138,16 +138,44 @@
 			saving = false;
 		}
 	}
+	async function saveCurrentInput(): Promise<boolean> {
+		const snapshot = currentInput();
+		let input: GameMetadata;
+		try {
+			input = validateGameMetadata(snapshot);
+		} catch (cause) {
+			error = cause instanceof Error ? cause.message : '입력값을 확인해주세요.';
+			return false;
+		}
+		if (!sameMetadata(input, saved)) {
+			const updated = await onsave(input);
+			saved = { title: updated.title, description: updated.description };
+		}
+		// A completed write must never replace text entered while it was in flight.
+		if (title === snapshot.title) {
+			title = saved.title;
+		}
+		if (description === snapshot.description) {
+			description = saved.description;
+		}
+		if (!changed) {
+			clearMetadataDraft(gameId, snapshot);
+		}
+		return true;
+	}
 
 	function flushOnBlur(event: FocusEvent) {
 		const form = event.currentTarget as HTMLFormElement;
-		if (event.relatedTarget instanceof Node && form.contains(event.relatedTarget)) return;
+		if (event.relatedTarget instanceof Node && form.contains(event.relatedTarget)) {
+			return;
+		}
 		// These links await flush themselves; a blur write would retry failures on the same click.
 		if (
 			event.relatedTarget instanceof Element &&
 			event.relatedTarget.closest('[data-settings-navigation]')
-		)
+		) {
 			return;
+		}
 		void flushSave();
 	}
 </script>

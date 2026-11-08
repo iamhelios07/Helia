@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
 import type { GameUI, PanelLayout } from './runtime/model.js';
+
 import { panelIds } from './runtime/layout.js';
 import {
 	CHAT_PANEL_ID,
@@ -43,6 +45,9 @@ describe('unified workbench layout', () => {
 			second: leaf('status')
 		});
 	});
+});
+
+describe('unified workbench layout', () => {
 	it('moves any creator panel across chat and moves chat through the same docking operation', () => {
 		const tree = defaultWorkbenchLayout(undefined, ['status', 'controls']);
 		const moved = dockWorkbenchPanel(tree, 'status', CHAT_PANEL_ID, 'left');
@@ -55,6 +60,9 @@ describe('unified workbench layout', () => {
 		});
 		expect(panelIds(chatMoved).sort()).toEqual([CHAT_PANEL_ID, 'controls', 'status'].sort());
 	});
+});
+
+describe('unified workbench layout', () => {
 	it('keeps the chat main area intact when a new dynamic panel is registered', () => {
 		const original = defaultWorkbenchLayout(undefined, ['status']);
 		const next = reconcileWorkbenchLayout(original, ['status', 'inventory']);
@@ -65,6 +73,9 @@ describe('unified workbench layout', () => {
 		expect(original).toEqual(defaultWorkbenchLayout(undefined, ['status']));
 		expect(reconcileWorkbenchLayout(next, [])).toEqual(leaf(CHAT_PANEL_ID));
 	});
+});
+
+describe('unified workbench layout', () => {
 	it('retains hidden and temporarily absent slots when adding a dynamic panel', () => {
 		const original = defaultWorkbenchLayout(undefined, ['status', 'controls']);
 		const next = addWorkbenchPanels(original, ['status', 'inventory']);
@@ -76,6 +87,9 @@ describe('unified workbench layout', () => {
 		expect(addWorkbenchPanels(next, [])).toEqual(next);
 		expect(reconcileWorkbenchLayout(next, [])).toEqual(leaf(CHAT_PANEL_ID));
 	});
+});
+
+describe('unified workbench layout', () => {
 	it('reuses absent slots at capacity while retaining active hidden panels and valid persistence', () => {
 		const ids = Array.from({ length: 16 }, (_, index) => `panel${index}`);
 		const original = defaultWorkbenchLayout(undefined, ids);
@@ -89,6 +103,9 @@ describe('unified workbench layout', () => {
 			hidden: ['panel1']
 		});
 	});
+});
+
+describe('unified workbench layout', () => {
 	it.each([false, true])(
 		'maps resize paths past collapsed ancestors (hidden first: %s)',
 		(hiddenFirst) => {
@@ -121,6 +138,9 @@ describe('unified workbench layout', () => {
 			expect(reconcileWorkbenchLayout(next, ['status'])).toEqual({ ...visible, ratio: 0.45 });
 		}
 	);
+});
+
+describe('unified workbench layout', () => {
 	it('maps nested visible resize paths while preserving hidden split ratios and docking edits', () => {
 		const original: PanelLayout = {
 			kind: 'split',
@@ -174,6 +194,9 @@ describe('unified workbench layout', () => {
 			second: leaf('status')
 		});
 	});
+});
+
+describe('unified workbench layout', () => {
 	it('converts legacy creator defaults without fixing chat outside the movable tree', () => {
 		const ui = {
 			layout: leaf('status'),
@@ -194,6 +217,9 @@ describe('unified workbench layout', () => {
 			second: { id: 'status' }
 		});
 	});
+});
+
+describe('unified workbench layout', () => {
 	it('persists all sixteen creator panels alongside chat and clamps split sizes', () => {
 		const ids = Array.from({ length: 16 }, (_, i) => `panel${i}`);
 		const tree = reconcileWorkbenchLayout(leaf(CHAT_PANEL_ID), ids);

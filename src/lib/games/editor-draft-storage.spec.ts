@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+
+import type { Game } from './model.js';
+
 import { loadAuthoringDraft, saveAuthoringDraft } from './editor-draft-storage.js';
 import { createEditorDraft } from './editor.js';
-import type { Game } from './model.js';
 vi.mock('#lib/platform/index.js', () => ({ isDesktopBuild: true }));
 const game: Game = {
 	schemaVersion: 2,

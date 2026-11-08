@@ -28,9 +28,11 @@ import 'monaco-editor/editor/contrib/wordOperations/browser/wordOperations.js';
 import 'monaco-editor/editor/contrib/wordPartOperations/browser/wordPartOperations.js';
 import 'monaco-editor/editor/standalone/browser/quickAccess/standaloneCommandsQuickAccess.js';
 import 'monaco-editor/editor/standalone/browser/quickAccess/standaloneGotoLineQuickAccess.js';
-
 import 'monaco-editor/languages/definitions/typescript/register.js';
 import 'monaco-editor/languages/definitions/javascript/register.js';
+import EditorWorker from 'monaco-editor/editor/editor.worker.js?worker';
+import JsonWorker from 'monaco-editor/languages/features/json/json.worker.js?worker';
+import { jsonDefaults } from 'monaco-editor/languages/features/json/register.js';
 import {
 	typescriptDefaults,
 	javascriptDefaults,
@@ -39,15 +41,17 @@ import {
 	ModuleResolutionKind,
 	JsxEmit
 } from 'monaco-editor/languages/features/typescript/register.js';
-import { jsonDefaults } from 'monaco-editor/languages/features/json/register.js';
-import EditorWorker from 'monaco-editor/editor/editor.worker.js?worker';
+
 import TypeScriptWorker from './monaco-typescript.worker.ts?worker';
-import JsonWorker from 'monaco-editor/languages/features/json/json.worker.js?worker';
 
 self.MonacoEnvironment = {
 	getWorker(_id, label) {
-		if (label === 'typescript' || label === 'javascript') return new TypeScriptWorker();
-		if (label === 'json') return new JsonWorker();
+		if (label === 'typescript' || label === 'javascript') {
+			return new TypeScriptWorker();
+		}
+		if (label === 'json') {
+			return new JsonWorker();
+		}
 		return new EditorWorker();
 	}
 };

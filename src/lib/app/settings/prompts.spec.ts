@@ -1,4 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { importPromptPreset } from '#lib/games/ai/prompts.js';
+
+import {
+	PROMPT_SETTINGS_KEY,
+	loadPromptSettings,
+	savePromptSettings,
+	loadSelectedPromptConfig
+} from './prompt-repository.js';
 import {
 	emptyPromptSettings,
 	parsePromptSettings,
@@ -6,13 +15,6 @@ import {
 	removePromptPreset,
 	selectPromptPreset
 } from './prompts.js';
-import {
-	PROMPT_SETTINGS_KEY,
-	loadPromptSettings,
-	savePromptSettings,
-	loadSelectedPromptConfig
-} from './prompt-repository.js';
-import { importPromptPreset } from '#lib/games/ai/prompts.js';
 
 let stored: Map<string, string>;
 beforeEach(() => {

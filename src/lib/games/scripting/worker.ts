@@ -5,7 +5,9 @@ import { boundedText, CreatorRuntimeError, parseInput, type WorkerReply } from '
 globalThis.onmessage = async (event: MessageEvent<unknown>) => {
 	let reply: WorkerReply;
 	try {
-		if (typeof event.data !== 'string') throw new CreatorRuntimeError('input');
+		if (typeof event.data !== 'string') {
+			throw new CreatorRuntimeError('input');
+		}
 		const request = parseInput(JSON.parse(boundedText(event.data)));
 		reply = { ok: true, result: await evaluateAction(request) };
 	} catch (error) {

@@ -54,7 +54,9 @@ export function createWorkspace(schemaInput: unknown, initial: unknown) {
 	let current = parseGameState(before);
 	let status: 'open' | 'failed' | 'finished' = 'open';
 	function open() {
-		if (status !== 'open') throw new TransactionFailure('workspace', null, status);
+		if (status !== 'open') {
+			throw new TransactionFailure('workspace', null, status);
+		}
 	}
 	function attempt<T>(operation: () => T): T {
 		open();
@@ -101,8 +103,9 @@ export function createWorkspace(schemaInput: unknown, initial: unknown) {
 						action: parsedAction
 					})
 				);
-				if (result !== undefined)
+				if (result !== undefined) {
 					throw new TransactionFailure('workspace', null, 'invalid-validator-result');
+				}
 				status = 'finished';
 				return { state, changes };
 			});

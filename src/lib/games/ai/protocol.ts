@@ -87,19 +87,27 @@ export function parseRoundRequest(value: unknown): RoundRequest {
 		row.messages.length > 512 ||
 		!Array.isArray(row.tools) ||
 		row.tools.length > 256
-	)
+	) {
 		throw aiError('protocol');
+	}
 	const messages = row.messages.map((value): AIMessage => {
 		const item = credentialRecord(value);
 		if (
 			!['system', 'user', 'assistant', 'tool'].includes(String(item.role)) ||
 			typeof item.content !== 'string'
-		)
+		) {
 			throw aiError('protocol');
+		}
 		const calls = item.calls === undefined ? undefined : parseCalls(item.calls);
-		if (item.callId !== undefined && (typeof item.callId !== 'string' || item.callId.length > 256))
+		if (
+			item.callId !== undefined &&
+			(typeof item.callId !== 'string' || item.callId.length > 256)
+		) {
 			throw aiError('protocol');
-		if (item.native !== undefined && !Array.isArray(item.native)) throw aiError('protocol');
+		}
+		if (item.native !== undefined && !Array.isArray(item.native)) {
+			throw aiError('protocol');
+		}
 		return {
 			role: item.role as AIMessage['role'],
 			content: item.content,
@@ -119,8 +127,9 @@ export function parseRoundRequest(value: unknown): RoundRequest {
 			typeof item.description !== 'string' ||
 			item.description.length > 1024 ||
 			!['action', 'query'].includes(String(item.kind))
-		)
+		) {
 			throw aiError('protocol');
+		}
 		return {
 			name: item.name,
 			description: item.description,
@@ -128,13 +137,16 @@ export function parseRoundRequest(value: unknown): RoundRequest {
 			arguments: parseObjectSchema(item.arguments)
 		};
 	});
-	if (new Set(tools.map((t) => t.name)).size !== tools.length) throw aiError('protocol');
+	if (new Set(tools.map((t) => t.name)).size !== tools.length) {
+		throw aiError('protocol');
+	}
 	if (
 		!Number.isInteger(row.maxTokens) ||
 		Number(row.maxTokens) < 1 ||
 		Number(row.maxTokens) > 65536
-	)
+	) {
 		throw aiError('protocol');
+	}
 	return {
 		provider: providerAddress(row.provider),
 		model: row.model,
@@ -144,7 +156,9 @@ export function parseRoundRequest(value: unknown): RoundRequest {
 	};
 }
 export function parseCalls(value: unknown): ToolCall[] {
-	if (!Array.isArray(value) || value.length > AI_LIMITS.calls) throw aiError('protocol');
+	if (!Array.isArray(value) || value.length > AI_LIMITS.calls) {
+		throw aiError('protocol');
+	}
 	const calls = value.map((value): ToolCall => {
 		const row = credentialRecord(value);
 		if (
@@ -153,10 +167,13 @@ export function parseCalls(value: unknown): ToolCall[] {
 			row.id.length > 256 ||
 			typeof row.name !== 'string' ||
 			!/^[a-zA-Z_][\w-]{0,63}$/.test(row.name)
-		)
+		) {
 			throw aiError('protocol');
+		}
 		return { id: row.id, name: row.name, arguments: parseStateValue(row.arguments) };
 	});
-	if (new Set(calls.map((call) => call.id)).size !== calls.length) throw aiError('protocol');
+	if (new Set(calls.map((call) => call.id)).size !== calls.length) {
+		throw aiError('protocol');
+	}
 	return calls;
 }

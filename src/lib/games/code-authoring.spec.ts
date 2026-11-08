@@ -1,4 +1,5 @@
 import { expect, it } from 'vitest';
+
 import { readAuthoringBundle, writeAuthoringBundle } from './code-authoring.js';
 
 it('edits decoded source without escaping it and preserves UI presentation options', () => {

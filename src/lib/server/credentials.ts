@@ -1,4 +1,5 @@
 import Database from 'better-sqlite3';
+import { execFileSync } from 'node:child_process';
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
 import {
 	closeSync,
@@ -13,17 +14,20 @@ import {
 	writeFileSync
 } from 'node:fs';
 import { dirname, resolve } from 'node:path';
-import { execFileSync } from 'node:child_process';
+
+import type { RoundRequest } from '#lib/games/ai/protocol.js';
+
 import {
 	parseCredentialRequest,
 	sameCredentialAddress,
+	type CredentialRequest,
 	type CredentialValue
 } from '#lib/app/settings/credential-protocol.js';
-import { discoverModels } from './model-catalog.js';
 import { parseServiceAccountJson } from '#lib/app/settings/vertex.js';
-import { validateServiceAccountKey, VertexAuth } from './vertex-auth.js';
+
 import { generateProvider } from './generation.js';
-import type { RoundRequest } from '#lib/games/ai/protocol.js';
+import { discoverModels } from './model-catalog.js';
+import { validateServiceAccountKey, VertexAuth } from './vertex-auth.js';
 
 const STORE_ERROR = '보안 저장소를 사용할 수 없어요. 저장 경로와 접근 권한을 확인해주세요.';
 const KEY_ERROR =
@@ -33,7 +37,9 @@ const securedDirectories = new Set<string>();
 function privateDirectory(path: string, keyPath: string) {
 	mkdirSync(path, { recursive: true, mode: 0o700 });
 	const stat = lstatSync(path);
-	if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error(STORE_ERROR);
+	if (!stat.isDirectory() || stat.isSymbolicLink()) {
+		throw new Error(STORE_ERROR);
+	}
 	if (process.platform === 'win32') {
 		if (!securedDirectories.has(path)) {
 			execFileSync(
@@ -67,81 +73,107 @@ if (Test-Path -LiteralPath $env:HELIA_PRIVATE_KEY) {
 			);
 			securedDirectories.add(path);
 		}
-	} else if ((stat.mode & 0o077) !== 0 || stat.uid !== process.getuid?.())
+	} else if ((stat.mode & 0o077) !== 0 || stat.uid !== process.getuid?.()) {
 		throw new Error(STORE_ERROR);
+	}
 }
 
-export function openCredentialStore(filename: string, keyPath: string) {
-	const vertexAuth = new VertexAuth();
-	mkdirSync(dirname(filename), { recursive: true });
-	const db = new Database(filename);
-	db.pragma('busy_timeout = 5000');
-	db.pragma('journal_mode = WAL');
-	db.pragma('synchronous = FULL');
-	db.exec(
-		'CREATE TABLE IF NOT EXISTS credentials (id TEXT PRIMARY KEY, nonce BLOB NOT NULL, tag BLOB NOT NULL, ciphertext BLOB NOT NULL)'
-	);
-
-	function masterKey(create: boolean): Buffer {
+function linkMasterKey(temporary: string, keyPath: string) {
+	try {
+		linkSync(temporary, keyPath);
+	} catch (error) {
+		if (!(error && typeof error === 'object' && 'code' in error && error.code === 'EEXIST')) {
+			throw error;
+		}
+	}
+}
+function syncKeyDirectory(keyPath: string) {
+	if (process.platform === 'win32') {
+		return;
+	}
+	const directory = openSync(dirname(keyPath), 'r');
+	try {
+		fsyncSync(directory);
+	} finally {
+		closeSync(directory);
+	}
+}
+function createMasterKey(keyPath: string) {
+	const temporary = `${keyPath}.${randomBytes(12).toString('hex')}.tmp`;
+	let descriptor: number | undefined;
+	try {
+		descriptor = openSync(temporary, 'wx', 0o600);
+		writeFileSync(descriptor, randomBytes(32));
+		fsyncSync(descriptor);
+		closeSync(descriptor);
+		descriptor = undefined;
+		linkMasterKey(temporary, keyPath);
+		syncKeyDirectory(keyPath);
+	} finally {
+		if (descriptor !== undefined) {
+			closeSync(descriptor);
+		}
+		if (existsSync(temporary)) {
+			unlinkSync(temporary);
+		}
+	}
+}
+class CredentialStore {
+	private vertexAuth = new VertexAuth();
+	private db: Database.Database;
+	private keyPath: string;
+	constructor(filename: string, keyPath: string) {
+		this.keyPath = keyPath;
+		mkdirSync(dirname(filename), { recursive: true });
+		this.db = new Database(filename);
+		this.db.pragma('busy_timeout = 5000');
+		this.db.pragma('journal_mode = WAL');
+		this.db.pragma('synchronous = FULL');
+		this.db.exec(
+			'CREATE TABLE IF NOT EXISTS credentials (id TEXT PRIMARY KEY, nonce BLOB NOT NULL, tag BLOB NOT NULL, ciphertext BLOB NOT NULL)'
+		);
+	}
+	private masterKey(create: boolean): Buffer {
 		try {
-			privateDirectory(dirname(keyPath), keyPath);
+			privateDirectory(dirname(this.keyPath), this.keyPath);
 		} catch {
 			throw new Error(STORE_ERROR);
 		}
 		try {
-			if (!existsSync(keyPath)) {
-				if (!create || db.prepare('SELECT 1 FROM credentials LIMIT 1').get())
+			if (!existsSync(this.keyPath)) {
+				if (!create || this.db.prepare('SELECT 1 FROM credentials LIMIT 1').get()) {
 					throw new Error(KEY_ERROR);
-				const temporary = `${keyPath}.${randomBytes(12).toString('hex')}.tmp`;
-				let descriptor: number | undefined;
-				try {
-					descriptor = openSync(temporary, 'wx', 0o600);
-					writeFileSync(descriptor, randomBytes(32));
-					fsyncSync(descriptor);
-					closeSync(descriptor);
-					descriptor = undefined;
-					try {
-						linkSync(temporary, keyPath);
-					} catch (error) {
-						if (!(error && typeof error === 'object' && 'code' in error && error.code === 'EEXIST'))
-							throw error;
-					}
-					if (process.platform !== 'win32') {
-						const directory = openSync(dirname(keyPath), 'r');
-						try {
-							fsyncSync(directory);
-						} finally {
-							closeSync(directory);
-						}
-					}
-				} finally {
-					if (descriptor !== undefined) closeSync(descriptor);
-					if (existsSync(temporary)) unlinkSync(temporary);
 				}
+				createMasterKey(this.keyPath);
 			}
-			const stat = lstatSync(keyPath);
+			const stat = lstatSync(this.keyPath);
 			if (
 				!stat.isFile() ||
 				stat.isSymbolicLink() ||
 				stat.size !== 32 ||
 				(process.platform !== 'win32' &&
 					((stat.mode & 0o077) !== 0 || stat.uid !== process.getuid?.()))
-			)
+			) {
 				throw new Error(KEY_ERROR);
-			const key = readFileSync(keyPath);
-			if (key.length !== 32) throw new Error(KEY_ERROR);
+			}
+			const key = readFileSync(this.keyPath);
+			if (key.length !== 32) {
+				throw new Error(KEY_ERROR);
+			}
 			return key;
 		} catch {
 			throw new Error(KEY_ERROR);
 		}
 	}
-	function read(id: string): CredentialValue | null {
-		const row = db
+	private read(id: string): CredentialValue | null {
+		const row = this.db
 			.prepare('SELECT nonce, tag, ciphertext FROM credentials WHERE id = ?')
 			.get(id) as { nonce: Buffer; tag: Buffer; ciphertext: Buffer } | undefined;
-		if (!row) return null;
+		if (!row) {
+			return null;
+		}
 		try {
-			const decipher = createDecipheriv('aes-256-gcm', masterKey(false), row.nonce);
+			const decipher = createDecipheriv('aes-256-gcm', this.masterKey(false), row.nonce);
 			decipher.setAAD(Buffer.from(id));
 			decipher.setAuthTag(row.tag);
 			const value = JSON.parse(
@@ -155,7 +187,9 @@ export function openCredentialStore(filename: string, keyPath: string) {
 					? { serviceAccountJson: JSON.stringify(saved.serviceAccount) }
 					: { apiKey: saved.apiKey })
 			});
-			if (command.kind !== 'save' || command.provider.id !== id) throw new Error(KEY_ERROR);
+			if (command.kind !== 'save' || command.provider.id !== id) {
+				throw new Error(KEY_ERROR);
+			}
 			return {
 				...command.provider,
 				...('serviceAccountJson' in command
@@ -166,75 +200,86 @@ export function openCredentialStore(filename: string, keyPath: string) {
 			throw new Error(KEY_ERROR);
 		}
 	}
-	async function request(value: unknown, signal?: AbortSignal): Promise<unknown> {
+	private save(input: Extract<CredentialRequest, { kind: 'save' }>) {
+		const credential =
+			'serviceAccountJson' in input
+				? { serviceAccount: parseServiceAccountJson(input.serviceAccountJson) }
+				: { apiKey: input.apiKey };
+		if (credential.serviceAccount) {
+			validateServiceAccountKey(credential.serviceAccount);
+		}
+		// A wrong or damaged key must not overwrite any existing encrypted records.
+		for (const row of this.db.prepare('SELECT id FROM credentials').all() as { id: string }[]) {
+			this.read(row.id);
+		}
+		const key = this.masterKey(true);
+		const nonce = randomBytes(12);
+		const encrypt = createCipheriv('aes-256-gcm', key, nonce);
+		encrypt.setAAD(Buffer.from(input.provider.id));
+		const ciphertext = Buffer.concat([
+			encrypt.update(JSON.stringify({ ...input.provider, ...credential }), 'utf8'),
+			encrypt.final()
+		]);
+		this.db
+			.prepare(
+				'INSERT INTO credentials (id,nonce,tag,ciphertext) VALUES (?,?,?,?) ON CONFLICT(id) DO UPDATE SET nonce=excluded.nonce,tag=excluded.tag,ciphertext=excluded.ciphertext'
+			)
+			.run(input.provider.id, nonce, encrypt.getAuthTag(), ciphertext);
+		this.vertexAuth.clear();
+		return {};
+	}
+	request = async (value: unknown, signal?: AbortSignal): Promise<unknown> => {
 		const input = parseCredentialRequest(value);
-		if (input.kind === 'status')
+		if (input.kind === 'status') {
 			return Object.fromEntries(
 				input.providers.map((provider) => {
-					const secret = read(provider.id);
+					const secret = this.read(provider.id);
 					return [provider.id, secret !== null && sameCredentialAddress(secret, provider)];
 				})
 			);
+		}
 		if (input.kind === 'delete') {
-			db.prepare('DELETE FROM credentials WHERE id = ?').run(input.id);
-			vertexAuth.clear();
+			this.db.prepare('DELETE FROM credentials WHERE id = ?').run(input.id);
+			this.vertexAuth.clear();
 			return {};
 		}
 		if (input.kind === 'save') {
-			const credential =
-				'serviceAccountJson' in input
-					? { serviceAccount: parseServiceAccountJson(input.serviceAccountJson) }
-					: { apiKey: input.apiKey };
-			if (credential.serviceAccount) validateServiceAccountKey(credential.serviceAccount);
-			// A wrong or damaged key must not overwrite any existing encrypted records.
-			for (const row of db.prepare('SELECT id FROM credentials').all() as { id: string }[])
-				read(row.id);
-			const key = masterKey(true);
-			const nonce = randomBytes(12);
-			const encrypt = createCipheriv('aes-256-gcm', key, nonce);
-			encrypt.setAAD(Buffer.from(input.provider.id));
-			const ciphertext = Buffer.concat([
-				encrypt.update(JSON.stringify({ ...input.provider, ...credential }), 'utf8'),
-				encrypt.final()
-			]);
-			db.prepare(
-				'INSERT INTO credentials (id,nonce,tag,ciphertext) VALUES (?,?,?,?) ON CONFLICT(id) DO UPDATE SET nonce=excluded.nonce,tag=excluded.tag,ciphertext=excluded.ciphertext'
-			).run(input.provider.id, nonce, encrypt.getAuthTag(), ciphertext);
-			vertexAuth.clear();
-			return {};
+			return this.save(input);
 		}
-		const secret = read(input.provider.id);
-		if (!secret || !sameCredentialAddress(secret, input.provider))
+		const secret = this.read(input.provider.id);
+		if (!secret || !sameCredentialAddress(secret, input.provider)) {
 			throw new Error('이 연결의 주소와 형식에 사용할 인증 정보를 먼저 저장해주세요.');
+		}
 		if (input.kind === 'verify') {
-			if (!secret.serviceAccount)
+			if (!secret.serviceAccount) {
 				throw new Error('서비스 계정 인증은 Vertex AI 연결에서 사용할 수 있어요.');
-			await vertexAuth.accessToken(secret.serviceAccount, signal);
+			}
+			await this.vertexAuth.accessToken(secret.serviceAccount, signal);
 			return { verified: true };
 		}
 		return discoverModels(secret, signal);
-	}
-	return {
-		request,
-		async generate(input: RoundRequest, signal: AbortSignal, emit: (chunk: string) => void) {
-			const secret = read(input.provider.id);
-			if (!secret || !sameCredentialAddress(secret, input.provider))
-				throw new Error('이 연결의 주소와 형식에 사용할 인증 정보를 먼저 저장해주세요.');
-			return generateProvider(
-				secret,
-				input,
-				signal,
-				emit,
-				secret.serviceAccount
-					? (signal) => vertexAuth.accessToken(secret.serviceAccount!, signal)
-					: undefined
-			);
-		},
-		close: () => {
-			vertexAuth.clear();
-			db.close();
-		}
 	};
+
+	generate = async (input: RoundRequest, signal: AbortSignal, emit: (chunk: string) => void) => {
+		const secret = this.read(input.provider.id);
+		if (!secret || !sameCredentialAddress(secret, input.provider)) {
+			throw new Error('이 연결의 주소와 형식에 사용할 인증 정보를 먼저 저장해주세요.');
+		}
+		return generateProvider(secret, input, {
+			signal,
+			emit,
+			accessToken: secret.serviceAccount
+				? (signal) => this.vertexAuth.accessToken(secret.serviceAccount!, signal)
+				: undefined
+		});
+	};
+	close = () => {
+		this.vertexAuth.clear();
+		this.db.close();
+	};
+}
+export function openCredentialStore(filename: string, keyPath: string) {
+	return new CredentialStore(filename, keyPath);
 }
 
 let store: ReturnType<typeof openCredentialStore> | undefined;

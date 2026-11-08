@@ -1,3 +1,4 @@
+import { parseGame, parseSession, parseMessage } from '#lib/games/model.js';
 import { deleteHistoryEvent } from '#lib/games/state/history.js';
 import {
 	parseGameSnapshot,
@@ -5,18 +6,16 @@ import {
 	parseTransaction,
 	parseMemory
 } from '#lib/games/state/model.js';
-import { parseGame, parseSession, parseMessage } from '#lib/games/model.js';
-import { storedRecord, type StoredRecord } from './protocol.js';
+
+import { storedRecord, type StoredRecord, type StorageRequest } from './protocol.js';
 import { validateStoredHistory } from './validate-history.js';
 
 /** Pure deletion plan. Both deletions and replacement rows must be published in one host transaction. */
 export function pruneRecords(
 	records: readonly StoredRecord[],
-	gameId: string,
-	sessionId: string,
-	eventId: string,
-	revision: number
+	request: Extract<StorageRequest, { kind: 'prune' }>
 ) {
+	const { gameId, sessionId, eventId, expectedRevision: revision } = request;
 	validateStoredHistory(records);
 	const game = parseGame(records.find((row) => row.table === 'games' && row.id === gameId)?.value);
 	const owned = records.filter((row) => row.gameId === gameId && row.sessionId === sessionId);
@@ -63,8 +62,9 @@ export function pruneRecords(
 				if (
 					!snapshot.restoredStates ||
 					!Object.keys(snapshot.restoredStates).some((id) => removedIds.has(id))
-				)
+				) {
 					return [];
+				}
 				return [
 					storedRecord(
 						'snapshots',

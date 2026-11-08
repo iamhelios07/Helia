@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { evaluateAction } from './engine.js';
+
 import type { ActionRequest } from './protocol.js';
+
+import { evaluateAction } from './engine.js';
 
 const schema = {
 	type: 'object',
@@ -39,6 +41,9 @@ describe('sandboxed Filters and Hooks', () => {
 			'a-umlaut'
 		]);
 	});
+});
+
+describe('sandboxed Filters and Hooks', () => {
 	it('executes included chains in priority order with accumulated state and immutable trigger context', async () => {
 		const result = await evaluateAction(
 			rulesInput(`
@@ -51,6 +56,9 @@ helia.defineFilter({name:'valid',run({before,after,changes,action}){if(!changes.
 		expect(result.state).toEqual({ value: 111, log: ['start', 'bonus', 'finish'] });
 		expect(result.events?.map((event) => event.name)).toEqual(['started', 'late']);
 	});
+});
+
+describe('sandboxed Filters and Hooks', () => {
 	it.each([
 		[`run(){return {allow:false,reason:'Not allowed'};}`, 'filter-rejected'],
 		[`run(){return true;}`, 'filter'],
@@ -61,6 +69,9 @@ helia.defineFilter({name:'valid',run({before,after,changes,action}){if(!changes.
 			evaluateAction(rulesInput(`helia.defineFilter({name:'guard',${body}});`))
 		).rejects.toMatchObject({ code, ruleId: 'guard', scriptId: 'main' });
 	});
+});
+
+describe('sandboxed Filters and Hooks', () => {
 	it('checks the aggregate proposal after included work', async () => {
 		await expect(
 			evaluateAction(
@@ -71,6 +82,9 @@ helia.defineHook({name:'bonus',actions:['start'],run(){return [{name:'bonus',arg
 			)
 		).rejects.toMatchObject({ code: 'filter-rejected', ruleId: 'limit', reason: 'Too much' });
 	});
+});
+
+describe('sandboxed Filters and Hooks', () => {
 	it.each([
 		`run(){helia.emit('discard');throw Error('failed');}`,
 		`run({state}){state.value=90;}`,
@@ -82,6 +96,9 @@ helia.defineHook({name:'bonus',actions:['start'],run(){return [{name:'bonus',arg
 			evaluateAction(rulesInput(`helia.defineHook({name:'bad',actions:['start'],${body}});`))
 		).rejects.toThrow();
 	});
+});
+
+describe('sandboxed Filters and Hooks', () => {
 	it('rejects Action reentry and bounds the number of Hook invocations', async () => {
 		await expect(
 			evaluateAction(
@@ -96,6 +113,9 @@ helia.defineHook({name:'bonus',actions:['start'],run(){return [{name:'bonus',arg
 		).join('\n');
 		await expect(evaluateAction(rulesInput(hooks))).rejects.toMatchObject({ code: 'chain-limit' });
 	});
+});
+
+describe('sandboxed Filters and Hooks', () => {
 	it('rejects deep Action chains without committing a prefix', async () => {
 		const chain = Array.from(
 			{ length: 18 },
@@ -105,6 +125,9 @@ helia.defineHook({name:'h${index}',actions:['${index === 0 ? 'start' : `step${in
 		).join('\n');
 		await expect(evaluateAction(rulesInput(chain))).rejects.toMatchObject({ code: 'chain-limit' });
 	});
+});
+
+describe('sandboxed Filters and Hooks', () => {
 	it('defers independent Hooks and only runs the explicitly requested Hook group', async () => {
 		const input = rulesInput(
 			`helia.defineHook({name:'independent',mode:'independent',actions:['start'],run({before,after,state}){if(before.value!==0||after.value!==1||state.value!==1)throw Error('trigger');helia.emit('independent');return [{name:'bonus',args:{}}];}});`
@@ -125,6 +148,9 @@ helia.defineHook({name:'h${index}',actions:['${index === 0 ? 'start' : `step${in
 		expect(next.state.value).toBe(11);
 		expect(next.events?.map((event) => event.name)).toEqual(['independent']);
 	});
+});
+
+describe('sandboxed Filters and Hooks', () => {
 	it('applies rules to host state proposals and does not fire change Hooks on no-op proposals', async () => {
 		const input = rulesInput(
 			`helia.defineFilter({name:'nonnegative',run({after}){return {allow:after.value>=0};}});helia.defineHook({name:'changes',run(){throw Error('should not run for no-op');}});`
@@ -147,6 +173,9 @@ helia.defineHook({name:'h${index}',actions:['${index === 0 ? 'start' : `step${in
 			})
 		).rejects.toMatchObject({ code: 'filter-rejected' });
 	});
+});
+
+describe('sandboxed Filters and Hooks', () => {
 	it('rejects malformed rule declarations before any Action runs', async () => {
 		await expect(
 			evaluateAction(rulesInput(`helia.defineHook({name:'unknown',mode:'later',run(){}});`))

@@ -43,3 +43,16 @@ tauri = { version = "2.12", default-features = false, features = ["test"] }
 [features]
 default = ["desktop"]
 desktop = ["tauri/wry", "tauri/compression", "tauri/common-controls-v6", "tauri/dynamic-acl", "tauri/x11", "tauri/dbus"]
+
+[lints.rust]
+unsafe_code = "warn"
+
+[lints.clippy]
+# Complexity and maintainability
+cognitive_complexity = "warn"
+too_many_lines = "warn"
+too_many_arguments = "warn"
+
+# Additional code quality checks
+needless_pass_by_value = "warn"
+redundant_clone = "warn"

@@ -5,15 +5,18 @@ const prefix = 'helia:settings-draft:';
 export function loadSettingsDraft(gameId: string): UpdateGameSettings | null {
 	try {
 		const value: unknown = JSON.parse(localStorage.getItem(prefix + gameId) ?? 'null');
-		if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
+		if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+			return null;
+		}
 		const input = value as Record<string, unknown>;
 		if (
 			typeof input.title !== 'string' ||
 			typeof input.description !== 'string' ||
 			typeof input.firstMessage !== 'string' ||
 			typeof input.authorNote !== 'string'
-		)
+		) {
 			return null;
+		}
 		return {
 			title: input.title,
 			description: input.description,
@@ -37,7 +40,9 @@ export function storeSettingsDraft(gameId: string, input: UpdateGameSettings): v
 export function clearSettingsDraft(gameId: string, expected: UpdateGameSettings): void {
 	try {
 		const stored = loadSettingsDraft(gameId);
-		if (stored && sameSettings(stored, expected)) localStorage.removeItem(prefix + gameId);
+		if (stored && sameSettings(stored, expected)) {
+			localStorage.removeItem(prefix + gameId);
+		}
 	} catch {
 		// A committed save does not depend on removing its recovery copy.
 	}

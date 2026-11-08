@@ -16,7 +16,9 @@ function notify(id: string) {
 }
 export function beginSessionActivity(gameId: string, sessionId: string): () => void {
 	const id = key(gameId, sessionId);
-	if (active.has(id)) throw aiError('busy');
+	if (active.has(id)) {
+		throw aiError('busy');
+	}
 	active.add(id);
 	notify(id);
 	let released = false;
@@ -29,7 +31,9 @@ export function beginSessionActivity(gameId: string, sessionId: string): () => v
 	};
 }
 export function assertSessionIdle(gameId: string, sessionId: string) {
-	if (isSessionBusy(gameId, sessionId)) throw aiError('busy');
+	if (isSessionBusy(gameId, sessionId)) {
+		throw aiError('busy');
+	}
 }
 export function publishSessionAIEvent(gameId: string, sessionId: string, event: AgentEvent) {
 	for (const observer of eventObservers.get(key(gameId, sessionId)) ?? []) {
@@ -51,7 +55,9 @@ export function subscribeSessionAIEvents(
 	eventObservers.set(id, listeners);
 	return () => {
 		listeners.delete(observer);
-		if (!listeners.size) eventObservers.delete(id);
+		if (!listeners.size) {
+			eventObservers.delete(id);
+		}
 	};
 }
 export function subscribeSessionActivity(
@@ -65,6 +71,8 @@ export function subscribeSessionActivity(
 	observers.set(id, listeners);
 	return () => {
 		listeners.delete(observer);
-		if (!listeners.size) observers.delete(id);
+		if (!listeners.size) {
+			observers.delete(id);
+		}
 	};
 }

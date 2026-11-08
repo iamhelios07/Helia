@@ -1,9 +1,12 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
+
 	import Icon from '#lib/components/Icon.svelte';
-	import { CHAT_PANEL_ID } from './workbench-preferences.js';
+
 	import type { PanelInfo, PanelLayout } from './runtime/model.js';
+
 	import PanelLayoutNode from './PanelLayoutNode.svelte';
+	import { CHAT_PANEL_ID } from './workbench-preferences.js';
 
 	let {
 		node,
@@ -42,8 +45,9 @@
 		};
 	}
 	function startResize(event: PointerEvent) {
-		if (node.kind !== 'split' || !container || drag || !event.isPrimary || event.button !== 0)
+		if (node.kind !== 'split' || !container || drag || !event.isPrimary || event.button !== 0) {
 			return;
+		}
 		event.preventDefault();
 		const target = event.currentTarget as HTMLElement;
 		target.setPointerCapture(event.pointerId);
@@ -57,7 +61,9 @@
 		};
 	}
 	function resize(event: PointerEvent) {
-		if (!drag || drag.id !== event.pointerId || !drag.size) return;
+		if (!drag || drag.id !== event.pointerId || !drag.size) {
+			return;
+		}
 		onratio(
 			path,
 			drag.ratio + ((horizontal ? event.clientX : event.clientY) - drag.start) / drag.size,
@@ -65,40 +71,52 @@
 		);
 	}
 	function finishResize(event?: PointerEvent) {
-		if (!drag || (event && drag.id !== event.pointerId)) return;
+		if (!drag || (event && drag.id !== event.pointerId)) {
+			return;
+		}
 		const previous = drag;
 		drag = null;
 		onresizing(false);
-		if (previous.target.hasPointerCapture(previous.id))
+		if (previous.target.hasPointerCapture(previous.id)) {
 			previous.target.releasePointerCapture(previous.id);
-		if (node.kind === 'split') onratio(path, node.ratio, true);
+		}
+		if (node.kind === 'split') {
+			onratio(path, node.ratio, true);
+		}
 	}
 	function resizeWithKeyboard(event: KeyboardEvent) {
-		if (node.kind !== 'split') return;
+		if (node.kind !== 'split') {
+			return;
+		}
 		const negative = horizontal ? 'ArrowLeft' : 'ArrowUp';
 		const positive = horizontal ? 'ArrowRight' : 'ArrowDown';
-		if (![negative, positive, 'Home', 'End'].includes(event.key)) return;
+		if (![negative, positive, 'Home', 'End'].includes(event.key)) {
+			return;
+		}
 		event.preventDefault();
-		onratio(
-			path,
-			event.key === 'Home'
-				? 0.1
-				: event.key === 'End'
-					? 0.9
-					: node.ratio + (event.shiftKey ? 0.1 : 0.02) * (event.key === positive ? 1 : -1),
-			true
-		);
+		let ratio = node.ratio;
+		if (event.key === 'Home') {
+			ratio = 0.1;
+		} else if (event.key === 'End') {
+			ratio = 0.9;
+		} else {
+			ratio += (event.shiftKey ? 0.1 : 0.02) * (event.key === positive ? 1 : -1);
+		}
+		onratio(path, ratio, true);
 	}
 
 	function cancelResize(event: KeyboardEvent) {
-		if (event.key !== 'Escape' || !drag || node.kind !== 'split') return;
+		if (event.key !== 'Escape' || !drag || node.kind !== 'split') {
+			return;
+		}
 		event.preventDefault();
 		const previous = drag;
 		drag = null;
 		onratio(path, previous.ratio, false);
 		onresizing(false);
-		if (previous.target.hasPointerCapture(previous.id))
+		if (previous.target.hasPointerCapture(previous.id)) {
 			previous.target.releasePointerCapture(previous.id);
+		}
 	}
 </script>
 

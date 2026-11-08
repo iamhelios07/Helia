@@ -1,16 +1,18 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { openStorage } from '#lib/server/sqlite.js';
-import { createGameRepository } from './repository-core.js';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+
 import { createWorkspace, TransactionFailure } from '#lib/games/state/workspace.js';
+import { openStorage } from '#lib/server/sqlite.js';
 import {
 	CONFLICT,
 	parseReply,
 	storedRecord,
 	type StorageTransport
 } from '#lib/storage/protocol.js';
+
+import { createGameRepository } from './repository-core.js';
 
 let directory: string;
 let storage: ReturnType<typeof openStorage>;
@@ -98,6 +100,9 @@ describe('SQLite game repository', () => {
 		expect(JSON.stringify(dump)).not.toContain('Private player');
 		expect(JSON.stringify(dump)).not.toContain('maxTokens');
 	});
+});
+
+describe('SQLite game repository', () => {
 	it.each(['B', 'E'])(
 		'deletes the entire %s subtree and restores the nearest surviving ancestor after reopening',
 		async (target) => {
@@ -154,6 +159,9 @@ describe('SQLite game repository', () => {
 			expect(continued.transactions).toHaveLength(kept.length + 1);
 		}
 	);
+});
+
+describe('SQLite game repository', () => {
 	it('keeps the selected future when deleting an inactive branch, then restores initial state when deleting the root', async () => {
 		const { gameId, sessionId, ids, revision } = await branchedHistory();
 		let saved = await repository.deleteSessionEvent(gameId, sessionId, ids.C, revision);
@@ -179,6 +187,9 @@ describe('SQLite game repository', () => {
 		expect(saved.messages).toEqual([]);
 		expect(saved.memories).toEqual([]);
 	});
+});
+
+describe('SQLite game repository', () => {
 	it.each(['transactions', 'progress', 'games'])(
 		'rolls back subtree deletion and sequence compaction if %s fails',
 		async (table) => {
@@ -193,6 +204,9 @@ describe('SQLite game repository', () => {
 			expect(await transport({ kind: 'read', gameId, sessionId })).toEqual(before);
 		}
 	);
+});
+
+describe('SQLite game repository', () => {
 	it('rejects stale revisions and foreign event ownership without deleting anything', async () => {
 		const { gameId, sessionId, ids, revision } = await branchedHistory();
 		const other = await repository.createSession(gameId);
@@ -206,6 +220,9 @@ describe('SQLite game repository', () => {
 		).rejects.toThrow();
 		expect(await transport({ kind: 'read', gameId, sessionId })).toEqual(before);
 	});
+});
+
+describe('SQLite game repository', () => {
 	it('allows exactly one of a pending commit and deletion using the same revision', async () => {
 		const { gameId, sessionId, ids, revision } = await branchedHistory();
 		const results = await Promise.allSettled([
@@ -222,6 +239,9 @@ describe('SQLite game repository', () => {
 			revision + 1
 		);
 	});
+});
+
+describe('SQLite game repository', () => {
 	it('rejects invalid schemas and initial states before writing game rules', async () => {
 		const game = await repository.createGame();
 		const before = await transport({ kind: 'read', gameId: game.id });
@@ -236,14 +256,18 @@ describe('SQLite game repository', () => {
 				},
 				initialState: { hp: '100' }
 			}
-		])
+		]) {
 			expect(() =>
 				repository.updateGameRules(game.id, { ...input, scripts: {} } as unknown as Parameters<
 					typeof repository.updateGameRules
 				>[1])
 			).toThrow();
+		}
 		expect(await transport({ kind: 'read', gameId: game.id })).toEqual(before);
 	});
+});
+
+describe('SQLite game repository', () => {
 	it('commits accumulated workspace steps once and rolls back schema or rule failures with messages', async () => {
 		const { gameId, sessionId, history } = await start();
 		const work = createWorkspace(history.snapshot.schema, history.progress.state);
@@ -278,6 +302,9 @@ describe('SQLite game repository', () => {
 		expect(saved.transactions).toHaveLength(1);
 		expect(saved.progress.state).toEqual({ gold: 80 });
 	});
+});
+
+describe('SQLite game repository', () => {
 	it('rejects raw storage proposals that bypass state schema or history validation and rolls back metadata', async () => {
 		const { gameId, sessionId, history } = await start();
 		const before = await transport({ kind: 'read', gameId, sessionId });
@@ -298,6 +325,9 @@ describe('SQLite game repository', () => {
 			expect(await transport({ kind: 'read', gameId, sessionId })).toEqual(before);
 		}
 	});
+});
+
+describe('SQLite game repository', () => {
 	it('validates loaded state without silently repairing corrupt data', async () => {
 		const { gameId, sessionId } = await start();
 		storage.connection
@@ -310,6 +340,9 @@ describe('SQLite game repository', () => {
 				.get(sessionId)
 		).toEqual({ gold: 'bad' });
 	});
+});
+
+describe('SQLite game repository', () => {
 	it('rejects a corrupted inactive branch even when current progress still matches its own history', async () => {
 		const { gameId, sessionId } = await start();
 		const history = await repository.commitSessionTransaction(gameId, sessionId, {
@@ -326,6 +359,9 @@ describe('SQLite game repository', () => {
 			.run(history.progress.headId);
 		await expect(repository.getSessionHistory(gameId, sessionId)).rejects.toThrow(/load/);
 	});
+});
+
+describe('SQLite game repository', () => {
 	it('creates independent games and initial sessions in a fresh DB', async () => {
 		const first = await repository.createGame();
 		const second = await repository.createGame();
@@ -336,6 +372,9 @@ describe('SQLite game repository', () => {
 		);
 		expect(await repository.getGameWorkspace('missing')).toBeNull();
 	});
+});
+
+describe('SQLite game repository', () => {
 	it('preserves game metadata, prompts and IDs when reopening the file', async () => {
 		const game = await repository.createGame({ title: '게임', genre: '자유', description: '소개' });
 		await repository.updateGameSettings(game.id, {
@@ -350,6 +389,9 @@ describe('SQLite game repository', () => {
 		expect(await repository.getGameWorkspace(game.id)).toEqual(before);
 		expect(before?.game.description).toBe('소개');
 	});
+});
+
+describe('SQLite game repository', () => {
 	it('creates, selects, renames and deletes sessions while maintaining selection', async () => {
 		const game = await repository.createGame();
 		const second = await repository.createSession(game.id);
@@ -363,6 +405,9 @@ describe('SQLite game repository', () => {
 		expect(replacement.sessions).toHaveLength(1);
 		expect(replacement.game.activeSessionId).not.toBe(game.activeSessionId);
 	});
+});
+
+describe('SQLite game repository', () => {
 	it('rejects missing or foreign session mutations without changing games', async () => {
 		const first = await repository.createGame();
 		const second = await repository.createGame();
@@ -374,6 +419,9 @@ describe('SQLite game repository', () => {
 		}
 		expect(await repository.listGames()).toEqual(before);
 	});
+});
+
+describe('SQLite game repository', () => {
 	it('prepends an opening exactly once and preserves dialogue through settings edits', async () => {
 		const game = await repository.createGame();
 		await repository.appendUserMessage(game.id, game.activeSessionId, '  행동\n대사  ');
@@ -400,6 +448,9 @@ describe('SQLite game repository', () => {
 			(await repository.getSessionConversation(game.id, game.activeSessionId)).messages[0].content
 		).toBe('첫 장면');
 	});
+});
+
+describe('SQLite game repository', () => {
 	it('serializes competing normal sends without losing or duplicating messages', async () => {
 		const game = await repository.createGame();
 		await Promise.all(
@@ -414,6 +465,9 @@ describe('SQLite game repository', () => {
 			(await repository.getSessionHistory(game.id, game.activeSessionId)).transactions
 		).toHaveLength(6);
 	});
+});
+
+describe('SQLite game repository', () => {
 	it('rejects invalid inputs without initializing partial data', async () => {
 		expect(() =>
 			repository.updateGame('missing', { title: '', genre: '', description: '' })
@@ -424,6 +478,9 @@ describe('SQLite game repository', () => {
 			count: 0
 		});
 	});
+});
+
+describe('SQLite game repository', () => {
 	it('rolls back game creation when its initial session cannot be inserted', async () => {
 		storage.connection.exec(
 			"CREATE TRIGGER fail_session BEFORE INSERT ON sessions BEGIN SELECT RAISE(ABORT,'forced failure'); END"
@@ -431,6 +488,9 @@ describe('SQLite game repository', () => {
 		await expect(repository.createGame()).rejects.toThrow();
 		expect(await repository.listGames()).toEqual([]);
 	});
+});
+
+describe('SQLite game repository', () => {
 	it('atomically records state, response and event and rejects competing stale results', async () => {
 		const { gameId, sessionId, history } = await start();
 		const input = {
@@ -450,6 +510,9 @@ describe('SQLite game repository', () => {
 		expect(saved.transactions).toHaveLength(1);
 		expect((await repository.getSessionConversation(gameId, sessionId)).messages).toHaveLength(1);
 	});
+});
+
+describe('SQLite game repository', () => {
 	it('rolls back every write, including version and metadata, if the event insert fails', async () => {
 		const { gameId, sessionId, history } = await start();
 		const before = await transport({ kind: 'read', gameId, sessionId });
@@ -470,6 +533,9 @@ describe('SQLite game repository', () => {
 			history.progress
 		);
 	});
+});
+
+describe('SQLite game repository', () => {
 	it('restores branches and isolates memories, including after reopening', async () => {
 		const { gameId, sessionId } = await start();
 		let a = await repository.commitSessionTransaction(gameId, sessionId, {
@@ -513,6 +579,9 @@ describe('SQLite game repository', () => {
 		expect(hidden.progress.state).toEqual({ gold: 100 });
 		expect(hidden.transactions).toHaveLength(1);
 	});
+});
+
+describe('SQLite game repository', () => {
 	it('cascades session deletion to its messages, progress, snapshots, events and memories', async () => {
 		const { gameId, sessionId } = await start();
 		const history = await repository.commitSessionTransaction(gameId, sessionId, {
@@ -527,12 +596,16 @@ describe('SQLite game repository', () => {
 			content: '기억'
 		});
 		await repository.deleteSession(gameId, sessionId);
-		for (const table of ['messages', 'progress', 'snapshots', 'transactions', 'memories'])
+		for (const table of ['messages', 'progress', 'snapshots', 'transactions', 'memories']) {
 			expect(storage.connection.prepare(`select count(*) as count from ${table}`).get()).toEqual({
 				count: 0
 			});
+		}
 		expect((await repository.getGameWorkspace(gameId))?.sessions).toHaveLength(1);
 	});
+});
+
+describe('SQLite game repository', () => {
 	it('does not delete a session if updating its game fails', async () => {
 		const { gameId, sessionId } = await start();
 		const before = await transport({ kind: 'read', gameId, sessionId });
@@ -542,6 +615,9 @@ describe('SQLite game repository', () => {
 		await expect(repository.deleteSession(gameId, sessionId)).rejects.toThrow();
 		expect(await transport({ kind: 'read', gameId, sessionId })).toEqual(before);
 	});
+});
+
+describe('SQLite game repository', () => {
 	it('keeps state and script snapshots independent between sessions', async () => {
 		const { gameId, sessionId, history } = await start();
 		await repository.updateGameRules(gameId, {
@@ -561,6 +637,9 @@ describe('SQLite game repository', () => {
 			history.snapshot
 		);
 	});
+});
+
+describe('SQLite game repository', () => {
 	it('rejects unknown operations, table names and mismatched owners before writing', async () => {
 		const game = await repository.createGame();
 		const view = await transport({ kind: 'read', gameId: game.id });
@@ -585,6 +664,9 @@ describe('SQLite game repository', () => {
 		).toThrow();
 		expect(await repository.listGames()).toHaveLength(1);
 	});
+});
+
+describe('SQLite game repository', () => {
 	it('rejects stale storage versions without changing records', async () => {
 		const game = await repository.createGame();
 		await repository.updateGame(game.id, { title: 'new', genre: '', description: '' });

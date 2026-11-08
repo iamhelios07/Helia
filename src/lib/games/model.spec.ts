@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+
 import {
 	GAME_DESCRIPTION_MAX_LENGTH,
 	GAME_GENRE_MAX_LENGTH,
@@ -93,6 +94,9 @@ describe('game metadata validation', () => {
 		).toThrow();
 		expect(() => parseGame({ ...game, scripts: { bad: { language: '', source: '' } } })).toThrow();
 	});
+});
+
+describe('game metadata validation', () => {
 	it('normalizes input without inventing optional game content', () => {
 		expect(validateGameMetadata({ title: '  새 게임  ', genre: ' ', description: '\n' })).toEqual({
 			title: '새 게임',
@@ -100,7 +104,9 @@ describe('game metadata validation', () => {
 			description: ''
 		});
 	});
+});
 
+describe('game metadata validation', () => {
 	it.each([
 		null,
 		{},
@@ -109,7 +115,9 @@ describe('game metadata validation', () => {
 	])('rejects malformed or blank metadata: %j', (value) => {
 		expect(() => validateGameMetadata(value)).toThrow();
 	});
+});
 
+describe('game metadata validation', () => {
 	it.each([
 		{ title: 'a'.repeat(GAME_TITLE_MAX_LENGTH + 1), genre: '', description: '' },
 		{ title: '게임', genre: 'a'.repeat(GAME_GENRE_MAX_LENGTH + 1), description: '' },
@@ -117,7 +125,9 @@ describe('game metadata validation', () => {
 	])('enforces metadata size limits: %j', (value) => {
 		expect(() => validateGameMetadata(value)).toThrow();
 	});
+});
 
+describe('game metadata validation', () => {
 	it('rejects unsupported stored formats and invalid session references', () => {
 		const game = {
 			schemaVersion: 2,

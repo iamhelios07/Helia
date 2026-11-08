@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+
 import { runCreatorAction } from './browser.js';
 import { SANDBOX_LIMITS, type ActionRequest } from './protocol.js';
 
@@ -66,8 +67,9 @@ it.each([
 it('limits concurrent workers and releases every slot after completion', async () => {
 	const pending = Array.from({ length: 4 }, () => runCreatorAction(input));
 	await expect(runCreatorAction(input)).rejects.toMatchObject({ code: 'busy' });
-	for (const worker of TestWorker.instances)
+	for (const worker of TestWorker.instances) {
 		worker.respond(JSON.stringify({ ok: true, result: { state: { gold: 80 } } }));
+	}
 	expect(await Promise.all(pending)).toHaveLength(4);
 	const next = runCreatorAction(input);
 	TestWorker.instances[4].respond(JSON.stringify({ ok: true, result: { state: { gold: 70 } } }));

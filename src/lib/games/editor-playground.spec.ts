@@ -1,14 +1,17 @@
 ﻿import { beforeEach, expect, it, vi } from 'vitest';
-import { createGameRepository } from './repository-core.js';
+
 import { memoryStorage } from '#lib/testing/memory-storage.js';
-import { evaluateAction } from './scripting/engine.js';
+
+import type { RoundRequest } from './ai/protocol.js';
+
+import { hostAILeases } from './ai/leases.js';
 import {
 	createEditorPlaythrough,
 	playgroundFingerprint,
 	type EditorDiagnostic
 } from './editor-playground.js';
-import { hostAILeases } from './ai/leases.js';
-import type { RoundRequest } from './ai/protocol.js';
+import { createGameRepository } from './repository-core.js';
+import { evaluateAction } from './scripting/engine.js';
 
 const generation = vi.hoisted(() => ({
 	scopes: [] as { gameId: string; sessionId: string }[],
@@ -39,9 +42,12 @@ vi.mock('./ai/transport.js', () => ({
 			generate: async (request: RoundRequest) => {
 				hostAILeases.round(lease, gameId, sessionId);
 				generation.requests.push(request);
-				if (generation.fail) throw Error('Provider unavailable');
-				if (++round === 1)
+				if (generation.fail) {
+					throw Error('Provider unavailable');
+				}
+				if (++round === 1) {
 					return { text: '', calls: [{ id: 'call', name: 'increment', arguments: {} }] };
+				}
 				return { text: 'Test reply', calls: [] };
 			}
 		};

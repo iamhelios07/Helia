@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { ProviderDecoder, encodeProviderRequest } from './providers.js';
+
 import { parseRoundRequest, type AgentEvent, type RoundRequest } from './protocol.js';
+import { ProviderDecoder, encodeProviderRequest } from './providers.js';
 
 const event = (value: unknown) => `data: ${JSON.stringify(value)}\n\n`;
 const round = (kind: RoundRequest['provider']['kind']): RoundRequest => ({
@@ -34,6 +35,9 @@ describe('provider stream adapters', () => {
 			)
 		).toThrow();
 	});
+});
+
+describe('provider stream adapters', () => {
 	it.each([
 		[
 			'openai-compatible',
@@ -70,10 +74,15 @@ describe('provider stream adapters', () => {
 	] as const)('streams and verifies completion for %s', (kind, source) => {
 		const events: AgentEvent[] = [];
 		const decoder = new ProviderDecoder(kind, (e) => events.push(e));
-		for (let i = 0; i < source.length; i += 3) decoder.push(source.slice(i, i + 3));
+		for (let i = 0; i < source.length; i += 3) {
+			decoder.push(source.slice(i, i + 3));
+		}
 		expect(decoder.finish()).toMatchObject({ text: 'Hello', calls: [] });
 		expect(events).toContainEqual({ type: 'text', text: 'Hello' });
 	});
+});
+
+describe('provider stream adapters', () => {
 	it('never treats a truncated or length-limited stream as a successful final answer', () => {
 		const decoder = new ProviderDecoder('openai-compatible', () => {});
 		decoder.push(event({ choices: [{ delta: { content: 'Partial' } }] }));
@@ -89,6 +98,9 @@ describe('provider stream adapters', () => {
 			)
 		).toThrow();
 	});
+});
+
+describe('provider stream adapters', () => {
 	it('assembles fragmented parallel tool calls and validates identities and JSON', () => {
 		const decoder = new ProviderDecoder('openai-compatible', () => {});
 		decoder.push(
@@ -114,6 +126,9 @@ describe('provider stream adapters', () => {
 		);
 		expect(decoder.finish().calls).toEqual([{ id: 'id', name: 'lookup', arguments: { x: 1 } }]);
 	});
+});
+
+describe('provider stream adapters', () => {
 	it('preserves provider thought signatures in native continuation blocks', () => {
 		const decoder = new ProviderDecoder('google', () => {});
 		decoder.push(
@@ -137,6 +152,9 @@ describe('provider stream adapters', () => {
 		);
 		expect(JSON.stringify(encodeProviderRequest(input).body)).toContain('thoughtSignature');
 	});
+});
+
+describe('provider stream adapters', () => {
 	it.each([
 		'openai-compatible',
 		'openai-responses',

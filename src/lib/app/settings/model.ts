@@ -45,8 +45,9 @@ export function emptyAISettings(): AISettings {
 }
 
 function object(value: unknown): Record<string, unknown> {
-	if (!value || typeof value !== 'object' || Array.isArray(value))
+	if (!value || typeof value !== 'object' || Array.isArray(value)) {
 		throw new Error('설정 데이터의 형식이 올바르지 않아요.');
+	}
 	return value as Record<string, unknown>;
 }
 function text(value: unknown, label: string, maxLength = 120): string {
@@ -55,13 +56,15 @@ function text(value: unknown, label: string, maxLength = 120): string {
 		!value.trim() ||
 		value.trim().length > maxLength ||
 		/\p{Cc}/u.test(value)
-	)
+	) {
 		throw new Error(`${label}을(를) 1~${maxLength}자로 입력해주세요.`);
+	}
 	return value.trim();
 }
 function id(value: unknown): string {
-	if (typeof value !== 'string' || !/^[\w-]{1,80}$/.test(value))
+	if (typeof value !== 'string' || !/^[\w-]{1,80}$/.test(value)) {
 		throw new Error('설정 항목의 식별자가 올바르지 않아요.');
+	}
 	return value;
 }
 function endpoint(value: unknown): string {
@@ -78,8 +81,9 @@ function endpoint(value: unknown): string {
 		url.password ||
 		url.search ||
 		url.hash
-	)
+	) {
 		throw new Error('기본 URL은 인증 정보·쿼리·프래그먼트 없는 HTTP 또는 HTTPS 주소여야 해요.');
+	}
 	return url.href.replace(/\/+$/, '');
 }
 
@@ -92,17 +96,20 @@ export function parseAISettings(value: unknown): AISettings {
 		!Array.isArray(input.models) ||
 		input.providers.length > 64 ||
 		input.models.length > 256
-	)
+	) {
 		throw new Error('지원하지 않는 설정 형식이거나 설정 항목이 너무 많아요.');
+	}
 	const providers: ProviderSettings[] = input.providers.map((item: unknown) => {
 		const provider = object(item);
-		if (!PROVIDER_KINDS.includes(provider.kind as ProviderKind))
+		if (!PROVIDER_KINDS.includes(provider.kind as ProviderKind)) {
 			throw new Error('지원하지 않는 API 형식이에요.');
+		}
 		if (
 			provider.service !== undefined &&
 			!SERVICE_PRESETS.some((preset) => preset.id === provider.service)
-		)
+		) {
 			throw new Error('지원하지 않는 서비스예요.');
+		}
 		const vertex =
 			provider.kind === 'google-vertex' ? parseVertexSettings(provider.vertex) : undefined;
 		return {
@@ -117,12 +124,15 @@ export function parseAISettings(value: unknown): AISettings {
 		};
 	});
 	const providerIds = new Set(providers.map((provider) => provider.id));
-	if (providerIds.size !== providers.length) throw new Error('중복된 프로바이더 식별자가 있어요.');
+	if (providerIds.size !== providers.length) {
+		throw new Error('중복된 프로바이더 식별자가 있어요.');
+	}
 	const models: ModelSettings[] = input.models.map((item: unknown) => {
 		const model = object(item);
 		const providerId = id(model.providerId);
-		if (!providerIds.has(providerId))
+		if (!providerIds.has(providerId)) {
 			throw new Error('모델에 연결할 프로바이더를 먼저 등록해주세요.');
+		}
 		return {
 			id: id(model.id),
 			name: text(model.name, '모델 이름'),
@@ -131,10 +141,13 @@ export function parseAISettings(value: unknown): AISettings {
 		};
 	});
 	const modelIds = new Set(models.map((model) => model.id));
-	if (modelIds.size !== models.length) throw new Error('중복된 모델 식별자가 있어요.');
+	if (modelIds.size !== models.length) {
+		throw new Error('중복된 모델 식별자가 있어요.');
+	}
 	const defaultModelId = input.defaultModelId === null ? null : id(input.defaultModelId);
-	if (defaultModelId !== null && !modelIds.has(defaultModelId))
+	if (defaultModelId !== null && !modelIds.has(defaultModelId)) {
 		throw new Error('기본 모델이 등록된 모델 목록에 없어요.');
+	}
 	return { version: 1, providers, models, defaultModelId };
 }
 

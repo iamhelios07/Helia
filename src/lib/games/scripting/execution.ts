@@ -1,6 +1,8 @@
-import { stateAt, type CommitTransaction } from '#lib/games/state/engine.js';
-import type { SessionHistory } from '#lib/games/state/model.js';
 import type { Message } from '#lib/games/model.js';
+import type { SessionHistory } from '#lib/games/state/model.js';
+
+import { stateAt, type CommitTransaction } from '#lib/games/state/engine.js';
+
 import {
 	CreatorRuntimeError,
 	parseResult,
@@ -43,12 +45,9 @@ export async function executeSessionWork(
 	port: ExecutionPort,
 	options: RunOptions = {}
 ): Promise<SessionExecution> {
-	function canceled() {
-		if (options.signal?.aborted) throw new CreatorRuntimeError('canceled');
-	}
 	const snapshot = history.snapshot;
 	const before = stateAt(history, input.parentId);
-	canceled();
+	checkCanceled(options);
 	const result = parseResult(
 		await port.run(
 			{
@@ -62,7 +61,7 @@ export async function executeSessionWork(
 		),
 		snapshot.schema
 	);
-	canceled();
+	checkCanceled(options);
 	let current = await port.commit(
 		{
 			...input,
@@ -79,96 +78,140 @@ export async function executeSessionWork(
 		independent: [],
 		deliveryFailures: port.publish(rootTransactionId, result.events ?? [])
 	};
-	interface Job {
-		name: string;
-		trigger: RuleTrigger;
-		ancestors: string[];
-	}
+
 	const queue: Job[] = (result.independentHooks ?? []).map((name) => ({
 		name,
 		trigger: { before, after: result.state, action: input.action },
 		ancestors: []
 	}));
+	const context: IndependentContext = { current, snapshot, port, options, report, queue };
+	await drainIndependent(context);
+	current = context.current;
+	return { ...current, execution: report };
+}
+interface Job {
+	name: string;
+	trigger: RuleTrigger;
+	ancestors: string[];
+}
+interface IndependentContext {
+	current: SessionHistory;
+	snapshot: SessionHistory['snapshot'];
+	port: ExecutionPort;
+	options: RunOptions;
+	report: ExecutionReport;
+	queue: Job[];
+}
+function checkCanceled(options: RunOptions) {
+	if (options.signal?.aborted) {
+		throw new CreatorRuntimeError('canceled');
+	}
+}
+async function executeHook(context: IndependentContext, job: Job) {
+	const { snapshot, port, options, report, queue } = context;
+	checkCanceled(options);
+	if (job.ancestors.includes(job.name)) {
+		throw new CreatorRuntimeError('reentry', null, job.name);
+	}
+	const latest = await port.read();
+	if (
+		latest.progress.revision !== context.current.progress.revision ||
+		latest.progress.headId !== context.current.progress.headId ||
+		latest.snapshot.id !== snapshot.id
+	) {
+		throw new CreatorRuntimeError('conflict');
+	}
+	const action = { name: `hook:${job.name}`, args: {} };
+	const next = parseResult(
+		await port.run(
+			{
+				scripts: snapshot.scripts,
+				schema: snapshot.schema,
+				state: latest.progress.state,
+				action,
+				operation: { kind: 'hook', name: job.name, trigger: job.trigger }
+			},
+			options
+		),
+		snapshot.schema
+	);
+	checkCanceled(options);
+	context.current = await port.commit(
+		{
+			expectedRevision: latest.progress.revision,
+			parentId: latest.progress.headId,
+			nextState: next.state,
+			action,
+			...(next.description ? { description: next.description } : {})
+		},
+		snapshot.id
+	);
+	report.deliveryFailures += port.publish(context.current.progress.headId!, next.events ?? []);
+	report.independent.push({
+		name: job.name,
+		status: 'committed',
+		transactionId: context.current.progress.headId!
+	});
+	for (const name of next.independentHooks ?? []) {
+		queue.push({
+			name,
+			trigger: { before: latest.progress.state, after: next.state, action },
+			ancestors: [...job.ancestors, job.name]
+		});
+	}
+}
+async function handleHookFailure(
+	context: IndependentContext,
+	job: Job,
+	error: unknown
+): Promise<boolean> {
+	const { port, report, queue } = context;
+	const failure = error instanceof CreatorRuntimeError ? error : new CreatorRuntimeError('storage');
+	report.independent.push({
+		name: job.name,
+		status: 'failed',
+		code: failure.code,
+		ruleId: failure.ruleId,
+		scriptId: failure.scriptId,
+		reason: failure.reason
+	});
+	if (failure.code === 'canceled' || failure.code === 'conflict') {
+		if (failure.code === 'conflict') {
+			try {
+				context.current = await port.read();
+			} catch {
+				/* The session may have been deleted; do not misreport an already committed root as failed. */
+			}
+		}
+		for (const pending of queue) {
+			report.independent.push({ name: pending.name, status: 'skipped', code: failure.code });
+		}
+		return true;
+	}
+
+	return false;
+}
+async function executeIndependent(context: IndependentContext, job: Job): Promise<boolean> {
+	try {
+		await executeHook(context, job);
+		return false;
+	} catch (error) {
+		return handleHookFailure(context, job, error);
+	}
+}
+async function drainIndependent(context: IndependentContext) {
+	const { queue, report } = context;
 	let count = 0;
 	while (queue.length) {
 		const job = queue.shift()!;
 		if (++count > SANDBOX_LIMITS.independentCount) {
-			for (const pending of [job, ...queue])
+			for (const pending of [job, ...queue]) {
 				report.independent.push({ name: pending.name, status: 'skipped', code: 'chain-limit' });
+			}
 			break;
 		}
-		try {
-			canceled();
-			if (job.ancestors.includes(job.name))
-				throw new CreatorRuntimeError('reentry', null, job.name);
-			const latest = await port.read();
-			if (
-				latest.progress.revision !== current.progress.revision ||
-				latest.progress.headId !== current.progress.headId ||
-				latest.snapshot.id !== snapshot.id
-			)
-				throw new CreatorRuntimeError('conflict');
-			const action = { name: `hook:${job.name}`, args: {} };
-			const next = parseResult(
-				await port.run(
-					{
-						scripts: snapshot.scripts,
-						schema: snapshot.schema,
-						state: latest.progress.state,
-						action,
-						operation: { kind: 'hook', name: job.name, trigger: job.trigger }
-					},
-					options
-				),
-				snapshot.schema
-			);
-			canceled();
-			current = await port.commit(
-				{
-					expectedRevision: latest.progress.revision,
-					parentId: latest.progress.headId,
-					nextState: next.state,
-					action,
-					...(next.description ? { description: next.description } : {})
-				},
-				snapshot.id
-			);
-			report.deliveryFailures += port.publish(current.progress.headId!, next.events ?? []);
-			report.independent.push({
-				name: job.name,
-				status: 'committed',
-				transactionId: current.progress.headId!
-			});
-			for (const name of next.independentHooks ?? [])
-				queue.push({
-					name,
-					trigger: { before: latest.progress.state, after: next.state, action },
-					ancestors: [...job.ancestors, job.name]
-				});
-		} catch (error) {
-			const failure =
-				error instanceof CreatorRuntimeError ? error : new CreatorRuntimeError('storage');
-			report.independent.push({
-				name: job.name,
-				status: 'failed',
-				code: failure.code,
-				ruleId: failure.ruleId,
-				scriptId: failure.scriptId,
-				reason: failure.reason
-			});
-			if (failure.code === 'canceled' || failure.code === 'conflict') {
-				if (failure.code === 'conflict') {
-					try {
-						current = await port.read();
-					} catch {
-						/* The session may have been deleted; do not misreport an already committed root as failed. */
-					}
-				}
-				for (const pending of queue)
-					report.independent.push({ name: pending.name, status: 'skipped', code: failure.code });
-				break;
-			}
+		if (await executeIndependent(context, job)) {
+			break;
 		}
 	}
-	return { ...current, execution: report };
 }

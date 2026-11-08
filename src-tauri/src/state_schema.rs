@@ -39,107 +39,113 @@ fn base_type(schema: &Value) -> Option<&str> {
             .find(|t| *t != "null")
     })
 }
-pub(crate) fn validate_schema(schema: &Value) -> Result<(), String> {
-    fn visit(schema: &Value, path: Vec<String>, depth: usize) -> Result<(), String> {
-        let fail = |code| error("schema", &path, code);
-        let object = schema.as_object().ok_or_else(|| fail("invalid-schema"))?;
-        if depth > 64 {
-            return Err(fail("invalid-schema"));
-        }
-        let types: Vec<&str> = if let Some(types) = schema["type"].as_array() {
-            if types.len() != 2 || !types.contains(&Value::String("null".into())) {
-                return Err(fail("unsupported-type"));
-            }
-            let types: Option<Vec<_>> = types.iter().map(Value::as_str).collect();
-            let types = types.ok_or_else(|| fail("unsupported-type"))?;
-            if types[0] == types[1] {
-                return Err(fail("unsupported-type"));
-            }
-            types
-        } else {
-            vec![
-                schema["type"]
-                    .as_str()
-                    .ok_or_else(|| fail("unsupported-type"))?,
-            ]
-        };
-        if types.iter().any(|t| {
-            ![
-                "object", "array", "string", "number", "integer", "boolean", "null",
-            ]
-            .contains(t)
-        }) {
+fn validate_types(schema: &Value, path: &[String]) -> Result<(), String> {
+    let fail = |code| error("schema", path, code);
+    let types: Vec<&str> = if let Some(types) = schema["type"].as_array() {
+        if types.len() != 2 || !types.contains(&Value::String("null".into())) {
             return Err(fail("unsupported-type"));
         }
-        let kind = base_type(schema).ok_or_else(|| fail("unsupported-type"))?;
-        let mut allowed = vec!["type", "title", "description", "enum"];
-        if kind == "object" {
-            allowed.extend(["properties", "required", "additionalProperties"]);
+        let types: Option<Vec<_>> = types.iter().map(Value::as_str).collect();
+        let types = types.ok_or_else(|| fail("unsupported-type"))?;
+        if types[0] == types[1] {
+            return Err(fail("unsupported-type"));
         }
-        if kind == "array" {
-            allowed.push("items");
-        }
-        if object.keys().any(|key| !allowed.contains(&key.as_str())) {
-            return Err(fail("unsupported-keyword"));
-        }
-        if ["title", "description"]
-            .iter()
-            .any(|key| schema.get(key).is_some_and(|v| !v.is_string()))
-        {
-            return Err(fail("expected-string"));
-        }
-        if kind == "object" {
-            let properties = schema["properties"]
-                .as_object()
-                .ok_or_else(|| fail("expected-properties"))?;
-            if schema["additionalProperties"] != false {
-                return Err(fail("closed-object-required"));
-            }
-            for (key, child) in properties {
-                let mut child_path = path.clone();
-                child_path.extend(["properties".into(), key.clone()]);
-                visit(child, child_path, depth + 1)?;
-            }
-            if let Some(required) = schema.get("required") {
-                let required = required
-                    .as_array()
-                    .ok_or_else(|| fail("invalid-required"))?;
-                for (i, key) in required.iter().enumerate() {
-                    if key.as_str().is_none_or(|key| !properties.contains_key(key))
-                        || required[..i].contains(key)
-                    {
-                        return Err(fail("invalid-required"));
-                    }
-                }
-            }
-        } else if kind == "array" {
-            let mut child_path = path.clone();
-            child_path.push("items".into());
-            visit(&schema["items"], child_path, depth + 1)?;
-        }
-        if let Some(values) = schema.get("enum") {
-            let values = values
-                .as_array()
-                .filter(|values| !values.is_empty())
-                .ok_or_else(|| fail("invalid-enum"))?;
-            let mut without_enum = schema.clone();
-            without_enum.as_object_mut().unwrap().remove("enum");
-            for (i, value) in values.iter().enumerate() {
-                check(&without_enum, value, "schema", path.clone())?;
-                if values[..i].iter().any(|other| equal(value, other)) {
-                    return Err(fail("duplicate-enum"));
-                }
-            }
-        }
-        Ok(())
+        types
+    } else {
+        vec![
+            schema["type"]
+                .as_str()
+                .ok_or_else(|| fail("unsupported-type"))?,
+        ]
+    };
+    if types.iter().any(|t| {
+        ![
+            "object", "array", "string", "number", "integer", "boolean", "null",
+        ]
+        .contains(t)
+    }) {
+        return Err(fail("unsupported-type"));
     }
+    Ok(())
+}
+fn visit_schema(schema: &Value, path: &[String], depth: usize) -> Result<(), String> {
+    let fail = |code| error("schema", path, code);
+    let object = schema.as_object().ok_or_else(|| fail("invalid-schema"))?;
+    if depth > 64 {
+        return Err(fail("invalid-schema"));
+    }
+    validate_types(schema, path)?;
+    let kind = base_type(schema).ok_or_else(|| fail("unsupported-type"))?;
+    let mut allowed = vec!["type", "title", "description", "enum"];
+    if kind == "object" {
+        allowed.extend(["properties", "required", "additionalProperties"]);
+    }
+    if kind == "array" {
+        allowed.push("items");
+    }
+    if object.keys().any(|key| !allowed.contains(&key.as_str())) {
+        return Err(fail("unsupported-keyword"));
+    }
+    if ["title", "description"]
+        .iter()
+        .any(|key| schema.get(key).is_some_and(|v| !v.is_string()))
+    {
+        return Err(fail("expected-string"));
+    }
+    if kind == "object" {
+        let properties = schema["properties"]
+            .as_object()
+            .ok_or_else(|| fail("expected-properties"))?;
+        if schema["additionalProperties"] != false {
+            return Err(fail("closed-object-required"));
+        }
+        for (key, child) in properties {
+            let mut child_path = path.to_vec();
+            child_path.extend(["properties".into(), key.clone()]);
+            visit_schema(child, &child_path, depth + 1)?;
+        }
+        if let Some(required) = schema.get("required") {
+            let required = required
+                .as_array()
+                .ok_or_else(|| fail("invalid-required"))?;
+            for (i, key) in required.iter().enumerate() {
+                if key.as_str().is_none_or(|key| !properties.contains_key(key))
+                    || required[..i].contains(key)
+                {
+                    return Err(fail("invalid-required"));
+                }
+            }
+        }
+    } else if kind == "array" {
+        let mut child_path = path.to_vec();
+        child_path.push("items".into());
+        visit_schema(&schema["items"], &child_path, depth + 1)?;
+    }
+    if let Some(values) = schema.get("enum") {
+        let values = values
+            .as_array()
+            .filter(|values| !values.is_empty())
+            .ok_or_else(|| fail("invalid-enum"))?;
+        let mut without_enum = schema.clone();
+        without_enum.as_object_mut().unwrap().remove("enum");
+        for (i, value) in values.iter().enumerate() {
+            check(&without_enum, value, "schema", path)?;
+            if values[..i].iter().any(|other| equal(value, other)) {
+                return Err(fail("duplicate-enum"));
+            }
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_schema(schema: &Value) -> Result<(), String> {
     if !clean(schema) {
         return Err(error("schema", &[], "invalid-json-schema"));
     }
-    visit(schema, vec![], 0)
+    visit_schema(schema, &[], 0)
 }
-fn check(schema: &Value, value: &Value, phase: &str, path: Vec<String>) -> Result<(), String> {
-    let fail = |code| error(phase, &path, code);
+fn check(schema: &Value, value: &Value, phase: &str, path: &[String]) -> Result<(), String> {
+    let fail = |code| error(phase, path, code);
     if schema["enum"]
         .as_array()
         .is_some_and(|values| !values.iter().any(|item| equal(item, value)))
@@ -163,27 +169,27 @@ fn check(schema: &Value, value: &Value, phase: &str, path: Vec<String>) -> Resul
             if let Some(required) = schema["required"].as_array() {
                 for key in required {
                     if !fields.contains_key(key.as_str().unwrap()) {
-                        let mut p = path.clone();
+                        let mut p = path.to_vec();
                         p.push(key.as_str().unwrap().into());
                         return Err(error(phase, &p, "required"));
                     }
                 }
             }
             for (key, value) in fields {
-                let mut p = path.clone();
+                let mut p = path.to_vec();
                 p.push(key.clone());
                 let child = properties
                     .get(key)
                     .ok_or_else(|| error(phase, &p, "additional-property"))?;
-                check(child, value, phase, p)?;
+                check(child, value, phase, &p)?;
             }
         }
         Some("array") => {
             let values = value.as_array().ok_or_else(|| fail("expected-array"))?;
             for (index, value) in values.iter().enumerate() {
-                let mut p = path.clone();
+                let mut p = path.to_vec();
                 p.push(index.to_string());
-                check(&schema["items"], value, phase, p)?;
+                check(&schema["items"], value, phase, &p)?;
             }
         }
         Some("integer")
@@ -202,7 +208,7 @@ pub(crate) fn validate_value(schema: &Value, value: &Value, phase: &str) -> Resu
     if !clean(value) {
         return Err(error(phase, &[], "invalid-json"));
     }
-    check(schema, value, phase, vec![])
+    check(schema, value, phase, &[])
 }
 pub(crate) fn validate_document(document: &Value) -> Result<(), String> {
     validate_schema(&document["schema"])?;

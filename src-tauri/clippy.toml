@@ -1,0 +1,8 @@
+# Maximum complexity of a function
+cognitive-complexity-threshold = 15
+
+# Maximum function length
+too-many-lines-threshold = 80
+
+# Maximum function parameters
+too-many-arguments-threshold = 5

@@ -1,8 +1,6 @@
 <script lang="ts">
 	import Icon from '#lib/components/Icon.svelte';
-	import StateFieldRow from './StateFieldRow.svelte';
-	import StateFieldDetails from './StateFieldDetails.svelte';
-	import StateValueEditor from './StateValueEditor.svelte';
+
 	import {
 		arrayItem,
 		initialValueFor,
@@ -13,6 +11,9 @@
 	} from '../../state/authoring.js';
 	import { schemaType, type ValueSchema } from '../../state/schema.js';
 	import { isStateObject, type StateValue } from '../../state/value.js';
+	import StateFieldDetails from './StateFieldDetails.svelte';
+	import StateFieldRow from './StateFieldRow.svelte';
+	import StateValueEditor from './StateValueEditor.svelte';
 	let {
 		schema,
 		value,
@@ -67,15 +68,24 @@
 		{ value: 'null', label: 'null' }
 	];
 	function changeChild(key: string, next: StateValue | undefined) {
-		if (disabled || value === undefined || !isStateObject(value)) return;
+		if (disabled || value === undefined || !isStateObject(value)) {
+			return;
+		}
 		const updated = { ...value };
-		if (next === undefined) delete updated[key];
-		else updated[key] = next;
+		if (next === undefined) {
+			delete updated[key];
+		} else {
+			updated[key] = next;
+		}
 		onchange(updated);
 	}
 	function addField() {
-		if (disabled) return;
-		if (onedit(trail, { kind: 'add', name: newName })) newName = '';
+		if (disabled) {
+			return;
+		}
+		if (onedit(trail, { kind: 'add', name: newName })) {
+			newName = '';
+		}
 	}
 </script>
 
@@ -101,7 +111,9 @@
 						const next = event.currentTarget.value;
 						event.currentTarget.value = name;
 						if (next !== name && onedit(trail.slice(0, -1), { kind: 'rename', name, next })) {
-							if (selected === selectionKey) onselect(null);
+							if (selected === selectionKey) {
+								onselect(null);
+							}
 						}
 					}}
 				/>{:else}<span class="item-label">{name || '항목'}</span>{/if}
@@ -176,8 +188,9 @@
 								if (
 									onedit(trail.slice(0, -1), { kind: 'remove', name }) &&
 									selected === selectionKey
-								)
+								) {
 									onselect(null);
+								}
 							})}><Icon name="trash" size={14} /></button
 					>{/if}
 			{:else if onremove}<button
@@ -301,11 +314,14 @@
 					{onselect}
 					{onedit}
 					onchange={(next) => {
-						if (Array.isArray(value) && next !== undefined)
+						if (Array.isArray(value) && next !== undefined) {
 							onchange(value.map((old, i) => (i === index ? next : old)));
+						}
 					}}
 					onremove={() => {
-						if (Array.isArray(value)) onchange(value.filter((_, i) => i !== index));
+						if (Array.isArray(value)) {
+							onchange(value.filter((_, i) => i !== index));
+						}
 					}}
 					{onconfirm}
 				/>
@@ -316,7 +332,9 @@
 					aria-label="{label} 항목 추가"
 					disabled={disabled || valueDisabled}
 					onclick={() => {
-						if (Array.isArray(value)) onchange([...value, initialValueFor(item!)]);
+						if (Array.isArray(value)) {
+							onchange([...value, initialValueFor(item!)]);
+						}
 					}}><Icon name="plus" size={13} />항목 추가</button
 				>
 			</div>

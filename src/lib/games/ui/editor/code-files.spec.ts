@@ -1,5 +1,7 @@
 import { expect, it } from 'vitest';
+
 import type { CodeProject } from '../../code-project.js';
+
 import { renameCodePath } from './code-files.js';
 
 it('moves a directory while preserving internal and external module references and unrelated strings', async () => {

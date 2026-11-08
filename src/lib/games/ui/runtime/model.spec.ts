@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { parseGameUI, parsePanelLayout } from './model.js';
-import { dockPanel, panelIds, reconcileLayout, removePanel } from './layout.js';
+
 import { compileGameUI } from './compiler.js';
+import { dockPanel, panelIds, reconcileLayout, removePanel } from './layout.js';
+import { parseGameUI, parsePanelLayout } from './model.js';
 
 const ui = {
 	version: 1,
@@ -29,9 +30,13 @@ describe('game UI contracts and compilation', () => {
 			{ ...ui, chatStyle: { background: 'url(https://example.com)' } },
 			{ ...ui, modules: { '../escape.tsx': ui.modules['main.tsx'] } },
 			{ ...ui, version: 2 }
-		])
+		]) {
 			expect(() => parseGameUI(bad)).toThrow();
+		}
 	});
+});
+
+describe('game UI contracts and compilation', () => {
 	it('rejects duplicate, oversized or deeply nested layouts', () => {
 		const leaf = { kind: 'panel', id: 'same' };
 		expect(() =>
@@ -47,9 +52,12 @@ describe('game UI contracts and compilation', () => {
 			})
 		).toThrow();
 	});
+});
+
+describe('game UI contracts and compilation', () => {
 	it('preserves surviving placement, supports docking, and fits sixteen registrations within depth limits', () => {
 		const original = reconcileLayout(null, ['a', 'b'])!;
-		const moved = dockPanel(original, 'b', 'a', 'bottom');
+		const moved = dockPanel(original, 'b', { id: 'a', edge: 'bottom' });
 		expect(moved).toMatchObject({
 			kind: 'split',
 			axis: 'vertical',
@@ -64,6 +72,9 @@ describe('game UI contracts and compilation', () => {
 		);
 		expect(panelIds(parsePanelLayout(all))).toHaveLength(16);
 	});
+});
+
+describe('game UI contracts and compilation', () => {
 	it('compiles TSX and packaged imports without eval or external script loading', async () => {
 		const html = await compileGameUI(ui, 'test-token');
 		expect(html).toContain("connect-src 'none'");
@@ -73,6 +84,9 @@ describe('game UI contracts and compilation', () => {
 		const script = html.match(/<script>([\s\S]*)<\/script>/)![1];
 		expect(() => new Function(script)).not.toThrow();
 	});
+});
+
+describe('game UI contracts and compilation', () => {
 	it('uses declared JSX/TSX language even when the packaged module has no extension', async () => {
 		await expect(
 			compileGameUI(
@@ -91,6 +105,9 @@ describe('game UI contracts and compilation', () => {
 			)
 		).resolves.toContain('Main');
 	});
+});
+
+describe('game UI contracts and compilation', () => {
 	it.each([
 		`import x from 'https://example.com/x.js';`,
 		`import x from '../outside';`,
@@ -101,6 +118,9 @@ describe('game UI contracts and compilation', () => {
 			compileGameUI({ ...ui, modules: { 'main.tsx': { language: 'tsx', source } } }, 'token')
 		).rejects.toThrow();
 	});
+});
+
+describe('game UI contracts and compilation', () => {
 	it('prevents authored strings from closing the inline script element', async () => {
 		const html = await compileGameUI(
 			{

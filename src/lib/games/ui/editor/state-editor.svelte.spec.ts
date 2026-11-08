@@ -1,7 +1,8 @@
 import '../../../../app.css';
 import { expect, it, vi } from 'vitest';
-import { page, userEvent } from 'vitest/browser';
 import { render } from 'vitest-browser-svelte';
+import { page, userEvent } from 'vitest/browser';
+
 import StateEditor from './StateEditor.svelte';
 
 const schemaSource = JSON.stringify({
@@ -146,7 +147,9 @@ it('aligns the main field controls in one row and reveals only the selected fiel
 		page.getByRole('checkbox', { name: '상태.hp 필수', exact: true })
 	];
 	const row = controls[0].element().closest('.field-row');
-	for (const control of controls) expect(control.element().closest('.field-row')).toBe(row);
+	for (const control of controls) {
+		expect(control.element().closest('.field-row')).toBe(row);
+	}
 	const centers = controls.map((control) => {
 		const rect = control.element().getBoundingClientRect();
 		return rect.top + rect.height / 2;

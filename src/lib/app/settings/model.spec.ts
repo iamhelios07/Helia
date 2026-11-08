@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+
 import {
 	emptyAISettings,
 	parseAISettings,
@@ -98,7 +99,8 @@ describe('provider and model settings', () => {
 			{ ...settings, defaultModelId: 'missing' },
 			{ ...settings, providers: [{ ...provider, kind: 'unknown' }] },
 			{ ...settings, models: [{ ...model, modelId: ' ' }] }
-		])
+		]) {
 			expect(() => parseAISettings(invalid)).toThrow();
+		}
 	});
 });

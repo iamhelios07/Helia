@@ -1,39 +1,23 @@
 <script lang="ts">
 	import { onDestroy } from 'svelte';
-	import type { Game } from '#lib/games/model.js';
-	import type { GameState } from '#lib/games/state/value.js';
-	import { parseGameState } from '#lib/games/state/value.js';
-	import type { SessionTimeline } from '#lib/games/state/history.js';
-	import type { ToolDefinition } from '#lib/games/ai/protocol.js';
+
+	import ConfirmDialog from '#lib/components/ConfirmDialog.svelte';
 	import {
-		createEditorPlaythrough,
 		playgroundFingerprint,
 		playgroundFailure,
 		type EditorDiagnostic,
 		type EditorPlaythrough
 	} from '#lib/games/editor-playground.js';
-	import { mountGameUI, type GameUIHandle } from '../runtime/bridge.js';
-	import type { PanelInfo } from '../runtime/model.js';
-	import ConfirmDialog from '#lib/components/ConfirmDialog.svelte';
+	import { parseGameState } from '#lib/games/state/value.js';
 
-	let {
-		game,
-		mode,
-		ondiagnostic,
-		onstate
-	}: {
-		game: Game;
-		mode: 'preview' | 'test';
-		ondiagnostic?: (entry: EditorDiagnostic) => void;
-		onstate?: (state: GameState) => void;
-	} = $props();
-	let preview = $state.raw<EditorPlaythrough | null>(null);
-	let test = $state.raw<EditorPlaythrough | null>(null);
-	let previewTimeline = $state.raw<SessionTimeline | null>(null);
-	let testTimeline = $state.raw<SessionTimeline | null>(null);
-	let previewTools = $state.raw<ToolDefinition[]>([]);
-	let testTools = $state.raw<ToolDefinition[]>([]);
-	let startingModes = $state({ preview: false, test: false });
+	import {
+		attachPlaygroundFrame,
+		runPlaygroundAI,
+		type PlaygroundProps
+	} from './playground-frame.js';
+	import { PlaygroundSessions } from './playground-sessions.svelte.js';
+
+	let { game, mode, ondiagnostic, onstate }: PlaygroundProps = $props();
 	let operating = $state(false);
 	let busyModes = $state({ preview: false, test: false });
 	let error = $state('');
@@ -45,42 +29,56 @@
 	let streaming = $state('');
 	let panelCount = $state(0);
 	let ready = $state(false);
-	const generations = { preview: 0, test: 0 };
 	let disposed = false;
 	let requestAbort: AbortController | undefined;
-	let current = $derived(mode === 'preview' ? preview : test);
-	let starting = $derived(startingModes[mode]);
-	let uiBusy = $derived(busyModes[mode]);
-	let timeline = $derived(mode === 'preview' ? previewTimeline : testTimeline);
+	const sessions = new PlaygroundSessions(
+		() => ({ game, mode, ondiagnostic, onstate }),
+		(context) => {
+			ready = false;
+			panelCount = 0;
+			nextState = JSON.stringify(context.timeline.history.progress.state, null, 2);
+		},
+		fail,
+		() => {
+			error = '';
+		}
+	);
+	let test = $derived(sessions.test);
+	let current = $derived(mode === 'preview' ? sessions.preview : test);
+	let starting = $derived(sessions.starting[mode]);
+	let timeline = $derived(mode === 'preview' ? sessions.previewTimeline : sessions.testTimeline);
 	let tools = $derived(
-		(mode === 'preview' ? previewTools : testTools).filter((tool) => tool.kind === 'action')
+		(mode === 'preview' ? sessions.previewTools : sessions.testTools).filter(
+			(tool) => tool.kind === 'action'
+		)
 	);
 	let outdated = $derived(
 		mode === 'test' && !!test && test.fingerprint !== playgroundFingerprint(game)
 	);
-	let busy = $derived(starting || operating || uiBusy);
-	let frameHeight = $derived(Math.max(220, panelCount * 190));
+	let busy = $derived(starting || operating || busyModes[mode]);
 
 	// Recompile the real sandbox after edits settle. Test state changes only on explicit restart.
 	$effect(() => {
 		const snapshot = game;
 		const fingerprint = playgroundFingerprint(snapshot);
-		if (mode !== 'preview') return;
+		if (mode !== 'preview') {
+			return;
+		}
 		const timer = setTimeout(() => {
-			if (preview?.fingerprint !== fingerprint) void start('preview', snapshot);
+			if (sessions.preview?.fingerprint !== fingerprint) {
+				void sessions.start('preview', snapshot);
+			}
 		}, 350);
 		return () => clearTimeout(timer);
 	});
 	$effect(() => {
-		if (timeline) onstate?.(timeline.history.progress.state);
+		if (timeline) {
+			onstate?.(timeline.history.progress.state);
+		}
 	});
 	onDestroy(() => {
 		disposed = true;
-		generations.preview++;
-		generations.test++;
 		requestAbort?.abort();
-		preview?.dispose();
-		test?.dispose();
 	});
 
 	function report(entry: EditorDiagnostic) {
@@ -89,128 +87,38 @@
 			message: `${mode === 'preview' ? '미리보기' : '테스트'} · ${entry.message}`
 		});
 	}
-	async function start(kind: 'preview' | 'test', snapshot = game) {
-		const generation = ++generations[kind];
-		startingModes[kind] = true;
-		if (mode === kind) error = '';
-		try {
-			const context = await createEditorPlaythrough(snapshot, {
-				ondiagnostic: (entry) => {
-					if (!disposed && generations[kind] === generation)
-						ondiagnostic?.({
-							...entry,
-							message: `${kind === 'preview' ? '미리보기' : '테스트'} · ${entry.message}`
-						});
-				},
-				onchange: (next) => {
-					if (disposed || generations[kind] !== generation) return;
-					if (kind === 'preview') previewTimeline = next;
-					else testTimeline = next;
-				}
-			});
-			if (disposed || generations[kind] !== generation) {
-				context.dispose();
-				return;
-			}
-			if (kind === 'preview') {
-				preview?.dispose();
-				preview = context;
-			} else {
-				test?.dispose();
-				test = context;
-			}
-			if (mode === kind) {
-				ready = false;
-				panelCount = 0;
-				nextState = JSON.stringify(context.timeline.history.progress.state, null, 2);
-			}
-			ondiagnostic?.({
-				message: `${kind === 'preview' ? '미리보기' : '테스트'} · 별도 실행 시작`,
-				failed: false
-			});
-			try {
-				const catalog = await context.catalog();
-				if (disposed || generations[kind] !== generation) return;
-				if (kind === 'preview') previewTools = catalog;
-				else testTools = catalog;
-			} catch (failure) {
-				if (mode === kind && generations[kind] === generation) fail(failure);
-			}
-		} catch (failure) {
-			if (!disposed && mode === kind && generations[kind] === generation) fail(failure);
-		} finally {
-			if (!disposed && generations[kind] === generation) startingModes[kind] = false;
-		}
-	}
 	function fail(failure: unknown) {
 		error = playgroundFailure(failure);
 		report({ message: '실행 실패', failed: true, detail: error });
 	}
 	function attachFrame(context: EditorPlaythrough) {
 		const kind = mode;
-		return (frame: HTMLIFrameElement) => {
-			let canceled = false;
-			let handle: GameUIHandle | undefined;
-			let panels: PanelInfo[] = [];
-			const resize = () => {
-				const width = frame.getBoundingClientRect().width;
-				if (width <= 0) return;
-				handle?.setViews(
-					panels.map((panel, index) => ({ id: panel.id, x: 0, y: index * 190, width, height: 185 }))
-				);
-			};
-			const observer = new ResizeObserver(resize);
-			observer.observe(frame);
-			void mountGameUI(frame, context.game.id, context.game.activeSessionId, {
-				runtime: context.runtime,
-				ephemeral: true,
+		return (frame: HTMLIFrameElement) =>
+			attachPlaygroundFrame(frame, context, {
 				blocked: () => operating,
 				onready: () => {
-					if (!canceled) ready = true;
+					ready = true;
 				},
 				onbusy: (value) => {
-					if (!canceled) busyModes[kind] = value;
+					busyModes[kind] = value;
 				},
-				onerror: (message) => {
-					if (!canceled) fail(new Error(message));
-				},
-				ondiagnostic: (message, detail) => {
-					if (!canceled)
-						report({
-							message,
-							failed: true,
-							detail: detail instanceof Error ? playgroundFailure(detail) : JSON.stringify(detail)
-						});
-				},
-				onpanels: (next) => {
-					panels = next;
-					if (!canceled) {
-						panelCount = panels.length;
-						requestAnimationFrame(resize);
-					}
+				onerror: fail,
+				ondiagnostic: (message, detail) =>
+					report({
+						message,
+						failed: true,
+						detail: detail instanceof Error ? playgroundFailure(detail) : JSON.stringify(detail)
+					}),
+				onpanels: (count) => {
+					panelCount = count;
 				}
-			})
-				.then((mounted) => {
-					if (canceled) mounted();
-					else {
-						handle = mounted;
-						resize();
-					}
-				})
-				.catch((failure) => {
-					if (!canceled) fail(failure);
-				});
-			return () => {
-				canceled = true;
-				busyModes[kind] = false;
-				observer.disconnect();
-				handle?.();
-			};
-		};
+			});
 	}
 	async function operate(operation: (context: EditorPlaythrough) => Promise<unknown>) {
 		const context = current;
-		if (!context || busy) return;
+		if (!context || busy) {
+			return;
+		}
 		operating = true;
 		error = '';
 		try {
@@ -218,14 +126,18 @@
 		} catch (failure) {
 			fail(failure);
 		} finally {
-			if (!disposed) operating = false;
+			if (!disposed) {
+				operating = false;
+			}
 		}
 	}
 	function runAction(event: SubmitEvent) {
 		event.preventDefault();
 		void operate(async (context) => {
 			const name = actionName || tools[0]?.name;
-			if (!name) throw Error('실행할 Action을 선택해주세요.');
+			if (!name) {
+				throw Error('실행할 Action을 선택해주세요.');
+			}
 			await context.action(name, parseGameState(JSON.parse(actionArguments)));
 		});
 	}
@@ -234,25 +146,16 @@
 		streaming = '';
 		void operate(async (context) => {
 			requestAbort = new AbortController();
-			await context.ai(
-				aiInput,
-				{ visible: true },
-				{
-					signal: requestAbort.signal,
-					onEvent: (event) => {
-						if (event.type === 'text') streaming += event.text;
-						if (event.type === 'reset') streaming = '';
-					}
+			await runPlaygroundAI(context, aiInput, {
+				signal: requestAbort.signal,
+				ontext: (text, reset) => {
+					streaming = reset ? '' : streaming + text;
 				}
-			);
+			});
 			aiInput = '';
 			streaming = '';
 			requestAbort = undefined;
 		});
-	}
-	function restart() {
-		resetRequested = false;
-		void start('test');
 	}
 </script>
 
@@ -267,7 +170,7 @@
 			<button
 				type="button"
 				disabled={busy}
-				onclick={() => (test ? (resetRequested = true) : void start('test'))}
+				onclick={() => (test ? (resetRequested = true) : void sessions.start('test'))}
 				>{test ? '테스트 다시 시작' : '테스트 시작'}</button
 			>
 		{:else}<span>{starting ? '새로 실행 중…' : '변경 시 자동 실행'}</span>{/if}
@@ -285,7 +188,7 @@
 					title={mode === 'preview' ? '게임 UI 미리보기' : '테스트 게임 UI'}
 					sandbox="allow-scripts"
 					referrerpolicy="no-referrer"
-					style:height={`${frameHeight}px`}
+					style:height={`${Math.max(220, panelCount * 190)}px`}
 					{@attach attachFrame(current)}
 				></iframe>
 			{/key}
@@ -384,7 +287,10 @@
 		message="현재 테스트 진행 기록을 삭제하고 최신 초안의 초기 상태에서 다시 시작합니다."
 		confirmLabel="다시 시작"
 		disabled={busy}
-		onconfirm={restart}
+		onconfirm={() => {
+			resetRequested = false;
+			void sessions.start('test');
+		}}
 		oncancel={() => (resetRequested = false)}
 	/>{/if}
 

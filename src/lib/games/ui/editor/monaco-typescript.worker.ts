@@ -33,8 +33,9 @@ self.onmessage = () =>
 				const value: unknown = Reflect.get(target, property);
 				return typeof value === 'function'
 					? (...args: unknown[]) => {
-							if (typeof args[0] === 'string' && args[0].startsWith('file:///helia-authoring/'))
+							if (typeof args[0] === 'string' && args[0].startsWith('file:///helia-authoring/')) {
 								target.select(args[0]);
+							}
 							return Reflect.apply(value, target, args);
 						}
 					: value;

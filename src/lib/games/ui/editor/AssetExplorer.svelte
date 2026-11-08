@@ -1,22 +1,20 @@
 ﻿<script lang="ts">
-	import { onDestroy } from 'svelte';
 	import ChevronDown from '@lucide/svelte/icons/chevron-down';
 	import ChevronRight from '@lucide/svelte/icons/chevron-right';
-	import FileImage from '@lucide/svelte/icons/file-image';
 	import FileAudio from '@lucide/svelte/icons/file-audio';
+	import FileImage from '@lucide/svelte/icons/file-image';
 	import FileVideo from '@lucide/svelte/icons/file-video';
 	import Folder from '@lucide/svelte/icons/folder';
 	import FolderPlus from '@lucide/svelte/icons/folder-plus';
-	import Upload from '@lucide/svelte/icons/upload';
 	import Pencil from '@lucide/svelte/icons/pencil';
 	import Trash2 from '@lucide/svelte/icons/trash-2';
+	import Upload from '@lucide/svelte/icons/upload';
+	import { onDestroy } from 'svelte';
+
 	import ConfirmDialog from '#lib/components/ConfirmDialog.svelte';
-	import {
-		parseResources,
-		RESOURCE_LIMITS,
-		renameResourceFolder,
-		validateResourcePath
-	} from '../../resources.js';
+
+	import { parseResources, renameResourceFolder, validateResourcePath } from '../../resources.js';
+	import { ACCEPTED_RESOURCES as accepted, uploadResources } from './resource-upload.js';
 	let {
 		source,
 		active = null,
@@ -42,8 +40,6 @@
 	onDestroy(() => {
 		disposed = true;
 	});
-	const accepted =
-		'image/png,image/jpeg,image/webp,image/gif,audio/mpeg,audio/wav,audio/ogg,video/mp4,video/webm';
 	let parsed = $derived.by(() => {
 		try {
 			return { resources: parseResources(JSON.parse(source)), error: '' };
@@ -63,7 +59,9 @@
 			const parts = path.split('/');
 			for (let i = 1; i < parts.length; i++) {
 				const parent = parts.slice(0, i).join('/');
-				if (!paths.includes(parent)) paths.push(parent);
+				if (!paths.includes(parent)) {
+					paths.push(parent);
+				}
 			}
 		}
 		return paths.sort();
@@ -94,7 +92,10 @@
 					if (left[i] !== right[i]) {
 						const af = i < left.length - 1 || a.folder;
 						const bf = i < right.length - 1 || b.folder;
-						return af !== bf ? (af ? -1 : 1) : left[i].localeCompare(right[i]);
+						if (af !== bf) {
+							return af ? -1 : 1;
+						}
+						return left[i].localeCompare(right[i]);
 					}
 				}
 				return left.length - right.length;
@@ -108,7 +109,9 @@
 			: [...collapsed, path];
 	}
 	function applyFolder() {
-		if (disabled || !parsed.resources) return;
+		if (disabled || !parsed.resources) {
+			return;
+		}
 		try {
 			validateResourcePath(folderName);
 			if (
@@ -116,8 +119,9 @@
 				Object.values(parsed.resources).some(
 					(asset) => asset.name === folderName || folderName.startsWith(asset.name + '/')
 				)
-			)
+			) {
 				throw Error('같은 경로가 이미 있어요.');
+			}
 			if (folderForm === 'rename') {
 				onchange(
 					JSON.stringify(renameResourceFolder(parsed.resources, destination, folderName), null, 2)
@@ -127,7 +131,9 @@
 						? folderName + path.slice(destination.length)
 						: path
 				);
-			} else emptyFolders = [...emptyFolders, folderName];
+			} else {
+				emptyFolders = [...emptyFolders, folderName];
+			}
 			destination = folderName;
 			collapsed = collapsed.filter((path) => path !== folderName);
 			folderForm = null;
@@ -137,7 +143,9 @@
 		}
 	}
 	function removeFolder() {
-		if (!deleteFolder || !parsed.resources || disabled) return;
+		if (!deleteFolder || !parsed.resources || disabled) {
+			return;
+		}
 		const path = deleteFolder;
 		onchange(
 			JSON.stringify(
@@ -152,53 +160,36 @@
 		destination = '';
 		deleteFolder = null;
 	}
-	function read(file: File): Promise<string> {
-		return new Promise((resolve, reject) => {
-			const reader = new FileReader();
-			reader.onload = () =>
-				typeof reader.result === 'string'
-					? resolve(reader.result)
-					: reject(Error('파일을 읽지 못했어요.'));
-			reader.onerror = () => reject(Error('파일을 읽지 못했어요.'));
-			reader.readAsDataURL(file);
-		});
-	}
 	async function upload(event: Event) {
 		const input = event.currentTarget as HTMLInputElement;
 		const files = Array.from(input.files ?? []);
 		input.value = '';
-		if (!files.length || disabled || uploading || !parsed.resources) return;
+		if (!files.length || disabled || uploading || !parsed.resources) {
+			return;
+		}
 		const previous = source;
 		const target = folders.includes(destination) ? destination : '';
 		uploading = true;
 		error = '';
 		try {
-			const resources = { ...parsed.resources };
-			let first = '';
-			for (const file of files) {
-				if (file.size > RESOURCE_LIMITS.fileBytes)
-					throw Error('각 파일은 1 MiB까지 추가할 수 있어요.');
-				if (!accepted.split(',').includes(file.type))
-					throw Error('지원하는 이미지·오디오·동영상 파일을 선택해주세요.');
-				const id = 'asset-' + crypto.randomUUID();
-				if (!first) first = id;
-				resources[id] = {
-					name: target ? target + '/' + file.name : file.name,
-					mime: file.type,
-					data: await read(file)
-				};
+			const { resources: valid, first } = await uploadResources(files, parsed.resources, target);
+			if (disposed) {
+				return;
 			}
-			const valid = parseResources(resources);
-			if (disposed) return;
-			if (source !== previous || disabled)
+			if (source !== previous || disabled) {
 				throw Error('업로드 중 내용이 변경되었어요. 파일을 다시 선택해주세요.');
+			}
 			onchange(JSON.stringify(valid, null, 2));
 			collapsed = collapsed.filter((path) => !target.startsWith(path));
 			onselect(first);
 		} catch (cause) {
-			if (!disposed) error = cause instanceof Error ? cause.message : '파일을 추가하지 못했어요.';
+			if (!disposed) {
+				error = cause instanceof Error ? cause.message : '파일을 추가하지 못했어요.';
+			}
 		} finally {
-			if (!disposed) uploading = false;
+			if (!disposed) {
+				uploading = false;
+			}
 		}
 	}
 </script>

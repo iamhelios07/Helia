@@ -12,7 +12,9 @@ export const EDITOR_LAYOUT_LIMITS = {
 const prefix = 'helia:editor-layout:';
 
 function parseLayout(value: unknown): EditorLayout | null {
-	if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+	if (!value || typeof value !== 'object' || Array.isArray(value)) {
+		return null;
+	}
 	const row = value as Record<string, unknown>;
 	const explorerWidth = row.explorerWidth;
 	const previewWidth = row.previewWidth;
@@ -30,8 +32,9 @@ function parseLayout(value: unknown): EditorLayout | null {
 		previewWidth > EDITOR_LAYOUT_LIMITS.preview.max ||
 		bottomHeight < EDITOR_LAYOUT_LIMITS.bottom.min ||
 		bottomHeight > EDITOR_LAYOUT_LIMITS.bottom.max
-	)
+	) {
 		return null;
+	}
 	return {
 		explorerWidth: Math.round(explorerWidth),
 		previewWidth: Math.round(previewWidth),
@@ -48,8 +51,9 @@ export function loadEditorLayout(gameId: string): EditorLayout | null {
 			typeof value !== 'object' ||
 			Array.isArray(value) ||
 			(value as Record<string, unknown>).version !== 1
-		)
+		) {
 			return null;
+		}
 		return parseLayout(value);
 	} catch {
 		return null;
@@ -58,6 +62,8 @@ export function loadEditorLayout(gameId: string): EditorLayout | null {
 
 export function storeEditorLayout(gameId: string, value: EditorLayout): void {
 	const layout = parseLayout(value);
-	if (!layout) throw new Error('편집기 패널 크기를 확인해주세요.');
+	if (!layout) {
+		throw new Error('편집기 패널 크기를 확인해주세요.');
+	}
 	localStorage.setItem(prefix + gameId, JSON.stringify({ version: 1, ...layout }));
 }

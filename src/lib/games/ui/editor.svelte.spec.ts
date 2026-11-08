@@ -1,16 +1,18 @@
 ﻿import '../../../app.css';
-import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { page, userEvent } from 'vitest/browser';
-import { render } from 'vitest-browser-svelte';
 import { beforeNavigate, goto } from '$app/navigation';
-import GameEditor from './GameEditor.svelte';
-import { createGame, createSession, getGameWorkspace, updateGameSettings } from '../repository.js';
-import { loadEditorDraft } from '../editor.js';
-import { getMonacoSource, monacoModel, setMonacoSource } from './editor/monaco-test.js';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { render } from 'vitest-browser-svelte';
+import { page, userEvent } from 'vitest/browser';
+
 import type { EditorDraft } from '../editor.js';
+
 import { loadAuthoringDraft, saveAuthoringDraft } from '../editor-draft-storage.js';
 import { loadEditorLayout } from '../editor-layout.js';
+import { loadEditorDraft } from '../editor.js';
+import { createGame, createSession, getGameWorkspace, updateGameSettings } from '../repository.js';
 import { loadSettingsDraft, storeSettingsDraft } from '../settings-draft.js';
+import { getMonacoSource, monacoModel, setMonacoSource } from './editor/monaco-test.js';
+import GameEditor from './GameEditor.svelte';
 
 vi.mock('$app/navigation', () => ({ goto: vi.fn(), beforeNavigate: vi.fn() }));
 vi.mock('../editor-draft-storage.js', () => ({
@@ -35,7 +37,9 @@ beforeEach(async () => {
 		.mockReset()
 		.mockImplementation(async (gameId, draft, version) => {
 			const previous = durableDrafts.get(gameId) ?? { version: 0, draft: null };
-			if (previous.version !== version) throw new Error('다른 편집기에서 초안이 변경되었어요.');
+			if (previous.version !== version) {
+				throw new Error('다른 편집기에서 초안이 변경되었어요.');
+			}
 			const next = structuredClone({ version: version + 1, draft });
 			durableDrafts.set(gameId, next);
 			return next;

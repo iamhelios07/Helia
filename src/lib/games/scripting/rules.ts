@@ -3,6 +3,7 @@ import { parseAction, type Action } from '#lib/games/state/model.js';
 import { parseObjectSchema, validateState, type ObjectSchema } from '#lib/games/state/schema.js';
 import { parseGameState, parseStateValue, type GameState } from '#lib/games/state/value.js';
 import { createWorkspace } from '#lib/games/state/workspace.js';
+
 import {
 	CreatorRuntimeError,
 	SANDBOX_LIMITS,
@@ -12,7 +13,6 @@ import {
 	type RuleTrigger,
 	type UIEvent
 } from './protocol.js';
-
 export interface Definition {
 	name: string;
 	scriptId: string;
@@ -36,17 +36,22 @@ export type RuleInvoker = (
 	kind: RuleKind,
 	definition: Definition,
 	context: unknown
-) => { value: unknown; events: UIEvent[] };
-
+) => {
+	value: unknown;
+	events: UIEvent[];
+};
 function definitions(value: unknown) {
 	try {
 		const input = parseGameState(value);
 		function list(key: string): GameState[] {
 			const items = input[key] ?? (key === 'queries' ? [] : undefined);
-			if (!Array.isArray(items) || items.length > SANDBOX_LIMITS.ruleCount)
+			if (!Array.isArray(items) || items.length > SANDBOX_LIMITS.ruleCount) {
 				throw Error('definitions');
+			}
 			const rows = items.map(parseGameState);
-			if (new Set(rows.map((row) => row.name)).size !== rows.length) throw Error('duplicates');
+			if (new Set(rows.map((row) => row.name)).size !== rows.length) {
+				throw Error('duplicates');
+			}
 			return rows;
 		}
 		function base(item: GameState): Definition {
@@ -55,8 +60,9 @@ function definitions(value: unknown) {
 				(typeof item.description !== 'string' ||
 					!item.description.trim() ||
 					item.description.length > 1024)
-			)
+			) {
 				throw Error('description');
+			}
 			return {
 				name: shortName(item.name),
 				scriptId: shortName(item.scriptId),
@@ -67,14 +73,16 @@ function definitions(value: unknown) {
 			if (
 				typeof item.priority !== 'number' ||
 				!Number.isInteger(item.priority) ||
-				Math.abs(item.priority) > 10_000
-			)
+				Math.abs(item.priority) > 10000
+			) {
 				throw Error('priority');
+			}
 			if (
 				item.actions !== null &&
 				(!Array.isArray(item.actions) || item.actions.length > SANDBOX_LIMITS.actionCount)
-			)
+			) {
 				throw Error('actions');
+			}
 			return {
 				...base(item),
 				priority: item.priority,
@@ -96,7 +104,9 @@ function definitions(value: unknown) {
 			.sort((a, b) => a.priority - b.priority);
 		const hooks = list('hooks')
 			.map((item): HookDefinition => {
-				if (item.mode !== 'included' && item.mode !== 'independent') throw Error('mode');
+				if (item.mode !== 'included' && item.mode !== 'independent') {
+					throw Error('mode');
+				}
 				return { ...filter(item), mode: item.mode };
 			})
 			.sort((a, b) => a.priority - b.priority);
@@ -108,7 +118,6 @@ function definitions(value: unknown) {
 function matches(rule: FilterDefinition | HookDefinition, action: Action) {
 	return rule.actions === null || rule.actions.includes(action.name);
 }
-
 /** Host orchestration only. Every state proposal is validated before another step may observe it. */
 export function evaluateRules(
 	input: ActionRequest,
@@ -116,7 +125,7 @@ export function evaluateRules(
 	invoke: RuleInvoker
 ): ActionResult {
 	const registry = definitions(metadata);
-	if (input.operation?.kind === 'catalog')
+	if (input.operation?.kind === 'catalog') {
 		return {
 			state: input.state,
 			tools: [
@@ -129,85 +138,111 @@ export function evaluateRules(
 				arguments: d.arguments
 			}))
 		};
+	}
 	if (input.operation?.kind === 'query') {
 		const query = registry.queries.find(
 			(d) => d.name === (input.operation?.kind === 'query' ? input.operation.name : '')
 		);
-		if (!query) throw new CreatorRuntimeError('action-not-found');
+		if (!query) {
+			throw new CreatorRuntimeError('action-not-found');
+		}
 		const args = validateState(query.arguments, input.operation.args, 'arguments');
 		const result = invoke('query', query, { state: input.state, args });
-		if (result.events.length) throw new CreatorRuntimeError('protocol');
+		if (result.events.length) {
+			throw new CreatorRuntimeError('protocol');
+		}
 		return { state: input.state, value: parseStateValue(result.value) };
 	}
-	const workspace = createWorkspace(input.schema, input.state);
-	const events: UIEvent[] = [];
-	let steps = 0,
-		hooks = 0;
-	const active = new Set<string>();
-	const context = (trigger: RuleTrigger) => ({
+	return new RuleEvaluation(input, registry, invoke).evaluate();
+}
+class RuleEvaluation {
+	constructor(
+		private input: ActionRequest,
+		private registry: ReturnType<typeof definitions>,
+		private invoke: RuleInvoker
+	) {
+		this.workspace = createWorkspace(input.schema, input.state);
+	}
+	private workspace: ReturnType<typeof createWorkspace>;
+	private events: UIEvent[] = [];
+	private steps = 0;
+	private hooks = 0;
+	private active = new Set<string>();
+	private context = (trigger: RuleTrigger) => ({
 		...trigger,
 		changes: diffState(trigger.before, trigger.after),
-		state: workspace.read()
+		state: this.workspace.read()
 	});
-	function append(next: UIEvent[]) {
-		if (events.length + next.length > SANDBOX_LIMITS.eventCount)
+	private append = (next: UIEvent[]) => {
+		if (this.events.length + next.length > SANDBOX_LIMITS.eventCount) {
 			throw new CreatorRuntimeError('chain-limit');
-		events.push(...next);
-	}
-	function filters(trigger: RuleTrigger) {
-		for (const rule of registry.filters.filter((rule) => matches(rule, trigger.action))) {
-			const result = invoke('filter', rule, { ...context(trigger), state: trigger.after });
+		}
+		this.events.push(...next);
+	};
+	private filters = (trigger: RuleTrigger) => {
+		for (const rule of this.registry.filters.filter((rule) => matches(rule, trigger.action))) {
+			const result = this.invoke('filter', rule, {
+				...this.context(trigger),
+				state: trigger.after
+			});
 			try {
-				const decision = parseGameState(result.value);
-				if (
-					result.events.length ||
-					Object.keys(decision).some((key) => !['allow', 'reason'].includes(key)) ||
-					typeof decision.allow !== 'boolean' ||
-					(decision.reason !== undefined &&
-						(typeof decision.reason !== 'string' || decision.reason.length > 1024))
-				)
-					throw Error('decision');
-				if (!decision.allow)
+				const decision = filterDecision(result.value, result.events);
+				if (!decision.allow) {
 					throw new CreatorRuntimeError(
 						'filter-rejected',
 						rule.scriptId,
 						rule.name,
 						typeof decision.reason === 'string' ? decision.reason : null
 					);
+				}
 			} catch (error) {
-				if (error instanceof CreatorRuntimeError) throw error;
+				if (error instanceof CreatorRuntimeError) {
+					throw error;
+				}
 				throw new CreatorRuntimeError('filter', rule.scriptId, rule.name);
 			}
 		}
-	}
-	function hook(rule: HookDefinition, trigger: RuleTrigger): Action[] {
-		if (++hooks > SANDBOX_LIMITS.hookCount)
+	};
+	private hook = (rule: HookDefinition, trigger: RuleTrigger): Action[] => {
+		if (++this.hooks > SANDBOX_LIMITS.hookCount) {
 			throw new CreatorRuntimeError('chain-limit', rule.scriptId, rule.name);
-		const result = invoke('hook', rule, context(trigger));
-		append(result.events);
+		}
+		const result = this.invoke('hook', rule, this.context(trigger));
+		this.append(result.events);
 		try {
-			if (!Array.isArray(result.value) || result.value.length > SANDBOX_LIMITS.stepCount)
+			if (!Array.isArray(result.value) || result.value.length > SANDBOX_LIMITS.stepCount) {
 				throw Error('hook-result');
+			}
 			return result.value.map(parseAction);
 		} catch {
 			throw new CreatorRuntimeError('hook', rule.scriptId, rule.name);
 		}
-	}
-	function included(trigger: RuleTrigger, depth: number) {
-		if (!diffState(trigger.before, trigger.after).length) return;
-		for (const rule of registry.hooks.filter(
+	};
+	private included = (trigger: RuleTrigger, depth: number) => {
+		if (!diffState(trigger.before, trigger.after).length) {
+			return;
+		}
+		for (const rule of this.registry.hooks.filter(
 			(rule) => rule.mode === 'included' && matches(rule, trigger.action)
-		))
-			for (const action of hook(rule, trigger)) execute(action, depth + 1);
-	}
-	function execute(action: Action, depth: number) {
-		if (depth > SANDBOX_LIMITS.depth || ++steps > SANDBOX_LIMITS.stepCount)
+		)) {
+			for (const action of this.hook(rule, trigger)) {
+				this.execute(action, depth + 1);
+			}
+		}
+	};
+	private execute = (action: Action, depth: number) => {
+		if (depth > SANDBOX_LIMITS.depth || ++this.steps > SANDBOX_LIMITS.stepCount) {
 			throw new CreatorRuntimeError('chain-limit', null, action.name);
-		if (active.has(action.name)) throw new CreatorRuntimeError('reentry', null, action.name);
-		const definition = registry.actions.find((item) => item.name === action.name);
-		if (!definition) throw new CreatorRuntimeError('action-not-found', null, action.name);
-		const before = workspace.read();
-		active.add(action.name);
+		}
+		if (this.active.has(action.name)) {
+			throw new CreatorRuntimeError('reentry', null, action.name);
+		}
+		const definition = this.registry.actions.find((item) => item.name === action.name);
+		if (!definition) {
+			throw new CreatorRuntimeError('action-not-found', null, action.name);
+		}
+		const before = this.workspace.read();
+		this.active.add(action.name);
 		try {
 			let args: GameState;
 			try {
@@ -215,72 +250,116 @@ export function evaluateRules(
 			} catch {
 				throw new CreatorRuntimeError('arguments', definition.scriptId, action.name);
 			}
-			const result = invoke('action', definition, { state: before, args });
-			append(result.events);
+			const result = this.invoke('action', definition, { state: before, args });
+			this.append(result.events);
 			let after: GameState;
 			try {
-				after = validateState(input.schema, result.value, 'commit');
+				after = validateState(this.input.schema, result.value, 'commit');
 			} catch {
 				throw new CreatorRuntimeError('state', definition.scriptId, action.name);
 			}
-			filters({ before, after, action });
-			workspace.replace(after);
-			included({ before, after, action }, depth);
+			this.filters({ before, after, action });
+			this.workspace.replace(after);
+			this.included({ before, after, action }, depth);
 		} finally {
-			active.delete(action.name);
+			this.active.delete(action.name);
 		}
+	};
+	private runIndependentHook(
+		operation: Extract<NonNullable<ActionRequest['operation']>, { kind: 'hook' }>
+	): string | undefined {
+		const hookName = operation.name;
+		const rule = this.registry.hooks.find(
+			(item) => item.name === hookName && item.mode === 'independent'
+		);
+		if (!rule) {
+			throw new CreatorRuntimeError('hook', null, operation.name);
+		}
+		const description = rule.description;
+		for (const action of this.hook(rule, operation.trigger)) {
+			this.execute(action, 1);
+		}
+
+		return description;
 	}
-	let description: string | undefined;
-	try {
-		if (input.operation?.kind === 'hook') {
-			const hookName = input.operation.name;
-			const rule = registry.hooks.find(
-				(item) => item.name === hookName && item.mode === 'independent'
-			);
-			if (!rule) throw new CreatorRuntimeError('hook', null, input.operation.name);
-			description = rule.description;
-			for (const action of hook(rule, input.operation.trigger)) execute(action, 1);
-		} else if (input.operation?.kind === 'proposal' || input.operation?.kind === 'validate') {
-			steps++;
-			const after = validateState(input.schema, input.operation.state, 'commit');
-			const definition = registry.actions.find((item) => item.name === input.action.name);
-			if (definition) {
-				try {
-					validateState(definition.arguments, input.action.args, 'arguments');
-				} catch {
-					throw new CreatorRuntimeError('arguments', definition.scriptId, definition.name);
-				}
-			}
-			filters({ before: input.state, after, action: input.action });
-			workspace.replace(after);
-			active.add(input.action.name);
+	private applyProposal(
+		operation: Extract<NonNullable<ActionRequest['operation']>, { kind: 'proposal' | 'validate' }>
+	) {
+		this.steps++;
+		const after = validateState(this.input.schema, operation.state, 'commit');
+		const definition = this.registry.actions.find((item) => item.name === this.input.action.name);
+		if (definition) {
 			try {
-				if (input.operation.kind !== 'validate')
-					included({ before: input.state, after, action: input.action }, 0);
-			} finally {
-				active.delete(input.action.name);
+				validateState(definition.arguments, this.input.action.args, 'arguments');
+			} catch {
+				throw new CreatorRuntimeError('arguments', definition.scriptId, definition.name);
 			}
-		} else {
-			description = registry.actions.find((item) => item.name === input.action.name)?.description;
-			execute(input.action, 0);
 		}
-		const trigger = { before: input.state, after: workspace.read(), action: input.action };
-		// Included work must also satisfy the aggregate transaction's Filters.
-		if (steps > 1 || input.operation?.kind === 'hook') filters(trigger);
-		const result = workspace.finish(input.action);
-		const independentHooks = result.changes.length
-			? registry.hooks
-					.filter((rule) => rule.mode === 'independent' && matches(rule, input.action))
-					.map((rule) => rule.name)
-			: [];
-		return {
-			state: result.state,
-			...(description ? { description } : {}),
-			...(events.length ? { events } : {}),
-			...(independentHooks.length ? { independentHooks } : {})
-		};
-	} catch (error) {
-		workspace.abort();
-		throw error;
+		this.filters({ before: this.input.state, after, action: this.input.action });
+		this.workspace.replace(after);
+		this.active.add(this.input.action.name);
+		try {
+			if (operation.kind !== 'validate') {
+				this.included({ before: this.input.state, after, action: this.input.action }, 0);
+			}
+		} finally {
+			this.active.delete(this.input.action.name);
+		}
 	}
+	evaluate(): ActionResult {
+		let description: string | undefined;
+		try {
+			if (this.input.operation?.kind === 'hook') {
+				description = this.runIndependentHook(this.input.operation);
+			} else if (
+				this.input.operation?.kind === 'proposal' ||
+				this.input.operation?.kind === 'validate'
+			) {
+				this.applyProposal(this.input.operation);
+			} else {
+				description = this.registry.actions.find(
+					(item) => item.name === this.input.action.name
+				)?.description;
+				this.execute(this.input.action, 0);
+			}
+			const trigger = {
+				before: this.input.state,
+				after: this.workspace.read(),
+				action: this.input.action
+			};
+			// Included work must also satisfy the aggregate transaction's Filters.
+			if (this.steps > 1 || this.input.operation?.kind === 'hook') {
+				this.filters(trigger);
+			}
+			const result = this.workspace.finish(this.input.action);
+			const independentHooks = result.changes.length
+				? this.registry.hooks
+						.filter((rule) => rule.mode === 'independent' && matches(rule, this.input.action))
+						.map((rule) => rule.name)
+				: [];
+			return {
+				state: result.state,
+				...(description ? { description } : {}),
+				...(this.events.length ? { events: this.events } : {}),
+				...(independentHooks.length ? { independentHooks } : {})
+			};
+		} catch (error) {
+			this.workspace.abort();
+			throw error;
+		}
+	}
+}
+
+function filterDecision(value: unknown, events: UIEvent[]): GameState {
+	const decision = parseGameState(value);
+	if (
+		events.length ||
+		Object.keys(decision).some((key) => !['allow', 'reason'].includes(key)) ||
+		typeof decision.allow !== 'boolean' ||
+		(decision.reason !== undefined &&
+			(typeof decision.reason !== 'string' || decision.reason.length > 1024))
+	) {
+		throw Error('decision');
+	}
+	return decision;
 }

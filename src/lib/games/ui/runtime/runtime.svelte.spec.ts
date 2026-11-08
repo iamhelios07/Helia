@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+
+import { invokeSessionAI } from '#lib/games/ai/browser.js';
 import {
 	createGame,
 	createSession,
@@ -6,9 +8,10 @@ import {
 	getSessionTimeline,
 	updateGameRules
 } from '#lib/games/repository.js';
-import { mountGameUI, type GameUIHandle, type MountOptions } from './bridge.js';
+
 import type { PanelInfo } from './model.js';
-import { invokeSessionAI } from '#lib/games/ai/browser.js';
+
+import { mountGameUI, type GameUIHandle, type MountOptions } from './bridge.js';
 
 vi.mock('#lib/games/ai/browser.js', () => ({ invokeSessionAI: vi.fn() }));
 beforeEach(() => {

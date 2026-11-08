@@ -1,10 +1,11 @@
 import '../../app.css';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { page } from 'vitest/browser';
-import { render } from 'vitest-browser-svelte';
 import { goto } from '$app/navigation';
-import AppFixture from '../testing/AppFixture.svelte';
-import { AppSidebarController, type AppSidebarOptions } from './sidebar.svelte.js';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { render } from 'vitest-browser-svelte';
+import { page } from 'vitest/browser';
+
+import type { Game, Session } from '#lib/games/model.js';
+
 import {
 	listGames,
 	getGameWorkspace,
@@ -12,7 +13,9 @@ import {
 	createGame,
 	updateGame
 } from '#lib/games/repository.js';
-import type { Game, Session } from '#lib/games/model.js';
+
+import AppFixture from '../testing/AppFixture.svelte';
+import { AppSidebarController, type AppSidebarOptions } from './sidebar.svelte.js';
 
 vi.mock('$app/navigation', () => ({ goto: vi.fn() }));
 vi.mock('#lib/games/ai/browser.js', () => ({ invokeSessionAI: vi.fn() }));
@@ -116,7 +119,9 @@ describe('persistent application sidebar', () => {
 			.element(page.getByRole('dialog', { name: '게임 추가', exact: true }))
 			.toBeVisible();
 	});
+});
 
+describe('persistent application sidebar', () => {
 	it('hides and restores the existing rail together with its space, including nested requests', async () => {
 		render(AppFixture, { view: 'sidebar' });
 		const menu = rail().element();
@@ -132,7 +137,9 @@ describe('persistent application sidebar', () => {
 		expect(rail().element()).toBe(menu);
 		expect(contentLeft()).toBe(72);
 	});
+});
 
+describe('persistent application sidebar', () => {
 	it('automatically restores a page hide on navigation and uses the mobile width', async () => {
 		await page.viewport(390, 844);
 		const screen = render(AppFixture, { view: 'sidebar' });
@@ -144,7 +151,9 @@ describe('persistent application sidebar', () => {
 		expect(contentLeft()).toBe(60);
 		expect(rail().element().getBoundingClientRect().height).toBe(844);
 	});
+});
 
+describe('persistent application sidebar', () => {
 	it('updates shortcuts after autosave and keeps the game-screen add action working', async () => {
 		render(AppFixture, { view: 'game', gameId: game.id });
 		await page.getByRole('tab', { name: '게임', exact: true }).click();
@@ -155,7 +164,9 @@ describe('persistent application sidebar', () => {
 		await page.getByRole('button', { name: '게임 추가', exact: true }).click();
 		await expect.poll(() => vi.mocked(goto).mock.calls).toEqual([['/games/created-game']]);
 	});
+});
 
+describe('persistent application sidebar', () => {
 	it('isolates controller instances and ignores cleanup from an older page', () => {
 		const first = new AppSidebarController();
 		const second = new AppSidebarController();

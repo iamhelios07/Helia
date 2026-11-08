@@ -1,7 +1,8 @@
 ﻿import '../../../../app.css';
 import { expect, it, vi } from 'vitest';
-import { page, userEvent } from 'vitest/browser';
 import { render } from 'vitest-browser-svelte';
+import { page, userEvent } from 'vitest/browser';
+
 import AssetExplorer from './AssetExplorer.svelte';
 
 const portrait = {

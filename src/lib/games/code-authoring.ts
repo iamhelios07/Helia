@@ -26,7 +26,9 @@ export function readAuthoringBundle(
 		const modules = parseScripts(value);
 		return { modules, value: modules };
 	}
-	if (value === null) return null;
+	if (value === null) {
+		return null;
+	}
 	const ui = parseGameUI(value);
 	return { modules: ui.modules, value: value as Record<string, unknown> };
 }

@@ -86,68 +86,41 @@ pub(crate) fn guard_storage(input: &Value) -> Result<impl Drop + use<>, String> 
     Ok(leases)
 }
 
-fn execute(input: Value, channel: Channel<Value>) -> Result<Value, String> {
-    execute_with_auth(input, channel, credentials::generation_auth)
-}
-fn execute_with_auth(
-    input: Value,
-    channel: Channel<Value>,
-    authenticate: fn(Value) -> Result<(String, String, String), String>,
-) -> Result<Value, String> {
-    if input.to_string().len() > 4 * 1024 * 1024 {
-        return Err(ERROR.into());
-    }
-    let game = field(&input, "gameId")?;
-    let session = field(&input, "sessionId")?;
-    let kind = field(&input, "kind")?;
-    if kind == "begin" {
-        let mut leases = leases()?;
-        if leases
-            .values()
-            .any(|l| l.game == game && l.session == session)
-        {
-            return Err(BUSY.into());
-        }
-        let mut bytes = [0u8; 16];
-        getrandom::fill(&mut bytes).map_err(|_| ERROR)?;
-        let id: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
-        leases.insert(
-            id.clone(),
-            Lease {
-                game: game.into(),
-                session: session.into(),
-                expires: Instant::now() + Duration::from_secs(120),
-                rounds: 0,
-            },
-        );
-        return Ok(json!({"lease":id}));
-    }
-    let id = field(&input, "lease")?;
-    if kind == "release" {
-        let mut leases = leases()?;
-        if leases
-            .get(id)
-            .is_some_and(|l| l.game == game && l.session == session)
-        {
-            leases.remove(id);
-        }
-        return Ok(json!({}));
-    }
-    if kind != "round" {
-        return Err(ERROR.into());
-    }
-    valid(id, game, session)?;
+type Authenticate = fn(Value) -> Result<(String, String, String), String>;
+fn begin_lease(game: &str, session: &str) -> Result<Value, String> {
+    let mut leases = leases()?;
+    if leases
+        .values()
+        .any(|l| l.game == game && l.session == session)
     {
-        let mut leases = leases()?;
-        let lease = leases.get_mut(id).ok_or(CANCELED)?;
-        lease.rounds += 1;
-        if lease.rounds > 36 {
-            return Err(ERROR.into());
-        }
+        return Err(BUSY.into());
     }
-    let (base, format, key) = authenticate(input["request"]["provider"].clone())?;
-    let path = input["wire"]["path"].as_str().ok_or(ERROR)?;
-    let expected = match format.as_str() {
+    let mut bytes = [0u8; 16];
+    getrandom::fill(&mut bytes).map_err(|_| ERROR)?;
+    let id: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
+    leases.insert(
+        id.clone(),
+        Lease {
+            game: game.into(),
+            session: session.into(),
+            expires: Instant::now() + Duration::from_secs(120),
+            rounds: 0,
+        },
+    );
+    Ok(json!({"lease":id}))
+}
+fn release_lease(id: &str, game: &str, session: &str) -> Result<Value, String> {
+    let mut leases = leases()?;
+    if leases
+        .get(id)
+        .is_some_and(|l| l.game == game && l.session == session)
+    {
+        leases.remove(id);
+    }
+    Ok(json!({}))
+}
+fn validate_wire(input: &Value, format: &str, path: &str) -> Result<(), String> {
+    let expected = match format {
         "openai-compatible" => path == "/chat/completions",
         "openai-responses" => path == "/responses",
         "anthropic" => path == "/messages",
@@ -166,6 +139,15 @@ fn execute_with_auth(
     {
         return Err(ERROR.into());
     }
+    Ok(())
+}
+fn send_round(
+    input: &Value,
+    base: &str,
+    format: &str,
+    key: &str,
+    path: &str,
+) -> Result<reqwest::blocking::Response, String> {
     let client = reqwest::blocking::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .connect_timeout(Duration::from_secs(8))
@@ -179,56 +161,65 @@ fn execute_with_auth(
         .body(input["wire"]["body"].to_string());
     if format == "anthropic" {
         request = request
-            .header("x-api-key", &key)
+            .header("x-api-key", key)
             .header("anthropic-version", "2023-06-01");
     } else if format == "google" || format == "google-interactions" {
-        request = request.header("x-goog-api-key", &key);
+        request = request.header("x-goog-api-key", key);
     } else {
-        request = request.bearer_auth(&key);
+        request = request.bearer_auth(key);
     }
-    let mut response = request.send().map_err(|_| ERROR)?;
+    let response = request.send().map_err(|_| ERROR)?;
     if !response.status().is_success() {
         return Err(ERROR.into());
     }
-    let content_type = response
-        .headers()
-        .get("content-type")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or_default()
-        .to_owned();
-    let sse = content_type.contains("text/event-stream");
-    if !sse && !content_type.contains("application/json") {
+    Ok(response)
+}
+struct RoundOutput<'a> {
+    id: &'a str,
+    game: &'a str,
+    session: &'a str,
+    key: &'a str,
+    escaped: &'a str,
+    keep: usize,
+    channel: &'a Channel<Value>,
+}
+fn read_json(
+    response: reqwest::blocking::Response,
+    output: &RoundOutput<'_>,
+) -> Result<Value, String> {
+    let mut bytes = Vec::new();
+    response
+        .take(2 * 1024 * 1024 + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|_| ERROR)?;
+    if bytes.len() > 2 * 1024 * 1024 {
         return Err(ERROR.into());
     }
-    let escaped = serde_json::to_string(&key).map_err(|_| ERROR)?;
-    let escaped = &escaped[1..escaped.len() - 1];
-    let keep = key.len().max(escaped.len());
-    if !sse {
-        let mut bytes = Vec::new();
-        response
-            .take(2 * 1024 * 1024 + 1)
-            .read_to_end(&mut bytes)
-            .map_err(|_| ERROR)?;
-        if bytes.len() > 2 * 1024 * 1024 {
-            return Err(ERROR.into());
-        }
-        let text = std::str::from_utf8(&bytes)
-            .map_err(|_| ERROR)?
-            .replace(&key, "[redacted]")
-            .replace(escaped, "[redacted]");
-        let payload: Value = serde_json::from_str(&text).map_err(|_| ERROR)?;
-        valid(id, game, session)?;
-        channel
-            .send(json!({"chunk":format!("data: {}\n\n",json!({"helia_nonstream":payload}))}))
-            .map_err(|_| CANCELED)?;
-        channel.send(json!({"done":true})).map_err(|_| CANCELED)?;
-        return Ok(json!({}));
-    }
+    let text = std::str::from_utf8(&bytes)
+        .map_err(|_| ERROR)?
+        .replace(output.key, "[redacted]")
+        .replace(output.escaped, "[redacted]");
+    let payload: Value = serde_json::from_str(&text).map_err(|_| ERROR)?;
+    valid(output.id, output.game, output.session)?;
+    output
+        .channel
+        .send(json!({"chunk":format!("data: {}\n\n",json!({"helia_nonstream":payload}))}))
+        .map_err(|_| CANCELED)?;
+    output
+        .channel
+        .send(json!({"done":true}))
+        .map_err(|_| CANCELED)?;
+    Ok(json!({}))
+}
+fn read_stream(
+    mut response: reqwest::blocking::Response,
+    output: &RoundOutput<'_>,
+) -> Result<Value, String> {
     let mut pending = Vec::new();
     let mut buffer = [0u8; 4096];
     let mut total = 0;
     loop {
-        valid(id, game, session)?;
+        valid(output.id, output.game, output.session)?;
         let length = response.read(&mut buffer).map_err(|_| ERROR)?;
         pending.extend_from_slice(&buffer[..length]);
         total += length;
@@ -243,18 +234,19 @@ fn execute_with_auth(
         };
         let text = std::str::from_utf8(&pending[..valid_bytes])
             .map_err(|_| ERROR)?
-            .replace(&key, "[redacted]")
-            .replace(escaped, "[redacted]");
+            .replace(output.key, "[redacted]")
+            .replace(output.escaped, "[redacted]");
         let mut split = if length == 0 {
             text.len()
         } else {
-            text.len().saturating_sub(keep)
+            text.len().saturating_sub(output.keep)
         };
         while !text.is_char_boundary(split) {
             split -= 1;
         }
         if split > 0 {
-            channel
+            output
+                .channel
                 .send(json!({"chunk":&text[..split]}))
                 .map_err(|_| CANCELED)?;
         }
@@ -268,9 +260,77 @@ fn execute_with_auth(
             break;
         }
     }
-    valid(id, game, session)?;
-    channel.send(json!({"done":true})).map_err(|_| CANCELED)?;
+    valid(output.id, output.game, output.session)?;
+    output
+        .channel
+        .send(json!({"done":true}))
+        .map_err(|_| CANCELED)?;
     Ok(json!({}))
+}
+
+fn execute(input: &Value, channel: &Channel<Value>) -> Result<Value, String> {
+    execute_with_auth(input, channel, credentials::generation_auth)
+}
+fn execute_with_auth(
+    input: &Value,
+    channel: &Channel<Value>,
+    authenticate: Authenticate,
+) -> Result<Value, String> {
+    if input.to_string().len() > 4 * 1024 * 1024 {
+        return Err(ERROR.into());
+    }
+    let game = field(input, "gameId")?;
+    let session = field(input, "sessionId")?;
+    let kind = field(input, "kind")?;
+    if kind == "begin" {
+        return begin_lease(game, session);
+    }
+    let id = field(input, "lease")?;
+    if kind == "release" {
+        return release_lease(id, game, session);
+    }
+    if kind != "round" {
+        return Err(ERROR.into());
+    }
+    valid(id, game, session)?;
+    {
+        let mut leases = leases()?;
+        let lease = leases.get_mut(id).ok_or(CANCELED)?;
+        lease.rounds += 1;
+        if lease.rounds > 36 {
+            return Err(ERROR.into());
+        }
+    }
+    let (base, format, key) = authenticate(input["request"]["provider"].clone())?;
+    let path = input["wire"]["path"].as_str().ok_or(ERROR)?;
+    validate_wire(input, &format, path)?;
+    let response = send_round(input, &base, &format, &key, path)?;
+    let content_type = response
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default()
+        .to_owned();
+    let sse = content_type.contains("text/event-stream");
+    if !sse && !content_type.contains("application/json") {
+        return Err(ERROR.into());
+    }
+    let escaped = serde_json::to_string(&key).map_err(|_| ERROR)?;
+    let escaped = &escaped[1..escaped.len() - 1];
+    let keep = key.len().max(escaped.len());
+    let output = RoundOutput {
+        id,
+        game,
+        session,
+        key: &key,
+        escaped,
+        keep,
+        channel,
+    };
+    if !sse {
+        return read_json(response, &output);
+    }
+    read_stream(response, &output)
 }
 
 #[cfg(test)]
@@ -289,15 +349,15 @@ mod tests {
     fn leases_reject_other_writes_and_expired_commit_tokens() {
         let game = test_game();
         let begun = execute(
-            json!({"kind":"begin","gameId":game,"sessionId":"one"}),
-            channel(),
+            &json!({"kind":"begin","gameId":game,"sessionId":"one"}),
+            &channel(),
         )
         .unwrap();
         let id = begun["lease"].as_str().unwrap();
         assert!(
             execute(
-                json!({"kind":"begin","gameId":game,"sessionId":"one"}),
-                channel()
+                &json!({"kind":"begin","gameId":game,"sessionId":"one"}),
+                &channel()
             )
             .is_err()
         );
@@ -307,8 +367,8 @@ mod tests {
             let _allowed=guard_storage(&json!({"aiLease":id,"kind":"commit","gameId":game,"records":[{"table":"progress","sessionId":"one"}],"deleteSessions":[]})).unwrap();
         }
         execute(
-            json!({"kind":"release","gameId":game,"sessionId":"one","lease":id}),
-            channel(),
+            &json!({"kind":"release","gameId":game,"sessionId":"one","lease":id}),
+            &channel(),
         )
         .unwrap();
         assert!(guard_storage(&json!({"aiLease":id,"kind":"commit","gameId":game,"records":[],"deleteSessions":[]})).is_err());
@@ -337,14 +397,14 @@ mod tests {
         });
         let game = test_game();
         let begun = execute(
-            json!({"kind":"begin","gameId":game,"sessionId":"one"}),
-            channel(),
+            &json!({"kind":"begin","gameId":game,"sessionId":"one"}),
+            &channel(),
         )
         .unwrap();
         let id = begun["lease"].as_str().unwrap();
         let result = execute_with_auth(
-            json!({"kind":"round","gameId":game,"sessionId":"one","lease":id,"request":{"provider":{"baseUrl":format!("http://{address}"),"kind":"openai-compatible"},"model":"test"},"wire":{"path":"/chat/completions","body":{"model":"test","messages":[],"stream":true}}}),
-            output,
+            &json!({"kind":"round","gameId":game,"sessionId":"one","lease":id,"request":{"provider":{"baseUrl":format!("http://{address}"),"kind":"openai-compatible"},"model":"test"},"wire":{"path":"/chat/completions","body":{"model":"test","messages":[],"stream":true}}}),
+            &output,
             |provider| {
                 Ok((
                     provider["baseUrl"].as_str().unwrap().into(),
@@ -354,8 +414,8 @@ mod tests {
             },
         );
         execute(
-            json!({"kind":"release","gameId":game,"sessionId":"one","lease":id}),
-            channel(),
+            &json!({"kind":"release","gameId":game,"sessionId":"one","lease":id}),
+            &channel(),
         )
         .unwrap();
         server.join().unwrap();
@@ -417,7 +477,7 @@ pub async fn ai_request<R: tauri::Runtime>(
     if window.label() != "main" || !access.permits(&token) {
         return Err("허용하지 않는 AI 요청이에요.".into());
     }
-    tauri::async_runtime::spawn_blocking(move || execute(request, on_chunk))
+    tauri::async_runtime::spawn_blocking(move || execute(&request, &on_chunk))
         .await
         .map_err(|_| ERROR.to_owned())?
 }

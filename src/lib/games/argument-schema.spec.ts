@@ -1,7 +1,9 @@
 import { expect, it } from 'vitest';
+
+import type { GameState } from './state/value.js';
+
 import { compileCodeProject, CodeProjectError, type CodeProject } from './code-project.js';
 import { evaluateAction } from './scripting/engine.js';
-import type { GameState } from './state/value.js';
 
 const schema = {
 	type: 'object' as const,
@@ -34,6 +36,36 @@ const run = (compiled: Awaited<ReturnType<typeof scripts>>, args: GameState) =>
 		scripts: compiled,
 		action: { name: 'buy', args }
 	});
+
+it('keeps same-path builds isolated and accepts repeated sibling references to one argument type', async () => {
+	const source = action('Args', "import type {Args} from './types';");
+	const types = (price: string) =>
+		`interface Shared { label: string; } export interface Args { price: ${price}; first: Shared; second: Shared; }`;
+	const builds = await Promise.all([
+		scripts(source, types('number')),
+		scripts(source, types('string'))
+	]);
+	const catalogs = await Promise.all(
+		builds.map((compiled) =>
+			evaluateAction({
+				schema,
+				state: { gold: 100 },
+				scripts: compiled,
+				action: { name: 'catalog', args: {} },
+				operation: { kind: 'catalog' }
+			})
+		)
+	);
+	for (const [index, result] of catalogs.entries()) {
+		const argumentsSchema = result.tools?.[0].arguments;
+		expect(argumentsSchema?.properties?.price.type).toBe(index === 0 ? 'number' : 'string');
+		expect(argumentsSchema?.properties?.first).toEqual(argumentsSchema?.properties?.second);
+		expect(argumentsSchema?.properties?.first).toMatchObject({
+			type: 'object',
+			properties: { label: { type: 'string' } }
+		});
+	}
+});
 
 it('generates schemas from imported interfaces, inheritance, aliases and JSDoc without executing sources', async () => {
 	const source = action('BuyArgs', "import type {BuyArgs} from './types';");
@@ -91,8 +123,9 @@ export interface BuyArgs extends Base {
 		{ ...args, item: 'axe' },
 		{ ...args, options: { ...args.options, tags: [2] } },
 		{ price: 20 }
-	])
+	]) {
 		await expect(run(compiled.scripts, invalid)).rejects.toMatchObject({ code: 'arguments' });
+	}
 });
 
 it('resolves generic aliases, utility types, finite records and generated game state types', async () => {

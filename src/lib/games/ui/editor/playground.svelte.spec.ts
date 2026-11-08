@@ -1,11 +1,14 @@
 import '../../../../app.css';
 import { beforeEach, expect, it, vi } from 'vitest';
-import { page } from 'vitest/browser';
 import { render } from 'vitest-browser-svelte';
-import { createGameRepository } from '../../repository-core.js';
+import { page } from 'vitest/browser';
+
 import { memoryStorage } from '#lib/testing/memory-storage.js';
-import type { GameState } from '../../state/value.js';
+
 import type { EditorDiagnostic } from '../../editor-playground.js';
+import type { GameState } from '../../state/value.js';
+
+import { createGameRepository } from '../../repository-core.js';
 import EditorPlayground from './EditorPlayground.svelte';
 
 beforeEach(async () => {

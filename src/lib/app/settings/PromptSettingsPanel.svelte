@@ -1,19 +1,11 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+
 	import Icon from '#lib/components/Icon.svelte';
-	import PromptBlockEditor from './PromptBlockEditor.svelte';
+
 	import { PROMPT_TYPE_LABELS } from './prompt-labels.js';
-	import { parsePromptConfig, type PromptBlock } from '#lib/games/ai/prompts.js';
-	import {
-		emptyPromptSettings,
-		upsertPromptPreset,
-		removePromptPreset,
-		selectPromptPreset,
-		type PromptPreset,
-		type PromptSettings
-	} from './prompts.js';
-	import { loadPromptSettings, savePromptSettings } from './prompt-repository.js';
-	import { readPromptPresetFile } from './prompt-import.js';
+	import { PromptSettingsController } from './prompt-settings-controller.svelte.js';
+	import PromptBlockEditor from './PromptBlockEditor.svelte';
 	let {
 		requestChange,
 		requestConfirmation
@@ -26,281 +18,99 @@
 			action: () => void
 		) => void;
 	} = $props();
-	let settings = $state.raw<PromptSettings>(emptyPromptSettings());
-	let draft = $state<PromptPreset | null>(null);
-	let blocks = $state<{ id: string; value: PromptBlock }[]>([]);
-	let initialDraft = $state('');
-	let ready = $state(false);
-	let error = $state('');
-	let status = $state('');
-	let importError = $state('');
-	let readingFile = $state(false);
-	let importFileInput: HTMLInputElement | undefined;
-	let exportText = $state('');
-	let openBlockIds = $state<string[]>([]);
-	let disposed = false;
-	let fileRequest = 0;
+	const controller = new PromptSettingsController(
+		(...args) => requestChange(...args),
+		(...args) => requestConfirmation(...args)
+	);
 	const uid = $props.id();
-	let draftDirty = $derived(draft !== null && JSON.stringify(currentDraft()) !== initialDraft);
-	let savedDraft = $derived(settings.presets.some((preset) => preset.id === draft?.id));
-	let activeDraft = $derived(savedDraft && draft?.id === settings.selectedPresetId);
-
 	onMount(() => {
-		load();
-		return () => {
-			disposed = true;
-			fileRequest++;
-		};
+		controller.load();
+		return controller.dispose;
 	});
-
 	export function hasUnsavedChanges() {
-		return draftDirty;
+		return controller.draftDirty;
 	}
 	export function isBusy() {
-		return readingFile;
+		return controller.readingFile;
 	}
 	export function discardDraft() {
-		const saved =
-			settings.presets.find((preset) => preset.id === draft?.id) ??
-			settings.presets.find((preset) => preset.id === settings.selectedPresetId)!;
-		setDraft(saved);
-	}
-	function currentDraft(): PromptPreset | null {
-		if (!draft) return null;
-		return {
-			...draft,
-			config: { ...draft.config, promptTemplate: blocks.map((entry) => entry.value) }
-		};
-	}
-	function readableError(cause: unknown, fallback: string) {
-		return cause instanceof Error &&
-			!(cause instanceof SyntaxError) &&
-			!cause.message.startsWith('AI 응답')
-			? cause.message
-			: fallback;
-	}
-	function setDraft(preset: PromptPreset, fresh = false) {
-		draft = structuredClone($state.snapshot(preset));
-		blocks = preset.config.promptTemplate.map((block) => ({
-			id: crypto.randomUUID(),
-			value: structuredClone($state.snapshot(block))
-		}));
-		openBlockIds = blocks[0] ? [blocks[0].id] : [];
-		initialDraft = fresh ? '' : JSON.stringify(preset);
-		error = '';
-		status = '';
-		exportText = '';
-		importError = '';
-	}
-	function load() {
-		try {
-			settings = loadPromptSettings();
-			setDraft(settings.presets.find((preset) => preset.id === settings.selectedPresetId)!);
-			ready = true;
-		} catch (cause) {
-			ready = false;
-			error = readableError(cause, '프롬프트 설정을 불러오지 못했어요.');
-		}
-	}
-	function newPreset() {
-		requestChange(() =>
-			setDraft(
-				{ id: crypto.randomUUID(), name: '새 프롬프트', config: parsePromptConfig(undefined) },
-				true
-			)
-		);
-	}
-	function duplicatePreset() {
-		requestChange(() => {
-			const source = currentDraft();
-			if (source)
-				setDraft(
-					{ ...source, id: crypto.randomUUID(), name: `${source.name} 복사본`.slice(0, 120) },
-					true
-				);
-		});
-	}
-	function savePreset(event: SubmitEvent) {
-		event.preventDefault();
-		const candidate = currentDraft();
-		if (!candidate) return;
-		try {
-			settings = savePromptSettings(upsertPromptPreset(settings, candidate));
-			setDraft(settings.presets.find((preset) => preset.id === candidate.id)!);
-			status = '프롬프트 프리셋을 저장했어요.';
-		} catch (cause) {
-			error = readableError(cause, '프롬프트 입력값을 확인해주세요.');
-		}
-	}
-	function usePreset() {
-		const id = draft?.id;
-		if (!id || !savedDraft) return;
-		requestChange(() => {
-			try {
-				settings = savePromptSettings(selectPromptPreset(settings, id));
-				status = '기본 프롬프트를 변경했어요. 다음 AI 요청부터 사용해요.';
-			} catch (cause) {
-				error = readableError(cause, '기본 프롬프트를 변경하지 못했어요.');
-			}
-		});
-	}
-	function deletePreset() {
-		const id = draft?.id;
-		if (!id || !savedDraft || settings.presets.length < 2) return;
-		requestChange(() =>
-			requestConfirmation(
-				'프롬프트 프리셋 삭제',
-				'이 프리셋을 삭제할까요? 사용 중인 프리셋이면 다른 프리셋으로 전환해요.',
-				'프리셋 삭제',
-				() => {
-					try {
-						settings = savePromptSettings(removePromptPreset(settings, id));
-						setDraft(settings.presets.find((preset) => preset.id === settings.selectedPresetId)!);
-						status = '프롬프트 프리셋을 삭제했어요.';
-					} catch (cause) {
-						error = readableError(cause, '프리셋을 삭제하지 못했어요.');
-					}
-				}
-			)
-		);
-	}
-	function moveBlock(index: number, offset: number) {
-		const next = index + offset;
-		if (next < 0 || next >= blocks.length) return;
-		const reordered = [...blocks];
-		[reordered[index], reordered[next]] = [reordered[next], reordered[index]];
-		blocks = reordered;
-	}
-	function addBlock() {
-		if (blocks.length >= 128) return;
-		const id = crypto.randomUUID();
-		blocks.push({ id, value: { type: 'plain', role: 'system', enabled: true, text: '' } });
-		openBlockIds.push(id);
-	}
-	async function readImportFile(event: Event) {
-		const input = event.currentTarget as HTMLInputElement;
-		const file = input.files?.[0];
-		input.value = '';
-		if (!file) return;
-		const request = ++fileRequest;
-		importError = '';
-		readingFile = true;
-		let candidate: PromptPreset | undefined;
-		try {
-			candidate = { id: crypto.randomUUID(), ...(await readPromptPresetFile(file)) };
-		} catch (cause) {
-			if (!disposed && request === fileRequest)
-				importError = readableError(
-					cause,
-					'프롬프트 파일을 가져오지 못했어요. 파일을 확인해주세요.'
-				);
-		} finally {
-			if (!disposed && request === fileRequest) readingFile = false;
-		}
-		if (candidate && !disposed && request === fileRequest) {
-			const preset = candidate;
-			requestChange(() => setDraft(preset, true), draftDirty);
-		}
-	}
-	function attachImportFile(input: HTMLInputElement) {
-		importFileInput = input;
-		return () => {
-			if (importFileInput === input) importFileInput = undefined;
-		};
-	}
-	function exportPreset() {
-		const candidate = currentDraft();
-		if (!candidate) return;
-		try {
-			exportText = JSON.stringify(
-				{ version: 1, name: candidate.name, config: parsePromptConfig(candidate.config) },
-				null,
-				2
-			);
-			error = '';
-		} catch (cause) {
-			error = readableError(cause, '내보낼 프롬프트 입력값을 확인해주세요.');
-		}
-	}
-	function downloadPreset() {
-		if (!exportText) return;
-		const url = URL.createObjectURL(new Blob([exportText], { type: 'application/json' }));
-		const link = document.createElement('a');
-		link.href = url;
-		link.download = 'helia-prompt.json';
-		link.click();
-		setTimeout(() => URL.revokeObjectURL(url), 0);
+		controller.discardDraft();
 	}
 </script>
 
-<section class="prompt-settings" aria-label="프롬프트 설정" aria-busy={readingFile}>
-	{#if !ready}
-		{#if error}<p class="notice" role="alert">{error}</p>
-			<button type="button" onclick={load}>프롬프트 다시 불러오기</button>{:else}<p
+<section class="prompt-settings" aria-label="프롬프트 설정" aria-busy={controller.readingFile}>
+	{#if !controller.ready}
+		{#if controller.error}<p class="notice" role="alert">{controller.error}</p>
+			<button type="button" onclick={controller.load}>프롬프트 다시 불러오기</button>{:else}<p
 				class="help"
 				role="status"
 			>
 				프롬프트를 불러오는 중…
 			</p>{/if}
-	{:else if draft}
+	{:else if controller.draft}
 		<div class="preset-toolbar">
 			<label class="preset-select" for={`${uid}-presets`}
 				>편집할 프리셋<select
 					id={`${uid}-presets`}
-					value={draft.id}
-					disabled={readingFile}
+					value={controller.draft.id}
+					disabled={controller.readingFile}
 					onchange={(event) => {
 						const id = event.currentTarget.value;
-						event.currentTarget.value = draft?.id ?? '';
-						const preset = settings.presets.find((preset) => preset.id === id);
-						if (preset) requestChange(() => setDraft(preset));
+						event.currentTarget.value = controller.draft?.id ?? '';
+						const preset = controller.settings.presets.find((preset) => preset.id === id);
+						if (preset) {
+							requestChange(() => controller.setDraft(preset));
+						}
 					}}
 				>
-					{#if !savedDraft}<option value={draft.id}>{draft.name} · 저장 전</option>{/if}
-					{#each settings.presets as preset (preset.id)}<option value={preset.id}
-							>{preset.name}{preset.id === settings.selectedPresetId ? ' · 사용 중' : ''}</option
+					{#if !controller.savedDraft}<option value={controller.draft.id}
+							>{controller.draft.name} · 저장 전</option
+						>{/if}
+					{#each controller.settings.presets as preset (preset.id)}<option value={preset.id}
+							>{preset.name}{preset.id === controller.settings.selectedPresetId
+								? ' · 사용 중'
+								: ''}</option
 						>{/each}
 				</select></label
 			>
 			<button
 				type="button"
-				disabled={readingFile || settings.presets.length >= 64}
-				onclick={newPreset}><Icon name="plus" size={15} />새 프리셋</button
+				disabled={controller.readingFile || controller.settings.presets.length >= 64}
+				onclick={controller.newPreset}><Icon name="plus" size={15} />새 프리셋</button
 			>
 			<button
 				type="button"
-				disabled={readingFile || settings.presets.length >= 64}
-				onclick={duplicatePreset}>복제</button
+				disabled={controller.readingFile || controller.settings.presets.length >= 64}
+				onclick={controller.duplicatePreset}>복제</button
 			>
 			<button
 				type="button"
-				disabled={readingFile || settings.presets.length >= 64}
-				onclick={() => importFileInput?.click()}>가져오기</button
+				disabled={controller.readingFile || controller.settings.presets.length >= 64}
+				onclick={() => controller.importFileInput?.click()}>가져오기</button
 			>
 			<input
 				type="file"
 				hidden
 				aria-label="프롬프트 파일"
 				accept=".json,.preset,.risupreset,.risup,application/json"
-				disabled={readingFile}
-				{@attach attachImportFile}
-				onchange={readImportFile}
+				disabled={controller.readingFile}
+				{@attach controller.attachImportFile}
+				onchange={controller.readImportFile}
 			/>
 		</div>
-		{#if importError}<p class="notice" role="alert">{importError}</p>{/if}
-		{#if readingFile}<p class="help" role="status">프리셋을 가져오는 중…</p>{/if}
-		<form onsubmit={savePreset} novalidate>
-			<fieldset disabled={readingFile}>
+		{#if controller.importError}<p class="notice" role="alert">{controller.importError}</p>{/if}
+		{#if controller.readingFile}<p class="help" role="status">프리셋을 가져오는 중…</p>{/if}
+		<form onsubmit={controller.savePreset} novalidate>
+			<fieldset disabled={controller.readingFile}>
 				<div class="editor-heading">
-					<h3>{savedDraft ? '프리셋 편집' : '새 프리셋'}</h3>
-					{#if activeDraft}<span class="badge">사용 중</span>{/if}{#if draftDirty}<span class="help"
-							>저장하지 않은 변경 사항</span
-						>{/if}
+					<h3>{controller.savedDraft ? '프리셋 편집' : '새 프리셋'}</h3>
+					{#if controller.activeDraft}<span class="badge">사용 중</span
+						>{/if}{#if controller.draftDirty}<span class="help">저장하지 않은 변경 사항</span>{/if}
 				</div>
 				<label for={`${uid}-name`}
 					>프리셋 이름<input
 						id={`${uid}-name`}
-						bind:value={draft.name}
+						bind:value={controller.draft.name}
 						maxlength="120"
 						autocomplete="off"
 					/></label
@@ -310,22 +120,25 @@
 						<h3>프롬프트 순서</h3>
 						<p class="help">위에서 아래 순서로 구성해요. 끈 블록은 전송하지 않아요.</p>
 					</div>
-					<button type="button" disabled={blocks.length >= 128} onclick={addBlock}>블록 추가</button
+					<button
+						type="button"
+						disabled={controller.blocks.length >= 128}
+						onclick={controller.addBlock}>블록 추가</button
 					>
 				</div>
 				<ol class="blocks" aria-label="프롬프트 블록 순서">
-					{#each blocks as entry, index (entry.id)}<li class="block">
+					{#each controller.blocks as entry, index (entry.id)}<li class="block">
 							<section aria-label={`${index + 1}번 프롬프트 블록`}>
 								<div class="block-header">
 									<button
 										type="button"
 										class="block-toggle"
-										aria-expanded={openBlockIds.includes(entry.id)}
+										aria-expanded={controller.openBlockIds.includes(entry.id)}
 										aria-controls={`${uid}-block-${entry.id}`}
 										onclick={() =>
-											(openBlockIds = openBlockIds.includes(entry.id)
-												? openBlockIds.filter((id) => id !== entry.id)
-												: [...openBlockIds, entry.id])}
+											(controller.openBlockIds = controller.openBlockIds.includes(entry.id)
+												? controller.openBlockIds.filter((id) => id !== entry.id)
+												: [...controller.openBlockIds, entry.id])}
 										>{entry.value.name || PROMPT_TYPE_LABELS[entry.value.type]}</button
 									>
 									<label class="block-enabled" title="프롬프트 사용"
@@ -342,22 +155,26 @@
 										<button
 											type="button"
 											aria-label={`${index + 1}번 블록 삭제`}
-											onclick={() => (blocks = blocks.filter((block) => block.id !== entry.id))}
-											><Icon name="close" size={18} /></button
+											onclick={() =>
+												(controller.blocks = controller.blocks.filter(
+													(block) => block.id !== entry.id
+												))}><Icon name="close" size={18} /></button
 										><button
 											type="button"
 											aria-label={`${index + 1}번 블록 아래로`}
-											disabled={index === blocks.length - 1}
-											onclick={() => moveBlock(index, 1)}>↓</button
+											disabled={index === controller.blocks.length - 1}
+											onclick={() => controller.moveBlock(index, 1)}>↓</button
 										><button
 											type="button"
 											aria-label={`${index + 1}번 블록 위로`}
 											disabled={index === 0}
-											onclick={() => moveBlock(index, -1)}>↑</button
+											onclick={() => controller.moveBlock(index, -1)}>↑</button
 										>
 									</div>
 								</div>
-								{#if openBlockIds.includes(entry.id)}<div id={`${uid}-block-${entry.id}`}>
+								{#if controller.openBlockIds.includes(entry.id)}<div
+										id={`${uid}-block-${entry.id}`}
+									>
 										<PromptBlockEditor bind:block={entry.value} />
 									</div>{/if}
 							</section>
@@ -374,7 +191,7 @@
 									min="1"
 									max="65536"
 									step="1"
-									bind:value={draft.config.maxTokens}
+									bind:value={controller.draft.config.maxTokens}
 								/></label
 							><label for={`${uid}-context`}
 								>최대 컨텍스트 글자 수<input
@@ -383,47 +200,50 @@
 									min="1024"
 									max="2097152"
 									step="1"
-									bind:value={draft.config.maxContextChars}
+									bind:value={controller.draft.config.maxContextChars}
 								/></label
 							>
 						</div>
 						<label class="check"
-							><input type="checkbox" bind:checked={draft.config.jailbreakEnabled} />탈옥 프롬프트
-							사용</label
+							><input type="checkbox" bind:checked={controller.draft.config.jailbreakEnabled} />탈옥
+							프롬프트 사용</label
 						><label class="check"
-							><input type="checkbox" bind:checked={draft.config.cotEnabled} />생각의 사슬 사용</label
+							><input type="checkbox" bind:checked={controller.draft.config.cotEnabled} />생각의
+							사슬 사용</label
 						><label class="check"
 							><input
 								type="checkbox"
-								bind:checked={draft.config.promptSettings.sendChatAsSystem}
+								bind:checked={controller.draft.config.promptSettings.sendChatAsSystem}
 							/>시스템으로 채팅 보내기</label
 						>
 						<label for={`${uid}-end-format`}
 							>엔드 뒤 프롬프트<textarea
 								id={`${uid}-end-format`}
-								bind:value={draft.config.promptSettings.postEndInnerFormat}
+								bind:value={controller.draft.config.promptSettings.postEndInnerFormat}
 								rows="3"></textarea></label
 						>
 						<label for={`${uid}-prefill`}
 							>어시스턴트 프리필<textarea
 								id={`${uid}-prefill`}
-								bind:value={draft.config.promptSettings.assistantPrefill}
+								bind:value={controller.draft.config.promptSettings.assistantPrefill}
 								rows="3"></textarea></label
 						>
 					</div>
 				</details>
-				{#if error}<p class="notice" role="alert">{error}</p>{/if}
-				<p class="save-status" role="status">{status}</p>
+				{#if controller.error}<p class="notice" role="alert">{controller.error}</p>{/if}
+				<p class="save-status" role="status">{controller.status}</p>
 				<div class="form-actions">
-					<button type="submit" class="primary" disabled={!draftDirty}>프리셋 저장</button><button
-						type="button"
-						disabled={!savedDraft || activeDraft}
-						onclick={usePreset}>기본 프롬프트로 사용</button
+					<button type="submit" class="primary" disabled={!controller.draftDirty}
+						>프리셋 저장</button
 					><button
 						type="button"
-						disabled={!savedDraft || settings.presets.length < 2}
-						onclick={deletePreset}>프리셋 삭제</button
-					><button type="button" onclick={exportPreset}>JSON 내보내기</button>
+						disabled={!controller.savedDraft || controller.activeDraft}
+						onclick={controller.usePreset}>기본 프롬프트로 사용</button
+					><button
+						type="button"
+						disabled={!controller.savedDraft || controller.settings.presets.length < 2}
+						onclick={controller.deletePreset}>프리셋 삭제</button
+					><button type="button" onclick={controller.exportPreset}>JSON 내보내기</button>
 				</div>
 				<p class="help">
 					사용 중인 프리셋은 모든 게임의 다음 AI 요청에 적용돼요. 게임의 설명·작가 노트·로어북은
@@ -431,16 +251,16 @@
 				</p>
 			</fieldset>
 		</form>
-		{#if exportText}<section class="json-panel" aria-label="프롬프트 JSON 내보내기">
+		{#if controller.exportText}<section class="json-panel" aria-label="프롬프트 JSON 내보내기">
 				<h3>현재 프리셋 내보내기</h3>
 				<label for={`${uid}-export`}
 					>내보낼 프롬프트 JSON<textarea
 						id={`${uid}-export`}
-						value={exportText}
+						value={controller.exportText}
 						readonly
 						rows="8"
 						spellcheck="false"></textarea></label
-				><button type="button" onclick={downloadPreset}>JSON 파일 다운로드</button>
+				><button type="button" onclick={controller.downloadPreset}>JSON 파일 다운로드</button>
 			</section>{/if}
 	{/if}
 </section>

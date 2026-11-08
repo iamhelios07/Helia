@@ -1,8 +1,10 @@
+import { encode } from 'msgpackr';
 import { readFile } from 'node:fs/promises';
 import { gzipSync } from 'node:zlib';
-import { encode } from 'msgpackr';
 import { describe, expect, it } from 'vitest';
+
 import { parsePromptConfig } from '#lib/games/ai/prompts.js';
+
 import { readPromptPresetFile } from './prompt-import.js';
 
 function jsonFile(source: unknown, name = 'prompt.json') {
@@ -19,6 +21,9 @@ describe('prompt preset files', () => {
 			readPromptPresetFile(jsonFile({ version: 1, name: 'Helia', config }))
 		).resolves.toEqual({ name: 'Helia', config });
 	});
+});
+
+describe('prompt preset files', () => {
 	it('reads raw Risu JSON and .preset files through the existing field validator', async () => {
 		for (const extension of ['JSON', 'preset']) {
 			const result = await readPromptPresetFile(
@@ -29,6 +34,9 @@ describe('prompt preset files', () => {
 			expect(result.config.promptTemplate[0].text).toBe('Narrate');
 		}
 	});
+});
+
+describe('prompt preset files', () => {
 	it.each(['risup', 'risupreset'])(
 		'decodes the Risu export pipeline from a fixed .%s fixture',
 		async (extension) => {
@@ -52,6 +60,9 @@ describe('prompt preset files', () => {
 			expect(result.config).not.toHaveProperty('lorebook');
 		}
 	);
+});
+
+describe('prompt preset files', () => {
 	it('rejects malformed JSON and invalid Helia envelopes', async () => {
 		for (const file of [
 			new File(['{broken'], 'bad.json'),
@@ -62,6 +73,9 @@ describe('prompt preset files', () => {
 			await expect(readPromptPresetFile(file)).rejects.toThrow('프롬프트');
 		}
 	});
+});
+
+describe('prompt preset files', () => {
 	it('rejects invalid compressed or encrypted containers without exposing their data', async () => {
 		const files = [
 			new File(['invalid-private-content'], 'bad.risup'),
@@ -78,9 +92,13 @@ describe('prompt preset files', () => {
 				'bad.risupreset'
 			)
 		];
-		for (const file of files)
+		for (const file of files) {
 			await expect(readPromptPresetFile(file)).rejects.toThrow('파일 형식을 확인');
+		}
 	});
+});
+
+describe('prompt preset files', () => {
 	it('bounds file size and expanded container size and rejects unrelated extensions', async () => {
 		await expect(
 			readPromptPresetFile(new File([new Uint8Array(4 * 1024 * 1024 + 1)], 'large.json'))

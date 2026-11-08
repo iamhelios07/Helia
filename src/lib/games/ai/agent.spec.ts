@@ -1,11 +1,14 @@
 import { describe, it, expect, vi } from 'vitest';
-import { openStorage } from '#lib/server/sqlite.js';
+
 import { createGameRepository } from '#lib/games/repository-core.js';
 import { evaluateAction } from '#lib/games/scripting/engine.js';
-import { runAgentWorkspace } from './loop.js';
-import { hostAILeases, SessionLeases } from './leases.js';
-import type { ModelGenerator, AgentEvent } from './protocol.js';
+import { openStorage } from '#lib/server/sqlite.js';
 import { parseReply, type StorageRequest, type StorageTransport } from '#lib/storage/protocol.js';
+
+import type { ModelGenerator, AgentEvent } from './protocol.js';
+
+import { hostAILeases, SessionLeases } from './leases.js';
+import { runAgentWorkspace } from './loop.js';
 
 const args = "{type:'object',properties:{},additionalProperties:false}";
 const scripts = `
@@ -22,7 +25,9 @@ async function setup(source = scripts) {
 	const storage = openStorage(':memory:');
 	const writes: StorageRequest[] = [];
 	const transport: StorageTransport = async (command) => {
-		if (command.kind === 'commit') writes.push(command);
+		if (command.kind === 'commit') {
+			writes.push(command);
+		}
 		return parseReply(storage.request(command));
 	};
 	const repo = createGameRepository(transport, { runAction: evaluateAction });
@@ -75,6 +80,9 @@ describe('atomic AI workspace', () => {
 			storage.close();
 		}
 	});
+});
+
+describe('atomic AI workspace', () => {
 	it('shares temporary writes with queries and commits input, answer, state and notifications only after final completion', async () => {
 		const { storage, repo, game, timeline, writes } = await setup();
 		const events: AgentEvent[] = [];
@@ -88,7 +96,7 @@ describe('atomic AI workspace', () => {
 				(await repo.getSessionHistory(game.id, game.activeSessionId)).progress.state.gold
 			).toBe(2);
 			expect(notifications).not.toHaveBeenCalled();
-			if (round++ === 0)
+			if (round++ === 0) {
 				return {
 					text: 'Checking',
 					calls: [
@@ -96,6 +104,7 @@ describe('atomic AI workspace', () => {
 						{ id: 'two', name: 'balance', arguments: {} }
 					]
 				};
+			}
 			expect(JSON.parse(request.messages.find((m) => m.callId === 'two')!.content)).toEqual({
 				gold: 1
 			});
@@ -104,15 +113,13 @@ describe('atomic AI workspace', () => {
 			return { text: 'Done', calls: [] };
 		};
 		try {
-			const result = await runAgentWorkspace(
-				timeline,
-				'Buy',
-				connection,
-				generate,
-				evaluateAction,
-				new AbortController().signal,
-				(e) => events.push(e)
-			);
+			const result = await runAgentWorkspace(timeline, 'Buy', {
+				connection: connection,
+				generate: generate,
+				run: evaluateAction,
+				signal: new AbortController().signal,
+				emit: (e) => events.push(e)
+			});
 			expect(writes).toHaveLength(0);
 			await repo.commitSessionAgent(game.id, game.activeSessionId, {
 				expectedRevision: 0,
@@ -131,6 +138,9 @@ describe('atomic AI workspace', () => {
 			storage.close();
 		}
 	});
+});
+
+describe('atomic AI workspace', () => {
 	it.each(['cancel', 'stream', 'filter', 'unexposed'] as const)(
 		'discards staged changes after %s failure',
 		async (mode) => {
@@ -138,7 +148,7 @@ describe('atomic AI workspace', () => {
 			const abort = new AbortController();
 			let round = 0;
 			const generate: ModelGenerator = async () => {
-				if (round++ === 0)
+				if (round++ === 0) {
 					return {
 						text: '',
 						calls: [
@@ -151,20 +161,21 @@ describe('atomic AI workspace', () => {
 								: [])
 						]
 					};
-				if (mode === 'cancel') abort.abort();
+				}
+				if (mode === 'cancel') {
+					abort.abort();
+				}
 				throw Error('Interrupted stream');
 			};
 			try {
 				await expect(
-					runAgentWorkspace(
-						timeline,
-						'Buy',
-						connection,
-						generate,
-						evaluateAction,
-						abort.signal,
-						() => {}
-					)
+					runAgentWorkspace(timeline, 'Buy', {
+						connection: connection,
+						generate: generate,
+						run: evaluateAction,
+						signal: abort.signal,
+						emit: () => {}
+					})
 				).rejects.toThrow();
 				expect(writes).toHaveLength(0);
 				expect(
@@ -175,6 +186,9 @@ describe('atomic AI workspace', () => {
 			}
 		}
 	);
+});
+
+describe('atomic AI workspace', () => {
 	it('rejects stale results and a canceled final commit without persisting either message', async () => {
 		const { storage, repo, game, timeline } = await setup();
 		try {
@@ -213,6 +227,9 @@ describe('atomic AI workspace', () => {
 			storage.close();
 		}
 	});
+});
+
+describe('atomic AI workspace', () => {
 	it('rejects other host state writes during generation and rejects a released lease at commit', async () => {
 		const { storage, repo, game, timeline } = await setup();
 		const lease = hostAILeases.begin(game.id, game.activeSessionId);

@@ -1,8 +1,8 @@
-import { parseGame, parseGameSettings, validateGameMetadata, type Game } from './model.js';
-import { parseStateDocument } from './state/schema.js';
-import { createCodeProject, parseCodeProject } from './code-project.js';
 import { parseGameAIContent } from './ai/prompts.js';
+import { createCodeProject, parseCodeProject } from './code-project.js';
+import { parseGame, parseGameSettings, validateGameMetadata, type Game } from './model.js';
 import { parseResources } from './resources.js';
+import { parseStateDocument } from './state/schema.js';
 
 export const EDITOR_DOCUMENTS = [
 	{ id: 'info', label: '게임 정보' },
@@ -79,9 +79,13 @@ export function changedEditorDraft(draft: EditorDraft): boolean {
 }
 
 export function readEditorDraft(text: string, gameId: string): EditorDraft {
-	if (text.length > MAX_DRAFT_LENGTH) throw new Error('편집 초안이 너무 커요.');
+	if (text.length > MAX_DRAFT_LENGTH) {
+		throw new Error('편집 초안이 너무 커요.');
+	}
 	const value: unknown = JSON.parse(text);
-	if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('잘못된 초안');
+	if (!value || typeof value !== 'object' || Array.isArray(value)) {
+		throw new Error('잘못된 초안');
+	}
 	const row = value as Record<string, unknown>;
 	if (
 		(row.version !== 1 && row.version !== 2 && row.version !== 3) ||
@@ -89,37 +93,14 @@ export function readEditorDraft(text: string, gameId: string): EditorDraft {
 		!row.documents ||
 		typeof row.documents !== 'object' ||
 		Array.isArray(row.documents)
-	)
+	) {
 		throw new Error('잘못된 초안');
+	}
 	const source = row.documents as Record<string, unknown>;
-	if (row.version === 1) {
-		if (typeof source.schema !== 'string' || typeof source.state !== 'string')
-			throw new Error('잘못된 초안');
-		// Wrap unfinished text verbatim too: migration must never discard an incomplete edit.
-		const combined = `{\n"schema": ${source.schema},\n"initialState": ${source.state}\n}`;
-		try {
-			source.state = format(JSON.parse(combined));
-		} catch {
-			source.state = combined;
-		}
-	}
-	if (source.assets === undefined) source.assets = '{}';
-	if (row.version !== 3) {
-		if (typeof source.scripts !== 'string' || typeof source.ui !== 'string')
-			throw new Error('잘못된 초안');
-		try {
-			source.code = format(
-				createCodeProject({
-					scripts: JSON.parse(source.scripts),
-					ui: JSON.parse(source.ui) ?? undefined
-				})
-			);
-		} catch {
-			throw new Error('이전 코드 초안을 변환하지 못했어요. 저장된 원본은 유지됩니다.');
-		}
-	}
-	if (EDITOR_DOCUMENTS.some(({ id }) => typeof source[id] !== 'string'))
+	migrateDraftDocuments(source, row.version as number);
+	if (EDITOR_DOCUMENTS.some(({ id }) => typeof source[id] !== 'string')) {
 		throw new Error('잘못된 초안');
+	}
 	// Rebuild the stored base with the same runtime validators used by persisted games.
 	const base = parseGame({
 		...(row.baseContent as object),
@@ -156,8 +137,9 @@ export function storeEditorDraft(draft: EditorDraft): void {
 	}
 }
 export function clearEditorDraft(gameId: string, expectedDraft?: EditorDraft): void {
-	if (expectedDraft && localStorage.getItem(prefix + gameId) !== JSON.stringify(expectedDraft))
+	if (expectedDraft && localStorage.getItem(prefix + gameId) !== JSON.stringify(expectedDraft)) {
 		return;
+	}
 	localStorage.removeItem(prefix + gameId);
 }
 
@@ -173,12 +155,7 @@ export function validateEditorDraft(
 		} catch (error) {
 			problems.push({
 				documentId: id,
-				message:
-					error instanceof SyntaxError
-						? 'JSON 형식을 확인해주세요.'
-						: error instanceof Error && !error.message.startsWith('AI 응답')
-							? error.message
-							: '입력 형식을 확인해주세요.'
+				message: draftProblem(error)
 			});
 			return undefined;
 		}
@@ -189,8 +166,9 @@ export function validateEditorDraft(
 	const code = check('code', parseCodeProject);
 	const ai = check('lorebook', parseGameAIContent);
 	const resources = check('assets', parseResources);
-	if (problems.length || !info || !settings || !stateDocument || !code || !ai || !resources)
+	if (problems.length || !info || !settings || !stateDocument || !code || !ai || !resources) {
 		return { game: null, problems };
+	}
 	return {
 		game: parseGame({
 			...game,
@@ -203,4 +181,50 @@ export function validateEditorDraft(
 		}),
 		problems
 	};
+}
+
+function migrateDraftDocuments(source: Record<string, unknown>, version: number) {
+	if (version === 1) {
+		if (typeof source.schema !== 'string' || typeof source.state !== 'string') {
+			throw new Error('잘못된 초안');
+		}
+		// Wrap unfinished text verbatim too: migration must never discard an incomplete edit.
+		const combined = `{\n"schema": ${source.schema},\n"initialState": ${source.state}\n}`;
+		try {
+			source.state = format(JSON.parse(combined));
+		} catch {
+			source.state = combined;
+		}
+	}
+	if (source.assets === undefined) {
+		source.assets = '{}';
+	}
+
+	migrateDraftCode(source, version);
+}
+function migrateDraftCode(source: Record<string, unknown>, version: number) {
+	if (version !== 3) {
+		if (typeof source.scripts !== 'string' || typeof source.ui !== 'string') {
+			throw new Error('잘못된 초안');
+		}
+		try {
+			source.code = format(
+				createCodeProject({
+					scripts: JSON.parse(source.scripts),
+					ui: JSON.parse(source.ui) ?? undefined
+				})
+			);
+		} catch {
+			throw new Error('이전 코드 초안을 변환하지 못했어요. 저장된 원본은 유지됩니다.');
+		}
+	}
+}
+function draftProblem(error: unknown) {
+	if (error instanceof SyntaxError) {
+		return 'JSON 형식을 확인해주세요.';
+	}
+	if (error instanceof Error && !error.message.startsWith('AI 응답')) {
+		return error.message;
+	}
+	return '입력 형식을 확인해주세요.';
 }

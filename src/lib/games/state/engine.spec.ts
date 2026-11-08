@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+
 import {
 	activeMemories,
 	activeTransactions,
@@ -58,9 +59,9 @@ function commit(
 	history: SessionHistory,
 	id: string,
 	nextState: GameState,
-	withMessage = false,
-	parentId = history.progress.headId
+	options: { withMessage?: boolean; parentId?: string | null } = {}
 ): SessionHistory {
+	const { withMessage = false, parentId = history.progress.headId } = options;
 	const result = prepareTransaction(
 		history,
 		{
@@ -100,7 +101,9 @@ describe('transaction state engine', () => {
 		expect(prepared.transaction.changes).toHaveLength(2);
 		expect(prepared.transaction).not.toHaveProperty('origin');
 	});
+});
 
+describe('transaction state engine', () => {
 	it.each([
 		null,
 		{},
@@ -110,15 +113,19 @@ describe('transaction state engine', () => {
 	])('rejects invalid action records: %j', (value) => {
 		expect(() => parseAction(value)).toThrow();
 	});
+});
 
+describe('transaction state engine', () => {
 	it('finds a message checkpoint regardless of its action name', () => {
-		const history = commit(start(), 'creator.customAction', { gold: 80 }, true);
+		const history = commit(start(), 'creator.customAction', { gold: 80 }, { withMessage: true });
 		expect(messageBase(history, 'creator.customAction')).toEqual({
 			headId: null,
 			state: start().snapshot.initialState
 		});
 	});
+});
 
+describe('transaction state engine', () => {
 	it('rejects unsupported transaction and session-state formats', () => {
 		const history = commit(start(), 'purchase', { gold: 80 });
 		const node = history.transactions[0];
@@ -126,6 +133,9 @@ describe('transaction state engine', () => {
 		expect(() => parseSessionState({ ...history.progress, schemaVersion: 1 })).toThrow();
 		expect(parseTransaction(JSON.parse(JSON.stringify(node)))).toEqual(node);
 	});
+});
+
+describe('transaction state engine', () => {
 	it('records a multi-field purchase with exact before/after values without mutating inputs', () => {
 		const before = start();
 		const desired = { gold: 80, inventory: { iron: 5 }, orders: [] };
@@ -143,16 +153,28 @@ describe('transaction state engine', () => {
 		expect(after.progress.state.inventory).toEqual({ iron: 5 });
 		expect(stateAt(after)).toEqual(after.progress.state);
 	});
+});
 
+describe('transaction state engine', () => {
 	it('rerolls from the response base, preserves the player purchase, and restores an older continuation', () => {
 		let history = commit(start(), 'buy', { gold: 80, inventory: { iron: 5 }, orders: [] });
-		history = commit(history, 'response-a', { ...history.progress.state, reputation: 1 }, true);
+		history = commit(
+			history,
+			'response-a',
+			{ ...history.progress.state, reputation: 1 },
+			{ withMessage: true }
+		);
 		history = commit(history, 'later-action', { ...history.progress.state, gold: 70 });
 		const originalHead = history.progress.headId;
 		const base = messageBase(history, 'response-a');
 		expect(base.headId).toBe('buy');
 		expect(base.state.gold).toBe(80);
-		history = commit(history, 'response-b', { ...base.state, reputation: -1 }, true, base.headId);
+		history = commit(
+			history,
+			'response-b',
+			{ ...base.state, reputation: -1 },
+			{ withMessage: true, parentId: base.headId }
+		);
 		expect(activeTransactions(history).map((node) => node.id)).toEqual(['buy', 'response-b']);
 		expect(history.progress.state).toMatchObject({ gold: 80, reputation: -1 });
 		expect(history.transactions).toHaveLength(4);
@@ -167,7 +189,9 @@ describe('transaction state engine', () => {
 			'later-action'
 		]);
 	});
+});
 
+describe('transaction state engine', () => {
 	it('distinguishes missing values from null and records arrays as complete values', () => {
 		let history = commit(start(), 'create', {
 			gold: null,
@@ -186,7 +210,9 @@ describe('transaction state engine', () => {
 			after: { exists: false }
 		});
 	});
+});
 
+describe('transaction state engine', () => {
 	it('rejects stale results even after moving away from and back to the same head', () => {
 		let history = commit(start(), 'action', { gold: 80 });
 		const stale = history.progress.revision;
@@ -209,7 +235,9 @@ describe('transaction state engine', () => {
 		).toThrow(/최신 상태/);
 		expect(history.progress.revision).toBe(3);
 	});
+});
 
+describe('transaction state engine', () => {
 	it('never partially applies a corrupted change batch', () => {
 		const original = { gold: 100, iron: 3 };
 		expect(() =>
@@ -233,9 +261,11 @@ describe('transaction state engine', () => {
 			])
 		).toThrow();
 	});
+});
 
+describe('transaction state engine', () => {
 	it('filters memories by every source transaction in the selected branch', () => {
-		let history = commit(start(), 'a', { gold: 80 }, true);
+		let history = commit(start(), 'a', { gold: 80 }, { withMessage: true });
 		const memory: Memory = {
 			schemaVersion: 1,
 			id: 'memory',
@@ -246,7 +276,7 @@ describe('transaction state engine', () => {
 			createdAt: now
 		};
 		expect(activeMemories(history, [memory])).toEqual([memory]);
-		history = commit(history, 'b', { gold: 60 }, true, null);
+		history = commit(history, 'b', { gold: 60 }, { withMessage: true, parentId: null });
 		expect(
 			activeMemories(history, [
 				memory,
@@ -257,7 +287,9 @@ describe('transaction state engine', () => {
 		history = { ...history, progress: checkoutHistory(history, 'a', history.progress.revision) };
 		expect(activeMemories(history, [memory])).toEqual([memory]);
 	});
+});
 
+describe('transaction state engine', () => {
 	it('rejects orphaned, cyclic, duplicate and foreign history nodes', () => {
 		const history = commit(start(), 'a', { gold: 80 });
 		const node = history.transactions[0];
@@ -271,7 +303,9 @@ describe('transaction state engine', () => {
 		}
 		expect(() => messageBase(history, 'a')).toThrow();
 	});
+});
 
+describe('transaction state engine', () => {
 	it('round-trips a history through JSON with the same branch and state', () => {
 		const original = commit(start(), 'a', { gold: 80, inventory: { iron: 5 } });
 		const stored = JSON.parse(JSON.stringify(original));
@@ -290,13 +324,18 @@ describe('transaction state engine', () => {
 			})
 		).toThrow();
 	});
+});
 
+describe('transaction state engine', () => {
 	it.each([undefined, NaN, Infinity, 1n, () => 1, Symbol('value'), new Date(), new Map()])(
 		'rejects values that cannot be faithfully saved: %s',
 		(value) => {
 			expect(() => parseGameState({ value })).toThrow();
 		}
 	);
+});
+
+describe('transaction state engine', () => {
 	it('rejects cycles, array holes and accessors without evaluating getters', () => {
 		const cycle: Record<string, unknown> = {};
 		cycle.self = cycle;

@@ -1,9 +1,10 @@
 import '../../../../app.css';
 import { expect, it, vi } from 'vitest';
-import { page, userEvent } from 'vitest/browser';
 import { render } from 'vitest-browser-svelte';
-import BundleEditor from './BundleEditor.svelte';
+import { page, userEvent } from 'vitest/browser';
+
 import AssetEditor from './AssetEditor.svelte';
+import BundleEditor from './BundleEditor.svelte';
 import { getMonacoSource, setMonacoSource } from './monaco-test.js';
 
 const stateTypes = 'export type GameState = { gold: number };\n';

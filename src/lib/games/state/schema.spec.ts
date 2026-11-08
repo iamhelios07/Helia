@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest';
 import ts from 'typescript';
+import { describe, expect, it } from 'vitest';
+
 import fixtures from './schema-fixtures.json';
 import {
 	generateStateTypes,
@@ -16,11 +17,16 @@ describe('state schema profile', () => {
 			return;
 		}
 		expect(parseSchema(fixture.schema)).toEqual(fixture.schema);
-		for (const value of fixture.valid ?? [])
+		for (const value of fixture.valid ?? []) {
 			expect(validateValue(fixture.schema, value, 'load')).toEqual(value);
-		for (const value of fixture.invalid ?? [])
+		}
+		for (const value of fixture.invalid ?? []) {
 			expect(() => validateValue(fixture.schema, value, 'load')).toThrow(StateValidationError);
+		}
 	});
+});
+
+describe('state schema profile', () => {
 	it('reports the validation phase and nested array path without changing the input', () => {
 		const schema = {
 			type: 'object',
@@ -40,6 +46,9 @@ describe('state schema profile', () => {
 		}
 		expect(value.items[0].amount).toBe('two');
 	});
+});
+
+describe('state schema profile', () => {
 	it('validates initial state, returns detached data and rejects invalid documents', () => {
 		const input = { schema: fixtures[0].schema, initialState: { hp: 100 } };
 		const parsed = parseStateDocument(input);
@@ -51,6 +60,9 @@ describe('state schema profile', () => {
 			/root/
 		);
 	});
+});
+
+describe('state schema profile', () => {
 	it('rejects unsupported or unsafe JavaScript values without evaluating accessors', () => {
 		let calls = 0;
 		const getter = Object.defineProperty({}, 'type', {
@@ -62,9 +74,13 @@ describe('state schema profile', () => {
 		});
 		expect(() => parseSchema(getter)).toThrow();
 		expect(calls).toBe(0);
-		for (const value of [undefined, NaN, Infinity, 1n, new Date(), new Array(2)])
+		for (const value of [undefined, NaN, Infinity, 1n, new Date(), new Array(2)]) {
 			expect(() => validateValue({ type: 'number' }, value, 'commit')).toThrow();
+		}
 	});
+});
+
+describe('state schema profile', () => {
 	it('generates type-checked declarations preserving optional, enum, array and nullable semantics', () => {
 		const schema = {
 			type: 'object',

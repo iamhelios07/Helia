@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+
 import { POST } from './+server.js';
 
 const execute = vi.hoisted(() => vi.fn());
@@ -24,8 +25,9 @@ it('rejects cross-origin, originless and non-JSON requests before accessing stor
 		event('http://foreign'),
 		event(null),
 		event('http://localhost', '{}', 'text/plain')
-	])
+	]) {
 		expect((await POST(request)).status).toBe(403);
+	}
 	expect(execute).not.toHaveBeenCalled();
 });
 it('returns the host reply without allowing caches to retain game data', async () => {

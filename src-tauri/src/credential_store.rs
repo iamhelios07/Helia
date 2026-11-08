@@ -89,11 +89,11 @@ pub(crate) fn write(store: &impl Entries, id: &str, bytes: &[u8]) -> Result<(), 
         }
     }
     let encoded = serde_json::to_vec(&new).map_err(|_| ERROR)?;
-    if let Err(error) = store.put(id, &encoded) {
-        if store.get(id)?.as_deref() != Some(encoded.as_slice()) {
-            let _ = clean(store, id, &new);
-            return Err(error);
-        }
+    if let Err(error) = store.put(id, &encoded)
+        && store.get(id)?.as_deref() != Some(encoded.as_slice())
+    {
+        let _ = clean(store, id, &new);
+        return Err(error);
     }
     if let Some(old) = old {
         let _ = clean(store, id, &old);

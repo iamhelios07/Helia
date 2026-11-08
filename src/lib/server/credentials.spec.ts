@@ -1,12 +1,14 @@
+import Database from 'better-sqlite3';
+import { execFileSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { execFileSync } from 'node:child_process';
-import Database from 'better-sqlite3';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { openCredentialStore } from './credentials.js';
-import fixture from '#lib/testing/fixtures/service-account.json';
+
 import { vertexBaseUrl } from '#lib/app/settings/vertex.js';
+import fixture from '#lib/testing/fixtures/service-account.json';
+
+import { openCredentialStore } from './credentials.js';
 
 let directory: string;
 let filename: string;
@@ -31,8 +33,9 @@ afterEach(() => {
 	if (
 		!resolve(directory).startsWith(resolve(tmpdir()) + '\\helia-credentials-') &&
 		!resolve(directory).startsWith(resolve(tmpdir()) + '/helia-credentials-')
-	)
+	) {
 		throw new Error('Unexpected test cleanup path');
+	}
 	rmSync(directory, { recursive: true, force: true });
 });
 
@@ -67,7 +70,9 @@ it('persists encrypted keys across reopen and returns only status or sanitized m
 			{ encoding: 'utf8', windowsHide: true, env: { ...process.env, HELIA_TEST_KEY: keyPath } }
 		);
 		expect(result.trim()).toBe('True');
-	} else expect(statSync(keyPath).mode & 0o077).toBe(0);
+	} else {
+		expect(statSync(keyPath).mode & 0o077).toBe(0);
+	}
 });
 it('does not regenerate a missing master key over existing credentials and allows explicit deletion and re-entry', async () => {
 	await store.request({ kind: 'save', provider, apiKey });

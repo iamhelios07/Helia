@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { tick } from 'svelte';
+
 	import Icon from '#lib/components/Icon.svelte';
 	let {
 		tabs,
@@ -16,15 +17,21 @@
 	async function keydown(event: KeyboardEvent, id: string) {
 		const index = tabs.findIndex((tab) => tab.id === id);
 		let next: number;
-		if (event.key === 'ArrowRight') next = (index + 1) % tabs.length;
-		else if (event.key === 'ArrowLeft') next = (index - 1 + tabs.length) % tabs.length;
-		else if (event.key === 'Home') next = 0;
-		else if (event.key === 'End') next = tabs.length - 1;
-		else if (event.key === 'Delete') {
+		if (event.key === 'ArrowRight') {
+			next = (index + 1) % tabs.length;
+		} else if (event.key === 'ArrowLeft') {
+			next = (index - 1 + tabs.length) % tabs.length;
+		} else if (event.key === 'Home') {
+			next = 0;
+		} else if (event.key === 'End') {
+			next = tabs.length - 1;
+		} else if (event.key === 'Delete') {
 			event.preventDefault();
 			onclose(id);
 			return;
-		} else return;
+		} else {
+			return;
+		}
 		event.preventDefault();
 		onselect(tabs[next].id);
 		const tablist =

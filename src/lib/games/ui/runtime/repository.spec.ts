@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { openStorage } from '#lib/server/sqlite.js';
+
 import { createGameRepository } from '#lib/games/repository-core.js';
+import { openStorage } from '#lib/server/sqlite.js';
 import { parseReply } from '#lib/storage/protocol.js';
 
 const connections: ReturnType<typeof openStorage>[] = [];
@@ -10,7 +11,9 @@ function repository() {
 	return createGameRepository(async (request) => parseReply(storage.request(request)));
 }
 afterEach(() => {
-	for (const storage of connections.splice(0)) storage.close();
+	for (const storage of connections.splice(0)) {
+		storage.close();
+	}
 });
 const ui = {
 	version: 1,

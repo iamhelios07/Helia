@@ -1,22 +1,30 @@
 import type { PanelLayout } from './model.js';
 
 export function panelIds(layout: PanelLayout | null): string[] {
-	return !layout
-		? []
-		: layout.kind === 'panel'
-			? [layout.id]
-			: [...panelIds(layout.first), ...panelIds(layout.second)];
+	if (!layout) {
+		return [];
+	}
+	if (layout.kind === 'panel') {
+		return [layout.id];
+	}
+	return [...panelIds(layout.first), ...panelIds(layout.second)];
 }
 export function removePanel(layout: PanelLayout | null, id: string): PanelLayout | null {
-	if (!layout || layout.kind === 'panel') return layout?.id === id ? null : layout;
+	if (!layout || layout.kind === 'panel') {
+		return layout?.id === id ? null : layout;
+	}
 	const first = removePanel(layout.first, id),
 		second = removePanel(layout.second, id);
 	return first && second ? { ...layout, first, second } : (first ?? second);
 }
 /** New registrations append without rearranging any surviving player panels. */
 export function reconcileLayout(layout: PanelLayout | null, ids: string[]): PanelLayout | null {
-	for (const id of panelIds(layout)) if (!ids.includes(id)) layout = removePanel(layout, id);
-	for (const id of ids)
+	for (const id of panelIds(layout)) {
+		if (!ids.includes(id)) {
+			layout = removePanel(layout, id);
+		}
+	}
+	for (const id of ids) {
 		if (!panelIds(layout).includes(id)) {
 			if (!layout) {
 				layout = { kind: 'panel', id };
@@ -37,8 +45,9 @@ export function reconcileLayout(layout: PanelLayout | null, ids: string[]): Pane
 			}
 			find(layout, 0);
 			function append(node: PanelLayout): PanelLayout {
-				if (node.kind === 'split')
+				if (node.kind === 'split') {
 					return { ...node, first: append(node.first), second: append(node.second) };
+				}
 				return node.id === shallowest
 					? {
 							kind: 'split',
@@ -51,22 +60,26 @@ export function reconcileLayout(layout: PanelLayout | null, ids: string[]): Pane
 			}
 			layout = append(layout);
 		}
+	}
 	return layout;
 }
 export function dockPanel(
 	layout: PanelLayout,
 	id: string,
-	target: string,
-	edge: 'left' | 'right' | 'top' | 'bottom',
-	maxDepth = 8
+	destination: { id: string; edge: 'left' | 'right' | 'top' | 'bottom'; maxDepth?: number }
 ): PanelLayout {
-	if (id === target || !panelIds(layout).includes(id) || !panelIds(layout).includes(target))
+	const { id: target, edge, maxDepth = 8 } = destination;
+	if (id === target || !panelIds(layout).includes(id) || !panelIds(layout).includes(target)) {
 		return layout;
+	}
 	const remaining = removePanel(layout, id)!;
 	function insert(node: PanelLayout): PanelLayout {
-		if (node.kind === 'split')
+		if (node.kind === 'split') {
 			return { ...node, first: insert(node.first), second: insert(node.second) };
-		if (node.id !== target) return node;
+		}
+		if (node.id !== target) {
+			return node;
+		}
 		const leaf: PanelLayout = { kind: 'panel', id };
 		return {
 			kind: 'split',

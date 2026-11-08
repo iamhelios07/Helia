@@ -1,9 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { openStorage } from '#lib/server/sqlite.js';
+
 import { createGameRepository } from '#lib/games/repository-core.js';
+import { openStorage } from '#lib/server/sqlite.js';
 import { parseReply, type StorageTransport } from '#lib/storage/protocol.js';
-import { evaluateAction } from './engine.js';
+
 import type { ActionResult } from './protocol.js';
+
+import { evaluateAction } from './engine.js';
 
 let storage: ReturnType<typeof openStorage>;
 const transport: StorageTransport = async (input) => parseReply(storage.request(input));
@@ -71,6 +74,9 @@ describe('creator Action → SQLite transaction', () => {
 		);
 		expect(runner).toHaveBeenCalledTimes(2);
 	});
+});
+
+describe('creator Action → SQLite transaction', () => {
 	it.each([
 		['invalid result', source.replace('return state;', 'return {gold:"bad"};')],
 		['exception', source.replace('return state;', 'throw Error("failed");')],
@@ -85,6 +91,9 @@ describe('creator Action → SQLite transaction', () => {
 		await expect(run()).rejects.toThrow();
 		expect(await read()).toEqual(before);
 	});
+});
+
+describe('creator Action → SQLite transaction', () => {
 	it('rejects bad arguments and stale revisions before executing an Action', async () => {
 		const { run, read, runner } = await fixture();
 		const before = await read();
@@ -95,6 +104,9 @@ describe('creator Action → SQLite transaction', () => {
 		expect(runner).not.toHaveBeenCalled();
 		expect(await read()).toEqual(before);
 	});
+});
+
+describe('creator Action → SQLite transaction', () => {
 	it('rolls back event, state and metadata when SQL fails after execution', async () => {
 		const { run, read } = await fixture();
 		const before = await read();
@@ -104,6 +116,9 @@ describe('creator Action → SQLite transaction', () => {
 		await expect(run()).rejects.toThrow();
 		expect(await read()).toEqual(before);
 	});
+});
+
+describe('creator Action → SQLite transaction', () => {
 	it.each(['conflict', 'cancel'] as const)('discards an in-flight result on %s', async (kind) => {
 		let release!: (result: ActionResult) => void;
 		let began!: () => void;
@@ -116,14 +131,16 @@ describe('creator Action → SQLite transaction', () => {
 		const controller = new AbortController();
 		const pending = run(0, 20, controller.signal);
 		await started;
-		if (kind === 'cancel') controller.abort();
-		else
+		if (kind === 'cancel') {
+			controller.abort();
+		} else {
 			await repository.commitSessionTransaction(gameId, sessionId, {
 				expectedRevision: 0,
 				parentId: null,
 				nextState: { gold: 50 },
 				action: { name: 'other', args: {} }
 			});
+		}
 		const before = await read();
 		release({ state: { gold: 80 } });
 		await expect(pending).rejects.toThrow();

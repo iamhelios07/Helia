@@ -27,8 +27,9 @@
 		try {
 			const text = (enumInput ?? (schema.enum ? JSON.stringify(schema.enum, null, 2) : '')).trim();
 			const values = text ? parseStateValue(JSON.parse(text)) : undefined;
-			if (values !== undefined && !Array.isArray(values))
+			if (values !== undefined && !Array.isArray(values)) {
 				throw new Error('허용값을 JSON 배열로 입력해주세요.');
+			}
 			if (edit({ kind: 'enum', values })) {
 				enumInput = null;
 				enumError = '';
@@ -69,12 +70,14 @@
 				onchange={(event) => {
 					const enabled = event.currentTarget.checked;
 					event.currentTarget.checked = allowsNull(schema);
-					if (!enabled)
+					if (!enabled) {
 						onconfirm(
 							`${label}의 null 허용을 해제하면 null 초기값을 시작값으로 바꿉니다. 계속할까요?`,
 							() => edit({ kind: 'nullable', enabled })
 						);
-					else edit({ kind: 'nullable', enabled });
+					} else {
+						edit({ kind: 'nullable', enabled });
+					}
 				}}
 			/>null 허용 <span>null 값을 허용합니다.</span></label
 		>

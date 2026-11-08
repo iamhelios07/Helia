@@ -1,12 +1,16 @@
 import { afterEach, expect, it } from 'vitest';
+
 import { openStorage } from '#lib/server/sqlite.js';
-import { createGameRepository } from '../repository-core.js';
+
 import { editorContent } from '../editor.js';
-import { parseObjectSchema } from './schema.js';
+import { createGameRepository } from '../repository-core.js';
 import { stateAt } from './engine.js';
+import { parseObjectSchema } from './schema.js';
 const stores: ReturnType<typeof openStorage>[] = [];
 afterEach(() => {
-	for (const store of stores.splice(0)) store.close();
+	for (const store of stores.splice(0)) {
+		store.close();
+	}
 });
 const object = (properties: Record<string, unknown>) =>
 	parseObjectSchema({

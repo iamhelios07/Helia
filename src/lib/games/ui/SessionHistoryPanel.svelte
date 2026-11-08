@@ -22,7 +22,9 @@
 	let deletingRevision = 0;
 
 	function requestDelete(event: HistoryEvent) {
-		if (!timeline) return;
+		if (!timeline) {
+			return;
+		}
 		deletingRevision = timeline.history.progress.revision;
 		deleting = event;
 	}
@@ -34,9 +36,16 @@
 	function slot(value: StateSlot): string {
 		return value.exists ? JSON.stringify(value.value) : '(없음)';
 	}
+	function branchLabel(active: boolean): string {
+		return active ? '현재 경로' : '다른 분기';
+	}
 	async function confirmDelete() {
-		if (!deleting || busy) return;
-		if (await ondelete(deleting.id, deletingRevision)) deleting = null;
+		if (!deleting || busy) {
+			return;
+		}
+		if (await ondelete(deleting.id, deletingRevision)) {
+			deleting = null;
+		}
 	}
 </script>
 
@@ -72,9 +81,7 @@
 							onclick={() => onselect(event.id)}
 						>
 							<span>{event.summary}</span>
-							<small
-								>{event.selected ? '현재 위치' : event.active ? '현재 경로' : '다른 분기'}</small
-							>
+							<small>{event.selected ? '현재 위치' : branchLabel(event.active)}</small>
 						</button>
 						<button
 							type="button"
@@ -126,10 +133,14 @@
 		aria-labelledby={`${uid}-delete-title`}
 		aria-describedby={`${uid}-delete-description`}
 		oncancel={(event) => {
-			if (busy) event.preventDefault();
+			if (busy) {
+				event.preventDefault();
+			}
 		}}
 		onclose={() => {
-			if (!busy) deleting = null;
+			if (!busy) {
+				deleting = null;
+			}
 		}}
 	>
 		<h3 id={`${uid}-delete-title`}>이벤트 삭제</h3>

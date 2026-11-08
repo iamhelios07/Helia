@@ -1,9 +1,10 @@
-import { validateStateKey, type GameState } from '#lib/games/state/value.js';
 import { parseStateDocument, type ObjectSchema } from '#lib/games/state/schema.js';
-import { parseGameUI, type GameUI } from './ui/runtime/model.js';
+import { validateStateKey, type GameState } from '#lib/games/state/value.js';
+
 import { parseGameAIContent, type GameAIContent } from './ai/prompts.js';
-import { parseResources, type GameResources } from './resources.js';
 import { parseCodeProject, type CodeProject } from './code-project.js';
+import { parseResources, type GameResources } from './resources.js';
+import { parseGameUI, type GameUI } from './ui/runtime/model.js';
 
 export const GAME_TITLE_MAX_LENGTH = 120;
 export const GAME_GENRE_MAX_LENGTH = 80;
@@ -86,7 +87,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function validateGameTitle(value: string): string {
 	const title = value.trim();
-	if (!title) throw new Error('게임 이름을 입력해주세요.');
+	if (!title) {
+		throw new Error('게임 이름을 입력해주세요.');
+	}
 	if (title.length > GAME_TITLE_MAX_LENGTH) {
 		throw new Error(`게임 이름은 ${GAME_TITLE_MAX_LENGTH}자까지 입력할 수 있어요.`);
 	}
@@ -140,7 +143,9 @@ export function validateGameSettings(value: unknown): UpdateGameSettings {
 }
 
 export function validateSessionTitle(value: unknown): string {
-	if (typeof value !== 'string' || !value.trim()) throw new Error('세션 이름을 입력해주세요.');
+	if (typeof value !== 'string' || !value.trim()) {
+		throw new Error('세션 이름을 입력해주세요.');
+	}
 	const title = value.trim();
 	if (title.length > SESSION_TITLE_MAX_LENGTH) {
 		throw new Error(`세션 이름은 ${SESSION_TITLE_MAX_LENGTH}자까지 입력할 수 있어요.`);
@@ -185,7 +190,9 @@ export function parseGame(value: unknown): Game {
 }
 
 export function parseScripts(value: unknown): Game['scripts'] {
-	if (!isRecord(value)) throw new Error('게임 스크립트의 형식이 올바르지 않아요.');
+	if (!isRecord(value)) {
+		throw new Error('게임 스크립트의 형식이 올바르지 않아요.');
+	}
 	const scripts: Game['scripts'] = {};
 	for (const [id, script] of Object.entries(value)) {
 		validateStateKey(id);
@@ -195,8 +202,9 @@ export function parseScripts(value: unknown): Game['scripts'] {
 			typeof script.language !== 'string' ||
 			!script.language.trim() ||
 			typeof script.source !== 'string'
-		)
+		) {
 			throw new Error('게임 스크립트의 형식이 올바르지 않아요.');
+		}
 		scripts[id] = { language: script.language, source: script.source };
 	}
 	return scripts;
@@ -231,7 +239,9 @@ export function parseSession(value: unknown): Session {
 }
 
 export function validateMessageContent(value: unknown): string {
-	if (typeof value !== 'string' || !value.trim()) throw new Error('메시지를 입력해주세요.');
+	if (typeof value !== 'string' || !value.trim()) {
+		throw new Error('메시지를 입력해주세요.');
+	}
 	return value;
 }
 
@@ -249,8 +259,9 @@ export function parseMessage(value: unknown): Message {
 		(value.kind !== undefined && value.kind !== 'opening' && value.kind !== 'dialogue') ||
 		(value.kind === 'opening' && value.role !== 'assistant') ||
 		!isTimestamp(value.createdAt)
-	)
+	) {
 		throw new Error('저장된 메시지를 읽을 수 없어요.');
+	}
 	return {
 		schemaVersion: 1,
 		id: value.id,

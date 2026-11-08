@@ -26,7 +26,11 @@ export class StorageUnit {
 	}
 	deleteSession(id: string) {
 		this.deletedSessions.push(id);
-		for (const [key, row] of this.rows) if (row.sessionId === id) this.rows.delete(key);
+		for (const [key, row] of this.rows) {
+			if (row.sessionId === id) {
+				this.rows.delete(key);
+			}
+		}
 	}
 	changes(): StoredRecord[] {
 		const before = new Map(
@@ -53,7 +57,9 @@ export async function useStorage<T>(
 		const unit = new StorageUnit(view);
 		const result = operation(unit);
 		const records = unit.changes();
-		if (!records.length && !unit.deletedSessions.length) return result;
+		if (!records.length && !unit.deletedSessions.length) {
+			return result;
+		}
 		try {
 			await transport({
 				kind: 'commit',
@@ -64,7 +70,9 @@ export async function useStorage<T>(
 			});
 			return result;
 		} catch (error) {
-			if (!(error instanceof Error) || error.message !== CONFLICT) throw error;
+			if (!(error instanceof Error) || error.message !== CONFLICT) {
+				throw error;
+			}
 		}
 	}
 	throw new Error('게임 데이터가 변경되었어요. 다시 시도해주세요.');

@@ -1,19 +1,21 @@
 import '../../../app.css';
 import { createRawSnippet } from 'svelte';
 import { beforeEach, expect, it, vi } from 'vitest';
-import { page, userEvent } from 'vitest/browser';
 import { render } from 'vitest-browser-svelte';
-import GameWorkbench from './GameWorkbench.svelte';
+import { page, userEvent } from 'vitest/browser';
+
+import type { GameUI, PanelInfo, PanelView } from './runtime/model.js';
+
 import AppFixture from '../../testing/AppFixture.svelte';
 import { createGame } from '../repository.js';
+import { safeChatStyle } from './chat-style.js';
+import GameWorkbench from './GameWorkbench.svelte';
 import { mountGameUI, type GameUIHandle } from './runtime/bridge.js';
-import type { GameUI, PanelInfo, PanelView } from './runtime/model.js';
 import {
 	CHAT_PANEL_ID,
 	defaultWorkbenchLayout,
 	workbenchPreferenceKey
 } from './workbench-preferences.js';
-import { safeChatStyle } from './chat-style.js';
 
 vi.mock('$app/navigation', () => ({ goto: vi.fn() }));
 vi.mock('../../storage/transport.js', async () => {

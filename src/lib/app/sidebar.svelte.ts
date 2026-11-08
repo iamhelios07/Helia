@@ -1,5 +1,6 @@
 import { createContext, onDestroy, onMount } from 'svelte';
 import { SvelteSet } from 'svelte/reactivity';
+
 import type { LibraryGame } from '#lib/library/library-games.js';
 
 export interface AppSidebarOptions {
@@ -36,7 +37,9 @@ export class AppSidebarController {
 		return () => {
 			const page = this.#pages.find((page) => page.token === token);
 			const games = page?.read().games;
-			if (games) this.#fallbackGames = games;
+			if (games) {
+				this.#fallbackGames = games;
+			}
 			this.#pages = this.#pages.filter((page) => page.token !== token);
 		};
 	}
@@ -63,7 +66,9 @@ export function useAppSidebarVisibility(): { hide: () => () => void } {
 	const sidebar = getAppSidebar();
 	const releases = new SvelteSet<() => void>();
 	onDestroy(() => {
-		for (const release of releases) release();
+		for (const release of releases) {
+			release();
+		}
 	});
 	return {
 		hide() {
