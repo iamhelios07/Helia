@@ -494,6 +494,34 @@ it('migrates earlier recovered settings into a draft without applying them', asy
 	expect((await getGameWorkspace(game.id))?.game.title).toBe(game.title);
 });
 
+it('stretches the document pane across the available editor width on every tab', async () => {
+	const game = await createGame();
+	render(GameEditor, { gameId: game.id });
+	await expect.element(nameInput()).toBeVisible();
+	const panes = () => document.querySelector<HTMLElement>('.document-panes')!;
+	const documentPane = () => document.querySelector<HTMLElement>('#editor-document')!;
+	const fillsPanes = () => {
+		expect(panes().getBoundingClientRect().width).toBeGreaterThan(600);
+		expect(documentPane().getBoundingClientRect().width).toBeCloseTo(
+			panes().getBoundingClientRect().width,
+			0
+		);
+	};
+	fillsPanes();
+	// A narrow pane would clamp the fieldset far below its 700px max-width.
+	expect(nameInput().element().getBoundingClientRect().width).toBeGreaterThan(500);
+	await page.getByRole('button', { name: /state\.json/ }).click();
+	await expect.poll(() => !!document.querySelector('.state-editor')).toBe(true);
+	fillsPanes();
+	await page.getByRole('tab', { name: /^게임 지침/ }).click();
+	await expect.element(page.getByRole('textbox', { name: '첫 메시지', exact: true })).toBeVisible();
+	fillsPanes();
+	await page.getByRole('button', { name: '편집기 좌우 분할' }).click();
+	await expect
+		.poll(() => documentPane().getBoundingClientRect().width)
+		.toBeCloseTo(panes().getBoundingClientRect().width / 2, -1);
+});
+
 it('keeps panels reachable without horizontal overflow on a narrow screen', async () => {
 	await page.viewport(320, 640);
 	const game = await createGame();

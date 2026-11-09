@@ -265,6 +265,13 @@
 		padding: 4px 6px;
 		white-space: nowrap;
 	}
+	.document {
+		flex: 1;
+		min-width: 0;
+		min-height: 0;
+		overflow: hidden;
+		outline-offset: -2px;
+	}
 	.document-panes {
 		display: flex;
 		flex: 1;
