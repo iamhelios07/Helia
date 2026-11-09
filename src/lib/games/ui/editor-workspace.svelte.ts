@@ -406,7 +406,8 @@ export class EditorWorkspace {
 	schedulePreview = (candidate: Game) => {
 		clearTimeout(this.previewTimer);
 		const generation = ++this.previewGeneration;
-		this.buildError = null;
+		// Keep the previous build error visible until a new build succeeds; clearing it here made
+		// the Problems row disappear and reappear on every keystroke while an error persisted.
 		this.previewTimer = setTimeout(async () => {
 			try {
 				const compiled = await compileAuthoringGame(candidate);
@@ -414,6 +415,7 @@ export class EditorWorkspace {
 					return;
 				}
 				this.previewContent = compiled;
+				this.buildError = null;
 			} catch (error) {
 				if (this.disposed || generation !== this.previewGeneration) {
 					return;

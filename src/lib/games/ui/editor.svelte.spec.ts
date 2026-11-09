@@ -586,3 +586,40 @@ it('opens the declaration tab from a helia definition and marks it read-only', a
 		document.querySelector('.document-workspace')!.getBoundingClientRect().width
 	).toBeGreaterThan(600);
 });
+
+it('keeps a persistent build problem and the preview controls steady while typing', async () => {
+	const game = await createGame();
+	render(GameEditor, { gameId: game.id });
+	await expect.element(nameInput()).toBeVisible();
+	await page.getByRole('button', { name: /main\.ts.*진입점/ }).click();
+	await expect
+		.element(page.getByRole('textbox', { name: 'main.ts 소스', exact: true }))
+		.toBeVisible();
+	// An unresolved import keeps failing to build no matter how the rest of the file changes.
+	await setMonacoSource('main.ts 소스', "import './missing-module';\n");
+	await expect
+		.poll(() => document.querySelectorAll('.problem-list li').length, { timeout: 15_000 })
+		.toBe(1);
+	const rows = () => document.querySelectorAll('.problem-list li').length;
+	let disappeared = false;
+	const observer = new MutationObserver(() => {
+		if (rows() === 0) {
+			disappeared = true;
+		}
+	});
+	observer.observe(document.body, { childList: true, subtree: true, characterData: true });
+	for (const suffix of ['// a', '// ab', '// abc']) {
+		await setMonacoSource('main.ts 소스', `import './missing-module';\n${suffix}`);
+		await expect
+			.poll(() => getMonacoSource('main.ts 소스'))
+			.toBe(`import './missing-module';\n${suffix}`);
+	}
+	await new Promise((resolve) => setTimeout(resolve, 1200));
+	observer.disconnect();
+	// The problem row must stay put instead of blinking out between rebuilds.
+	expect(disappeared).toBe(false);
+	expect(rows()).toBe(1);
+
+	await setMonacoSource('main.ts 소스', 'export {};\n');
+	await expect.poll(rows, { timeout: 15_000 }).toBe(0);
+});
