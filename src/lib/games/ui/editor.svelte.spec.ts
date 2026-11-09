@@ -1,4 +1,4 @@
-﻿import '../../../app.css';
+import '../../../app.css';
 import { beforeNavigate, goto } from '$app/navigation';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { render } from 'vitest-browser-svelte';
@@ -549,4 +549,40 @@ it('keeps panels reachable without horizontal overflow on a narrow screen', asyn
 		.toBeVisible();
 	expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(320);
 	await expect.element(returnLink()).toBeVisible();
+});
+
+it('opens the declaration tab from a helia definition and marks it read-only', async () => {
+	const game = await createGame();
+	render(GameEditor, { gameId: game.id });
+	await expect.element(nameInput()).toBeVisible();
+	await page.getByRole('button', { name: /main\.ts.*진입점/ }).click();
+	await expect
+		.element(page.getByRole('textbox', { name: 'main.ts 소스', exact: true }))
+		.toBeVisible();
+	const source = "helia.defineAction({name:'buy',run({state}){return state;}});";
+	await setMonacoSource('main.ts 소스', source);
+	const model = await monacoModel('main.ts 소스');
+	const { getTypeScriptWorker } =
+		await import('monaco-editor/languages/features/typescript/register.js');
+	// The worker resolves helia to the shipped declaration file, not to a string in memory.
+	await expect
+		.poll(async () => {
+			const proxy = await (await getTypeScriptWorker())(model.uri);
+			const at = source.indexOf('defineAction') + 2;
+			const definitions = await proxy.getDefinitionAtPosition(model.uri.toString(), at);
+			return definitions?.[0]?.fileName;
+		})
+		.toMatch(/\.helia\/runtime\.d\.ts$/);
+	// The declaration opens as a read-only code tab with the shipped content.
+	await page.getByRole('button', { name: /runtime\.d\.ts/ }).click();
+	const tab = page.getByRole('textbox', { name: '.helia/runtime.d.ts 소스', exact: true });
+	await expect.element(tab).toBeVisible();
+	await expect.element(tab).toHaveAttribute('readonly');
+	await expect
+		.poll(() => document.querySelector('.document-breadcrumb')?.textContent)
+		.toContain('.helia/runtime.d.ts');
+	expect(await getMonacoSource('.helia/runtime.d.ts 소스')).toContain('interface HeliaRuntime');
+	expect(
+		document.querySelector('.document-workspace')!.getBoundingClientRect().width
+	).toBeGreaterThan(600);
 });

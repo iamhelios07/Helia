@@ -4,5 +4,7 @@
 		"strict": true,
 		"types": ["$app/types", "node"]
 	},
-	"include": ["src", "vite.config.ts", "eslint.config.js", "prettier.config.js"]
+	"include": ["src", "vite.config.ts", "eslint.config.js", "prettier.config.js"],
+	// Sandbox-only ambient declarations; they must not join the application program.
+	"exclude": ["src/lib/games/authoring/runtime.d.ts"]
 }

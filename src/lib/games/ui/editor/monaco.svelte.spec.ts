@@ -4,7 +4,7 @@ import { afterEach, expect, it } from 'vitest';
 import { render } from 'vitest-browser-svelte';
 import { page, userEvent } from 'vitest/browser';
 
-import { MonacoProject } from './monaco-project.js';
+import { MonacoProject, projectOpenTarget } from './monaco-project.js';
 import { getMonacoSource, monacoModel, setMonacoSource } from './monaco-test.js';
 import SourceEditor from './SourceEditor.svelte';
 const projects: MonacoProject[] = [];
@@ -220,6 +220,40 @@ it('checks packaged imports, JS state completion and TSX APIs without requiring 
 			js.getValueLength()
 		);
 		expect(completion.entries.map((item: { name: string }) => item.name)).toContain('gold');
+	} finally {
+		instance.dispose();
+		host.remove();
+	}
+});
+
+it('resolves helia and @helia/ui symbols to the shipped declaration file', async () => {
+	const session = project('gold', "helia.defineAction({name:'buy',run({state}){return state;}});");
+	const source =
+		"import { useGameState } from '@helia/ui';\nhelia.defineAction({name:'buy',run({state}){return state;}});\nuseGameState();";
+	session.update(
+		{ 'main.ts': { language: 'typescript', source } },
+		'export type GameState = {gold:number};'
+	);
+	const { monaco } = await session.ready();
+	const model = session.model('main.ts', source, 'typescript');
+	const host = document.createElement('div');
+	document.body.append(host);
+	const instance = monaco.editor.create(host, { model });
+	try {
+		const proxy = await (await getTypeScriptWorker())(model.uri);
+		const at = (needle: string) => source.indexOf(needle) + 2;
+		for (const needle of ['defineAction', 'useGameState']) {
+			const definitions = await proxy.getDefinitionAtPosition(model.uri.toString(), at(needle));
+			expect(definitions?.[0]?.fileName).toBe(session.root + '.helia/runtime.d.ts');
+		}
+		// The opener maps that model onto the declaration tab and refuses foreign models.
+		expect(
+			projectOpenTarget(session.root, session.root + '.helia/runtime.d.ts', {
+				lineNumber: 3,
+				column: 7
+			})
+		).toEqual({ path: '.helia/runtime.d.ts', position: { lineNumber: 3, column: 7 } });
+		expect(projectOpenTarget(session.root, 'file:///other/model.ts')).toBeUndefined();
 	} finally {
 		instance.dispose();
 		host.remove();

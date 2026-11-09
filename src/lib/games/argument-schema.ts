@@ -1,8 +1,10 @@
-﻿import type ts from 'typescript';
+import type ts from 'typescript';
 
 import standardLibrary from 'typescript/lib/lib.es5.d.ts?raw';
 
-import { HELIA_AUTHORING_DECLARATIONS, type SourceModule } from './code-authoring.js';
+import type { SourceModule } from './code-authoring.js';
+
+import { HELIA_AUTHORING_DECLARATIONS } from './authoring/runtime.js';
 import { parseObjectSchema, type ValueSchema } from './state/schema.js';
 const root = '/helia/';
 const runtimePath = root + '.helia/runtime.d.ts';
@@ -16,11 +18,7 @@ function createProgram(
 	const sources = new Map(Object.entries(files).map(([path, file]) => [root + path, file.source]));
 	sources.set(root + 'GameState.d.ts', stateTypes);
 	sources.set(root + '.helia/lib.es5.d.ts', standardLibrary);
-	sources.set(
-		runtimePath,
-		HELIA_AUTHORING_DECLARATIONS.replaceAll("'./GameState'", "'../GameState'") +
-			"\ndeclare module '@helia/state' { export type GameState = import('../GameState').GameState; }"
-	);
+	sources.set(runtimePath, HELIA_AUTHORING_DECLARATIONS);
 	const options: ts.CompilerOptions = {
 		strict: true,
 		exactOptionalPropertyTypes: true,

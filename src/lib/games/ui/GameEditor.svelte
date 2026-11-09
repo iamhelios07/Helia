@@ -164,9 +164,10 @@
 							disabled={editor.editingBlocked}
 							onselect={(path) => {
 								if (path) {
-									editor.openDocument(
-										path === 'GameState.d.ts' ? 'types:GameState' : (('code:' + path) as DocumentId)
-									);
+									const id = editor.documentForPath(path);
+									if (id) {
+										editor.openDocument(id);
+									}
 								} else {
 									editor.codeSelection = null;
 								}
@@ -271,7 +272,7 @@
 				>{editor.changed ? '게임에 적용되지 않은 변경이 있어요' : '적용된 콘텐츠와 일치해요'}</span
 			><span class="status-right"
 				>{editor.activeDocument && !editor.activeDocument.startsWith('asset:')
-					? `${editor.documentSource.length.toLocaleString()}자 · ${editor.activeDocument.startsWith('code:') || editor.activeDocument === 'types:GameState' ? '코드' : 'JSON'}`
+					? `${editor.documentSource.length.toLocaleString()}자 · ${editor.activeDocument.startsWith('code:') || editor.activeDocument.startsWith('types:') ? '코드' : 'JSON'}`
 					: '게임 편집기'}</span
 			>
 		</footer>

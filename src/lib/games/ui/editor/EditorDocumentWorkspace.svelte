@@ -22,7 +22,7 @@
 				<span>게임</span><Icon name="arrow-right" size={11} /><span
 					>{editor.documentLabel(editor.activeDocument)}</span
 				><span class="breadcrumb-file">{editor.documentFile(editor.activeDocument)}</span
-				>{#if !editor.activeDocument.startsWith('code:') && !editor.activeDocument.startsWith('asset:') && editor.activeDocument !== 'types:GameState'}<button
+				>{#if !editor.activeDocument.startsWith('code:') && !editor.activeDocument.startsWith('asset:') && editor.activeDocument !== 'types:GameState' && editor.activeDocument !== 'types:HeliaRuntime'}<button
 						type="button"
 						aria-pressed={editor.sourceDocuments.includes(editor.activeDocument)}
 						onclick={() => editor.activeDocument && editor.toggleSource(editor.activeDocument)}
@@ -60,19 +60,17 @@
 						disabled={editor.editingBlocked}
 						onchange={(value) => editor.changeDocument('state', value)}
 					/>
-				{:else if editor.activeDocument.startsWith('code:') || editor.activeDocument === 'types:GameState'}
+				{:else if editor.activeDocument.startsWith('code:') || editor.activeDocument === 'types:GameState' || editor.activeDocument === 'types:HeliaRuntime'}
 					<SourceEditor
 						project={editor.monacoProject}
-						path={editor.activeDocument === 'types:GameState'
-							? 'GameState.d.ts'
-							: editor.activeDocument.slice(5)}
+						path={editor.codePath(editor.activeDocument) ?? ''}
 						value={editor.documentSource}
 						label={editor.documentFile(editor.activeDocument) + ' 소스'}
-						language={editor.activeDocument === 'types:GameState'
-							? 'TypeScript'
-							: (editor.codeProject?.files[editor.activeDocument.slice(5)]?.language ??
-								'TypeScript')}
-						readonly={editor.activeDocument === 'types:GameState'}
+						language={editor.activeDocument.startsWith('code:')
+							? (editor.codeProject?.files[editor.activeDocument.slice(5)]?.language ??
+								'TypeScript')
+							: 'TypeScript'}
+						readonly={!editor.activeDocument.startsWith('code:')}
 						disabled={editor.editingBlocked}
 						location={editor.codeLocation}
 						onchange={(value) =>
@@ -169,7 +167,7 @@
 							bind:value={editor.secondaryDocument}
 							>{#each [...editor.categories
 									.flatMap((category) => category.documents)
-									.map( (document) => ({ id: document.id, label: document.file }) ), ...Object.keys(editor.codeProject?.files ?? {}).map( (path) => ({ id: 'code:' + path, label: path }) ), { id: 'types:GameState', label: 'GameState.d.ts' }] as document (document.id)}<option
+									.map( (document) => ({ id: document.id, label: document.file }) ), ...Object.keys(editor.codeProject?.files ?? {}).map( (path) => ({ id: 'code:' + path, label: path }) ), { id: 'types:GameState', label: 'GameState.d.ts' }, { id: 'types:HeliaRuntime', label: '.helia/runtime.d.ts' }] as document (document.id)}<option
 									value={document.id}>{document.label}</option
 								>{/each}</select
 						><button
@@ -184,10 +182,9 @@
 						viewId="secondary"
 						path={editor.secondaryPath}
 						value={editor.sourceFor(editor.secondaryDocument)}
-						readonly={editor.secondaryDocument === 'types:GameState'}
-						language={editor.secondaryDocument.startsWith('code:')
-							? editor.codeProject?.files[editor.secondaryDocument.slice(5)]?.language
-							: 'JSON'}
+						readonly={editor.secondaryDocument === 'types:GameState' ||
+							editor.secondaryDocument === 'types:HeliaRuntime'}
+						language={editor.secondaryLanguage}
 						label="보조 {editor.documentLabel(editor.secondaryDocument)} 소스"
 						disabled={editor.editingBlocked}
 						onchange={(value) => editor.updateSource(editor.secondaryDocument, value)}

@@ -1,9 +1,11 @@
-import type { editor, IDisposable } from 'monaco-editor/editor/editor.api.js';
+import type { editor, IDisposable, IPosition, IRange } from 'monaco-editor/editor/editor.api.js';
 
 import type { CodeDiagnostic, SourceModule } from '../../code-authoring.js';
 
-import { HELIA_AUTHORING_DECLARATIONS } from '../../code-authoring.js';
+import { HELIA_AUTHORING_DECLARATIONS } from '../../authoring/runtime.js';
+
 type Runtime = typeof import('./monaco-runtime.js');
+type Position = { lineNumber: number; column: number };
 let runtime: Promise<Runtime> | undefined;
 export function loadMonaco() {
 	return (runtime ??= import('./monaco-runtime.js'));
@@ -21,9 +23,12 @@ export class MonacoProject {
 	private pending: Record<string, MonacoDocument> = {};
 	private runtime: Runtime | undefined;
 	private markerListener: IDisposable | undefined;
+	private opener: IDisposable | undefined;
 	private disposed = false;
 	private diagnostics: ((items: CodeDiagnostic[]) => void) | undefined;
 	private codePaths = new Set<string>();
+	/** Resolves a project-relative model path to an editor tab. Ctrl+click and Go to Definition use it. */
+	openSource: ((path: string, position?: Position) => boolean) | undefined;
 	update(
 		files: Record<string, SourceModule>,
 		stateTypes: string,
@@ -41,12 +46,7 @@ export class MonacoProject {
 				source: stateTypes || 'export type GameState = Record<string, unknown>;',
 				language: 'typescript'
 			},
-			'.helia/runtime.d.ts': {
-				source:
-					HELIA_AUTHORING_DECLARATIONS.replaceAll("'./GameState'", "'../GameState'") +
-					"\ndeclare module '@helia/state' { export type GameState = import('../GameState').GameState; }",
-				language: 'typescript'
-			}
+			'.helia/runtime.d.ts': { source: HELIA_AUTHORING_DECLARATIONS, language: 'typescript' }
 		};
 		this.sync();
 	}
@@ -60,6 +60,12 @@ export class MonacoProject {
 			this.markerListener = runtime.monaco.editor.onDidChangeMarkers((uris) => {
 				if (uris.some((uri) => uri.toString().startsWith(this.root))) {
 					this.publishDiagnostics();
+				}
+			});
+			this.opener = runtime.monaco.editor.registerEditorOpener({
+				openCodeEditor: (_source, resource, selection) => {
+					const target = projectOpenTarget(this.root, resource.toString(), selection);
+					return target ? (this.openSource?.(target.path, target.position) ?? false) : false;
 				}
 			});
 			this.sync();
@@ -161,6 +167,8 @@ export class MonacoProject {
 	dispose() {
 		this.disposed = true;
 		this.markerListener?.dispose();
+		this.opener?.dispose();
+		this.openSource = undefined;
 		for (const model of this.models.values()) {
 			model.dispose();
 		}
@@ -171,6 +179,28 @@ export class MonacoProject {
 		this.libraries.clear();
 		this.views.clear();
 	}
+}
+
+/** Resolves an authoring model URI to the tab path and caret the opener should use. */
+export function projectOpenTarget(
+	root: string,
+	uri: string,
+	selection?: IRange | IPosition
+): { path: string; position?: Position } | undefined {
+	if (!uri.startsWith(root)) {
+		return undefined;
+	}
+	return { path: uri.slice(root.length), position: caretOf(selection) };
+}
+
+function caretOf(selection?: IRange | IPosition): Position | undefined {
+	if (!selection) {
+		return undefined;
+	}
+	if ('startLineNumber' in selection) {
+		return { lineNumber: selection.startLineNumber, column: selection.startColumn };
+	}
+	return { lineNumber: selection.lineNumber, column: selection.column };
 }
 
 function modelLanguage(language: string) {

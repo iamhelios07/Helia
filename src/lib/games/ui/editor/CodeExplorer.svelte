@@ -162,6 +162,14 @@
 			><span class="mark">TS</span><span>GameState.d.ts</span><span class="annotation">자동</span
 			></button
 		>
+		<button
+			type="button"
+			class={['file', { selected: active === '.helia/runtime.d.ts' }]}
+			onclick={() => onselect('.helia/runtime.d.ts')}
+			title="helia와 @helia/ui의 정의"
+			><span class="mark">TS</span><span>runtime.d.ts</span><span class="annotation">자동</span
+			></button
+		>
 		{#if active !== 'GameState.d.ts' && (active || folder)}<div class="selection-tools">
 				<button type="button" {disabled} onclick={() => begin('rename')}>이름 변경</button>
 				<button

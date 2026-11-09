@@ -9,6 +9,7 @@ import type { CodeDiagnostic } from '../code-authoring.js';
 import type { Game } from '../model.js';
 import type { GameState } from '../state/value.js';
 
+import { HELIA_AUTHORING_DECLARATIONS } from '../authoring/runtime.js';
 import { parseCodeProject, compileAuthoringGame } from '../code-project.js';
 import { loadAuthoringDraft, saveAuthoringDraft } from '../editor-draft-storage.js';
 import { EDITOR_LAYOUT_LIMITS, loadEditorLayout, storeEditorLayout } from '../editor-layout.js';
@@ -32,7 +33,8 @@ export type DocumentId =
 	| Exclude<EditorDocumentId, 'code' | 'assets'>
 	| `code:${string}`
 	| `asset:${string}`
-	| 'types:GameState';
+	| 'types:GameState'
+	| 'types:HeliaRuntime';
 export type BottomPanel = 'problems' | 'logs' | 'state';
 export class EditorWorkspace {
 	game = $state.raw<Game | null>(null);
@@ -260,6 +262,9 @@ export class EditorWorkspace {
 		if (id === 'types:GameState') {
 			return 'GameState.d.ts';
 		}
+		if (id === 'types:HeliaRuntime') {
+			return 'runtime.d.ts';
+		}
 		return EDITOR_DOCUMENTS.find((document) => document.id === id)?.label ?? id;
 	};
 	documentFile = (id: string) => {
@@ -268,6 +273,9 @@ export class EditorWorkspace {
 		}
 		if (id === 'types:GameState') {
 			return 'GameState.d.ts';
+		}
+		if (id === 'types:HeliaRuntime') {
+			return '.helia/runtime.d.ts';
 		}
 		return (
 			this.categories
@@ -278,6 +286,9 @@ export class EditorWorkspace {
 	sourceFor(id: DocumentId): string {
 		if (id === 'types:GameState') {
 			return this.stateTypes;
+		}
+		if (id === 'types:HeliaRuntime') {
+			return HELIA_AUTHORING_DECLARATIONS;
 		}
 		if (id.startsWith('code:')) {
 			return this.codeProject?.files[id.slice(5)]?.source ?? '';
@@ -291,7 +302,7 @@ export class EditorWorkspace {
 		if (!this.draft || !this.baseDocuments) {
 			return false;
 		}
-		if (id === 'types:GameState') {
+		if (id === 'types:GameState' || id === 'types:HeliaRuntime') {
 			return false;
 		}
 		if (id.startsWith('code:')) {
@@ -330,7 +341,11 @@ export class EditorWorkspace {
 					)
 				);
 			}
-		} else if (id !== 'types:GameState' && !id.startsWith('asset:')) {
+		} else if (
+			id !== 'types:GameState' &&
+			id !== 'types:HeliaRuntime' &&
+			!id.startsWith('asset:')
+		) {
 			this.changeDocument(id as EditorDocumentId, value);
 		}
 	};
@@ -638,12 +653,49 @@ export class EditorWorkspace {
 		if (id.startsWith('code:')) {
 			return id.slice(5);
 		}
-		return id === 'types:GameState' ? 'GameState.d.ts' : null;
+		if (id === 'types:GameState') {
+			return 'GameState.d.ts';
+		}
+		return id === 'types:HeliaRuntime' ? '.helia/runtime.d.ts' : null;
 	}
 	secondaryPath = $derived.by(() => {
 		const path = this.codePath(this.secondaryDocument);
 		return path ?? 'documents/' + this.secondaryDocument + '.json';
 	});
+	secondaryLanguage = $derived.by(() => {
+		if (this.secondaryDocument.startsWith('code:')) {
+			return this.codeProject?.files[this.secondaryDocument.slice(5)]?.language;
+		}
+		return this.secondaryDocument.startsWith('types:') ? 'TypeScript' : 'JSON';
+	});
+	/** Maps a model path from Ctrl+click or Go to Definition onto the matching document tab. */
+	openSource = (path: string, position?: { lineNumber: number; column: number }): boolean => {
+		const id = this.documentForPath(path);
+		if (!id) {
+			return false;
+		}
+		this.openDocument(id);
+		if (position) {
+			this.codeLocation = {
+				line: position.lineNumber,
+				column: position.column,
+				sequence: (this.codeLocation?.sequence ?? 0) + 1
+			};
+		}
+		return true;
+	};
+	/** Only files that exist as editor tabs are openable; unknown models fall through to Monaco. */
+	documentForPath(path: string): DocumentId | null {
+		if (path === '.helia/runtime.d.ts') {
+			return 'types:HeliaRuntime';
+		}
+		if (path === 'GameState.d.ts') {
+			return 'types:GameState';
+		}
+		return Object.hasOwn(this.codeProject?.files ?? {}, path)
+			? (('code:' + path) as DocumentId)
+			: null;
+	}
 	openDocument = (id: DocumentId) => {
 		this.codeLocation = undefined;
 		this.codeSelection = this.codePath(id);
@@ -926,6 +978,7 @@ export class EditorWorkspace {
 		this.initialize();
 	}
 	initialize() {
+		this.monacoProject.openSource = this.openSource;
 		onDestroy(() => this.monacoProject.dispose());
 		$effect(() => {
 			this.monacoProject.update(
