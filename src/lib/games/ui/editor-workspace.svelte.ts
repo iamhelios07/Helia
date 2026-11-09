@@ -298,6 +298,14 @@ export class EditorWorkspace {
 		}
 		return this.draft?.documents[id as EditorDocumentId] ?? '';
 	}
+	/** Applied code files, parsed once per baseline instead of re-parsed per tab render. */
+	baseCodeProject = $derived.by(() => {
+		try {
+			return parseCodeProject(JSON.parse(this.baseDocuments?.code ?? '{}'));
+		} catch {
+			return null;
+		}
+	});
 	documentDirty = (id: DocumentId): boolean => {
 		if (!this.draft || !this.baseDocuments) {
 			return false;
@@ -306,14 +314,14 @@ export class EditorWorkspace {
 			return false;
 		}
 		if (id.startsWith('code:')) {
-			try {
-				return (
-					JSON.stringify(this.codeProject?.files[id.slice(5)]) !==
-					JSON.stringify(parseCodeProject(JSON.parse(this.baseDocuments.code)).files[id.slice(5)])
-				);
-			} catch {
+			const path = id.slice(5);
+			if (!this.codeProject || !this.baseCodeProject) {
 				return true;
 			}
+			return (
+				JSON.stringify(this.codeProject.files[path]) !==
+				JSON.stringify(this.baseCodeProject.files[path])
+			);
 		}
 		if (id.startsWith('asset:')) {
 			return this.draft.documents.assets !== this.baseDocuments.assets;
@@ -575,8 +583,9 @@ export class EditorWorkspace {
 		}
 		this.draft = { ...this.draft, documents: { ...this.draft.documents, [id]: value } };
 		if (this.game) {
-			const checked = validateEditorDraft(this.game, this.draft);
-			if (checked.game) {
+			// The validation $derived recomputes for this draft anyway; reuse it instead of parsing twice.
+			const checked = this.validation;
+			if (checked?.game) {
 				this.schedulePreview(checked.game);
 			} else {
 				clearTimeout(this.previewTimer);

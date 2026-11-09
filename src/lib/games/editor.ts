@@ -4,6 +4,8 @@ import { parseGame, parseGameSettings, validateGameMetadata, type Game } from '.
 import { parseResources } from './resources.js';
 import { parseStateDocument } from './state/schema.js';
 
+export type EditorValidation = { game: Game | null; problems: EditorProblem[] };
+
 export const EDITOR_DOCUMENTS = [
 	{ id: 'info', label: '게임 정보' },
 	{ id: 'instructions', label: '게임 지침' },
@@ -71,10 +73,20 @@ function documents(content: GameEditorContent): EditorDraft['documents'] {
 }
 export function createEditorDraft(game: Game): EditorDraft {
 	const baseContent = editorContent(game);
-	return { version: 3, gameId: game.id, baseContent, documents: documents(baseContent) };
+	return { version: 3, gameId: game.id, baseContent, documents: { ...baseDocuments(baseContent) } };
+}
+/** The applied baseline is rebuilt from serialized documents, so cache it per content snapshot. */
+const baselineCache = new WeakMap<GameEditorContent, EditorDraft['documents']>();
+function baseDocuments(content: GameEditorContent): EditorDraft['documents'] {
+	let cached = baselineCache.get(content);
+	if (!cached) {
+		cached = documents(content);
+		baselineCache.set(content, cached);
+	}
+	return cached;
 }
 export function changedEditorDraft(draft: EditorDraft): boolean {
-	const initial = documents(draft.baseContent);
+	const initial = baseDocuments(draft.baseContent);
 	return EDITOR_DOCUMENTS.some(({ id }) => draft.documents[id] !== initial[id]);
 }
 
@@ -144,10 +156,7 @@ export function clearEditorDraft(gameId: string, expectedDraft?: EditorDraft): v
 }
 
 /** Invalid source remains in the draft while each document gets an actionable problem. */
-export function validateEditorDraft(
-	game: Game,
-	draft: EditorDraft
-): { game: Game | null; problems: EditorProblem[] } {
+export function validateEditorDraft(game: Game, draft: EditorDraft): EditorValidation {
 	const problems: EditorProblem[] = [];
 	function check<T>(id: EditorDocumentId, validate: (value: unknown) => T): T | undefined {
 		try {

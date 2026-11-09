@@ -225,3 +225,13 @@ describe('IDE authoring drafts', () => {
 		expect(result.ui).toBeUndefined();
 	});
 });
+
+it('keeps the applied baseline independent from later draft edits', async () => {
+	const game = await repository().createGame();
+	const first = createEditorDraft(game);
+	const second = createEditorDraft(game);
+	// Editing one draft snapshot must not rewrite another draft's baseline documents.
+	first.documents.state = '{unfinished';
+	expect(second.documents.state).toBe(createEditorDraft(game).documents.state);
+	expect(changedEditorDraft(second)).toBe(false);
+});
