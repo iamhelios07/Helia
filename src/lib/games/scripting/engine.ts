@@ -116,21 +116,13 @@ function readString(vm: QuickJSContext, handle: QuickJSHandle): string {
 
 async function compileScripts(input: ActionRequest): Promise<{ id: string; source: string }[]> {
 	const compiled: { id: string; source: string }[] = [];
-	const typed = Object.entries(input.scripts).filter(([, script]) =>
-		['typescript', 'ts'].includes(script.language)
-	);
+	const typed = Object.entries(input.scripts);
 	const typedScripts = Object.fromEntries(
 		typed.map(([, script], index) => [`script-${index}.ts`, script])
 	);
 	const paths = new Map(typed.map(([id], index) => [id, `script-${index}.ts`]));
 	let argumentsFor: ((path: string) => string) | undefined;
-	for (const [id, script] of Object.entries(input.scripts).sort(([a], [b]) =>
-		compareScriptIds(a, b)
-	)) {
-		if (script.language === 'javascript' || script.language === 'js') {
-			compiled.push({ id, source: script.source });
-			continue;
-		}
+	for (const [id] of Object.entries(input.scripts).sort(([a], [b]) => compareScriptIds(a, b))) {
 		const { default: ts } = await import('typescript');
 		argumentsFor ??= argumentSchemaCompiler(
 			ts,

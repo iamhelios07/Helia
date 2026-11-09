@@ -1,17 +1,14 @@
 import { validCodePath, type CodeProject } from '../../code-project.js';
 
-export function codeLanguage(path: string): 'javascript' | 'typescript' | 'jsx' | 'tsx' {
+export function codeLanguage(path: string): 'typescript' | 'tsx' {
 	const extension = path.split('.').at(-1);
-	if (extension === 'js') {
-		return 'javascript';
-	}
 	if (extension === 'ts') {
 		return 'typescript';
 	}
-	if (extension === 'jsx' || extension === 'tsx') {
-		return extension;
+	if (extension === 'tsx') {
+		return 'tsx';
 	}
-	throw new Error('파일 확장자는 .js, .ts, .jsx, .tsx를 사용해주세요.');
+	throw new Error('파일 확장자는 .ts, .tsx를 사용해주세요.');
 }
 
 export function cleanProjectPath(value: string): string {
@@ -41,9 +38,7 @@ function resolved(from: string, request: string, paths: string[]): string | unde
 	return (
 		paths.find((candidate) => candidate === path) ??
 		paths.find((candidate) =>
-			['.ts', '.tsx', '.js', '.jsx', '/index.ts', '/index.tsx', '/index.js', '/index.jsx'].some(
-				(suffix) => candidate === path + suffix
-			)
+			['.ts', '.tsx', '/index.ts', '/index.tsx'].some((suffix) => candidate === path + suffix)
 		)
 	);
 }

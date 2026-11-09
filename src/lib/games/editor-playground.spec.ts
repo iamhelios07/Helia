@@ -1,4 +1,4 @@
-﻿import { beforeEach, expect, it, vi } from 'vitest';
+import { beforeEach, expect, it, vi } from 'vitest';
 
 import { memoryStorage } from '#lib/testing/memory-storage.js';
 
@@ -72,7 +72,7 @@ async function fixture() {
 		initialState: { value: 0 },
 		scripts: {
 			main: {
-				language: 'javascript',
+				language: 'typescript',
 				source: `
 helia.defineAction({name:'increment',ai:true,arguments:{type:'object',properties:{},additionalProperties:false},run({state}){state.value++;helia.emit('count',{value:state.value});return state;}});
 helia.defineFilter({name:'limit',run({after}){return {allow:after.value<3,reason:'Maximum reached'};}});

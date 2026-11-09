@@ -21,18 +21,18 @@ export function rulesInput(extra: string): ActionRequest {
 		schema: { ...schema, required: ['value', 'log'] },
 		state: { value: 0, log: [] },
 		action: { name: 'start', args: {} },
-		scripts: { main: { language: 'javascript', source: ACTIONS + extra } }
+		scripts: { main: { language: 'typescript', source: ACTIONS + extra } }
 	};
 }
 describe('sandboxed Filters and Hooks', () => {
 	it('uses locale-independent script ordering to break equal priorities', async () => {
 		const input = rulesInput('');
 		input.scripts.z = {
-			language: 'javascript',
+			language: 'typescript',
 			source: `helia.defineHook({name:'z',actions:['start'],run(){helia.emit('z');}});`
 		};
 		input.scripts['ä'] = {
-			language: 'javascript',
+			language: 'typescript',
 			source: `helia.defineHook({name:'a-umlaut',actions:['start'],run(){helia.emit('a-umlaut');}});`
 		};
 		expect((await evaluateAction(input)).events?.map((event) => event.name)).toEqual([

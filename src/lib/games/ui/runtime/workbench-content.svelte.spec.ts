@@ -56,7 +56,7 @@ it('loads added UI into an initially chat-only workbench and remounts after late
 		initialState: { checks: [] },
 		scripts: {
 			main: {
-				language: 'javascript',
+				language: 'typescript',
 				source: `helia.defineAction({name:'check',arguments:{type:'object',properties:{label:{type:'string'}},required:['label'],additionalProperties:false},run({state,args}){state.checks.push(args.label);return state;}});`
 			}
 		}

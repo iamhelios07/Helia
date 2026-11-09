@@ -176,7 +176,7 @@ it('keeps file undo and view state across tabs, blocks generated types, and diag
 	expect(monaco.editor.getModel(uri)).toBeNull();
 });
 
-it('checks packaged imports, JS state completion and TSX APIs without requiring an h import', async () => {
+it('checks packaged imports, state completion and TSX APIs without requiring an h import', async () => {
 	const session = project('gold');
 	session.update(
 		{
@@ -191,7 +191,7 @@ it('checks packaged imports, JS state completion and TSX APIs without requiring 
 				source:
 					"import { registerPanel, useGameState, asset } from '@helia/ui';\nregisterPanel({id:'stats',title:'Stats',component:()=> <span>{useGameState().gold}{asset('images/test.png')}</span>});"
 			},
-			'query.js': { language: 'javascript', source: 'helia.getState().' }
+			'query.ts': { language: 'typescript', source: 'helia.getState().' }
 		},
 		'export type GameState = {gold:number};'
 	);
@@ -209,15 +209,11 @@ it('checks packaged imports, JS state completion and TSX APIs without requiring 
 		const errors = await proxy.getSemanticDiagnostics(logic.uri.toString());
 		expect(errors.map((item) => String(item.messageText)).join(' ')).toContain('not assignable');
 		expect(await proxy.getSemanticDiagnostics(ui.uri.toString())).toEqual([]);
-		const { getJavaScriptWorker } =
-			await import('monaco-editor/languages/features/typescript/register.js');
-		const js = session.model('query.js', '', 'javascript');
-		instance.setModel(js);
-		const factory = await getJavaScriptWorker();
-		const jsProxy = await factory(js.uri);
-		const completion = await jsProxy.getCompletionsAtPosition(
-			js.uri.toString(),
-			js.getValueLength()
+		const query = session.model('query.ts', '', 'typescript');
+		instance.setModel(query);
+		const completion = await proxy.getCompletionsAtPosition(
+			query.uri.toString(),
+			query.getValueLength()
 		);
 		expect(completion.entries.map((item: { name: string }) => item.name)).toContain('gold');
 	} finally {

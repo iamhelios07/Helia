@@ -29,13 +29,11 @@ import 'monaco-editor/editor/contrib/wordPartOperations/browser/wordPartOperatio
 import 'monaco-editor/editor/standalone/browser/quickAccess/standaloneCommandsQuickAccess.js';
 import 'monaco-editor/editor/standalone/browser/quickAccess/standaloneGotoLineQuickAccess.js';
 import 'monaco-editor/languages/definitions/typescript/register.js';
-import 'monaco-editor/languages/definitions/javascript/register.js';
 import EditorWorker from 'monaco-editor/editor/editor.worker.js?worker';
 import JsonWorker from 'monaco-editor/languages/features/json/json.worker.js?worker';
 import { jsonDefaults } from 'monaco-editor/languages/features/json/register.js';
 import {
 	typescriptDefaults,
-	javascriptDefaults,
 	ScriptTarget,
 	ModuleKind,
 	ModuleResolutionKind,
@@ -46,7 +44,7 @@ import TypeScriptWorker from './monaco-typescript.worker.ts?worker';
 
 self.MonacoEnvironment = {
 	getWorker(_id, label) {
-		if (label === 'typescript' || label === 'javascript') {
+		if (label === 'typescript') {
 			return new TypeScriptWorker();
 		}
 		if (label === 'json') {
@@ -55,7 +53,7 @@ self.MonacoEnvironment = {
 		return new EditorWorker();
 	}
 };
-for (const defaults of [typescriptDefaults, javascriptDefaults]) {
+for (const defaults of [typescriptDefaults]) {
 	defaults.setCompilerOptions({
 		target: ScriptTarget.ES2020,
 		module: ModuleKind.ESNext,
@@ -63,8 +61,6 @@ for (const defaults of [typescriptDefaults, javascriptDefaults]) {
 		jsx: JsxEmit.Preserve,
 		jsxFactory: 'h',
 		strict: true,
-		allowJs: true,
-		checkJs: true,
 		allowNonTsExtensions: true,
 		allowImportingTsExtensions: true,
 		noEmit: true,
@@ -104,12 +100,5 @@ export { monaco };
 
 /** JS and TS workers sync only models of their own language; libraries bridge packaged imports. */
 export function addProjectLibrary(source: string, uri: string) {
-	const ts = typescriptDefaults.addExtraLib(source, uri),
-		js = javascriptDefaults.addExtraLib(source, uri);
-	return {
-		dispose() {
-			ts.dispose();
-			js.dispose();
-		}
-	};
+	return typescriptDefaults.addExtraLib(source, uri);
 }

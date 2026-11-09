@@ -239,8 +239,8 @@ it('rejects detached generic instantiations instead of erasing their argument co
 	).rejects.toThrow('호출에 직접');
 });
 
-it('defaults omitted schemas to closed no-argument definitions for JS and TS Actions and Queries', async () => {
-	for (const language of ['javascript', 'typescript']) {
+it('defaults omitted schemas to closed no-argument definitions for Actions and Queries', async () => {
+	for (const language of ['typescript']) {
 		const input = {
 			schema,
 			state: { gold: 100 },

@@ -30,7 +30,7 @@ async function fixture(script = source, runner = vi.fn(evaluateAction)) {
 			additionalProperties: false
 		},
 		initialState: { gold: 100 },
-		scripts: { main: { language: 'javascript', source: script } }
+		scripts: { main: { language: 'typescript', source: script } }
 	});
 	const gameId = game.id,
 		sessionId = game.activeSessionId;

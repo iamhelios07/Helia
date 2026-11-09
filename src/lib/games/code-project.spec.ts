@@ -106,14 +106,14 @@ it('preserves existing scripts, UI modules and presentation when opening them as
 	const project = createCodeProject({
 		scripts: {
 			old: {
-				language: 'javascript',
+				language: 'typescript',
 				source:
 					"helia.defineQuery({name:'read',arguments:{type:'object',properties:{},additionalProperties:false},run({state}){return state.gold;}});"
 			}
 		},
 		ui: { ...compiled.ui!, chatStyle: { color: '#fff' } }
 	});
-	expect(project.files['main.ts'].source).toContain("import './logic/part-1.js'");
+	expect(project.files['main.ts'].source).toContain("import './logic/part-1.ts'");
 	expect(project.files['main.ts'].source).toContain("import './ui/start-entry.ts'");
 	expect(project.presentation?.chatStyle).toEqual({ color: '#fff' });
 	const output = await compileCodeProject(project);
@@ -300,4 +300,34 @@ it('validates project paths, empty directories, size and presentation without ch
 	expect(() => parseCodeProject({ ...project, entry: '../main.ts' })).toThrow();
 	expect(() => parseCodeProject({ ...project, folders: ['logic.ts/child'] })).toThrow();
 	expect(() => parseCodeProject({ ...project, presentation: { entry: 'other.ts' } })).toThrow();
+});
+
+it('migrates saved JavaScript projects to typed files on load', async () => {
+	const saved = {
+		version: 1,
+		entry: 'main.js',
+		files: {
+			'main.js': {
+				language: 'javascript',
+				source: "import { gain } from './shared.js';\ngain();"
+			},
+			'shared.js': {
+				language: 'javascript',
+				source: 'export function gain() { return 1; }'
+			},
+			'view.jsx': {
+				language: 'jsx',
+				source:
+					"import { registerPanel } from '@helia/ui';\nregisterPanel({id:'a',title:'A',component:()=> <span/>});"
+			}
+		}
+	};
+	const project = parseCodeProject(saved);
+	expect(project.entry).toBe('main.ts');
+	expect(Object.keys(project.files).sort()).toEqual(['main.ts', 'shared.ts', 'view.tsx']);
+	expect(project.files['main.ts'].language).toBe('typescript');
+	expect(project.files['view.tsx'].language).toBe('tsx');
+	// Extension-qualified imports are rewritten so resolution still finds the typed target.
+	expect(project.files['main.ts'].source).toContain("from './shared'");
+	expect(await compileCodeProject(project)).toBeTruthy();
 });

@@ -40,7 +40,7 @@ async function setup(source = scripts) {
 			additionalProperties: false
 		},
 		initialState: { gold: 2 },
-		scripts: { main: { language: 'javascript', source } }
+		scripts: { main: { language: 'typescript', source } }
 	});
 	const timeline = await repo.getSessionTimeline(game.id, game.activeSessionId);
 	writes.length = 0;
@@ -61,7 +61,7 @@ describe('atomic AI workspace', () => {
 				initialState: {},
 				scripts: {
 					main: {
-						language: 'javascript',
+						language: 'typescript',
 						source: `helia.defineAction({name:'ask',arguments:${args},run({state}){helia.requestAI('Describe',{visible:true});return state;}});`
 					}
 				}

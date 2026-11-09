@@ -14,7 +14,7 @@ const register = (body: string) =>
 	`helia.defineAction({name:'buy', arguments:${args}, description:'아이템 구매', run({state,args}) { ${body} }});`;
 function request(
 	source = register('state.gold -= args.price; return state;'),
-	language = 'javascript'
+	language = 'typescript'
 ): ActionRequest {
 	return {
 		schema: { ...schema, required: ['gold'] },

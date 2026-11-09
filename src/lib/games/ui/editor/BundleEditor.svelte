@@ -47,10 +47,9 @@
 	let active = $derived(modules[activeId]);
 	function sourcePath(id: string, language: string) {
 		if (/\.(?:js|ts|jsx|tsx)$/.test(id)) {
-			return id;
+			return id.replace(/\.jsx$/, '.tsx').replace(/\.js$/, '.ts');
 		}
-		const extension = { javascript: 'js', typescript: 'ts' }[language] ?? language;
-		return `${id}.${extension}`;
+		return `${id}.${language === 'tsx' ? 'tsx' : 'ts'}`;
 	}
 	let projectFiles = $derived(
 		Object.fromEntries(
@@ -72,9 +71,7 @@
 		project.update(projectFiles, stateTypes, {}, updateDiagnostics);
 	});
 	onDestroy(() => project.dispose());
-	let languages = $derived(
-		kind === 'scripts' ? ['javascript', 'typescript'] : ['jsx', 'tsx', 'javascript', 'typescript']
-	);
+	let languages = $derived(kind === 'scripts' ? ['typescript'] : ['tsx', 'typescript']);
 	function emit(next: Record<string, SourceModule>, entry?: string) {
 		if (!bundle || disabled) {
 			return;
@@ -137,7 +134,7 @@
 			emit({
 				...modules,
 				[name]: {
-					language: kind === 'scripts' ? 'javascript' : 'tsx',
+					language: kind === 'scripts' ? 'typescript' : 'tsx',
 					source: kind === 'scripts' ? '// 게임 로직을 작성하세요.\n' : 'export {};\n'
 				}
 			});
@@ -200,7 +197,7 @@
 			{#if active}<label
 					>언어<select
 						aria-label="코드 언어"
-						value={{ js: 'javascript', ts: 'typescript' }[active.language] ?? active.language}
+						value={active.language}
 						{disabled}
 						onchange={(event) => edit({ language: event.currentTarget.value })}
 						>{#each languages as language (language)}<option value={language}>{language}</option

@@ -24,10 +24,7 @@ export type PanelLayout =
 export interface GameUI {
 	version: 1;
 	entry: string;
-	modules: Record<
-		string,
-		{ language: 'jsx' | 'tsx' | 'javascript' | 'typescript'; source: string }
-	>;
+	modules: Record<string, { language: 'tsx' | 'typescript'; source: string }>;
 	layout?: PanelLayout;
 	chatDock?: 'left' | 'right' | 'top' | 'bottom';
 	chatRatio?: number;
@@ -85,6 +82,10 @@ export function parsePanelLayout(value: unknown): PanelLayout {
 	return visit(value, 0);
 }
 
+/** UI modules saved before TypeScript-only support keep loading as typed modules. */
+function typedModuleLanguage(language: string): GameUI['modules'][string]['language'] {
+	return language === 'jsx' || language === 'tsx' ? 'tsx' : 'typescript';
+}
 function parseModules(value: GameState): GameUI['modules'] {
 	const entries = Object.entries(value);
 	if (!entries.length || entries.length > UI_LIMITS.modules) {
@@ -110,7 +111,7 @@ function parseModules(value: GameState): GameUI['modules'] {
 			throw Error('게임 UI 소스가 너무 커요.');
 		}
 		modules[id] = {
-			language: item.language as GameUI['modules'][string]['language'],
+			language: typedModuleLanguage(String(item.language)),
 			source: item.source
 		};
 	}

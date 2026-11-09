@@ -36,7 +36,7 @@ const schema = {
 } as const;
 const scripts = {
 	main: {
-		language: 'javascript',
+		language: 'typescript',
 		source: `
 helia.defineAction({name:'increment',arguments:{type:'object',properties:{},additionalProperties:false},run({state}){state.value++;helia.emit('state.changed',{value:state.value});return state;}});
 helia.defineAction({name:'check',arguments:{type:'object',properties:{label:{type:'string'}},required:['label'],additionalProperties:false},run({state,args}){state.checks.push(args.label);return state;}});
@@ -174,7 +174,9 @@ export default function(){
 	await mount(game.id, game.activeSessionId);
 	await expect
 		.poll(
-			async () => (await getSessionHistory(game.id, game.activeSessionId)).progress.state.checks
+			async () => (await getSessionHistory(game.id, game.activeSessionId)).progress.state.checks,
+			// The sandbox compiles TypeScript on first use, so allow for that before the UI reports.
+			{ timeout: 10_000 }
 		)
 		.toEqual(['[[0,0,320,155],[0,160,320,155]]']);
 }, 20_000);

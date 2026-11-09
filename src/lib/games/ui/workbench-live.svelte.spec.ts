@@ -30,7 +30,7 @@ it('connects the real Svelte workbench and host geometry to one Preact runtime a
 		initialState: { value: 0, cleaned: false },
 		scripts: {
 			main: {
-				language: 'javascript',
+				language: 'typescript',
 				source: `
 helia.defineAction({name:'increment',arguments:{type:'object',properties:{},additionalProperties:false},run({state}){state.value++;return state;}});
 helia.defineAction({name:'cleanup',arguments:{type:'object',properties:{},additionalProperties:false},run({state}){state.cleaned=true;return state;}});

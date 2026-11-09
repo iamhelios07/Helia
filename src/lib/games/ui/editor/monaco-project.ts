@@ -205,9 +205,6 @@ function caretOf(selection?: IRange | IPosition): Position | undefined {
 
 function modelLanguage(language: string) {
 	const normalized = language.toLowerCase();
-	if (['js', 'javascript', 'jsx'].includes(normalized)) {
-		return 'javascript';
-	}
 	if (['ts', 'typescript', 'tsx'].includes(normalized)) {
 		return 'typescript';
 	}

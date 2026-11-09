@@ -72,7 +72,7 @@ describe('game metadata validation', () => {
 				additionalProperties: false
 			},
 			initialState: { gold: 100 },
-			scripts: { buy: { language: 'javascript', source: 'buy();' } },
+			scripts: { buy: { language: 'typescript', source: 'buy();' } },
 			settings: { description: '', firstMessage: '', authorNote: '' }
 		};
 		const game = parseGame(input);
@@ -194,4 +194,28 @@ describe('game authoring settings', () => {
 	])('rejects invalid settings: %j', (value) => {
 		expect(() => validateGameSettings(value)).toThrow();
 	});
+});
+
+it('loads saved JavaScript scripts as TypeScript instead of rejecting them', () => {
+	const input = {
+		schemaVersion: 2,
+		id: 'game',
+		activeSessionId: 'session',
+		title: '게임',
+		genre: '',
+		description: '',
+		createdAt: '2026-11-02T00:00:00.000Z',
+		updatedAt: '2026-11-02T00:00:00.000Z',
+		schema: { type: 'object', properties: {}, additionalProperties: false },
+		initialState: {},
+		scripts: {
+			legacy: { language: 'javascript', source: 'buy();' },
+			already: { language: 'typescript', source: 'sell();' }
+		},
+		settings: { description: '', firstMessage: '', authorNote: '' }
+	};
+	const game = parseGame(input);
+	expect(game.scripts.legacy.language).toBe('typescript');
+	expect(game.scripts.legacy.source).toBe('buy();');
+	expect(game.scripts.already.language).toBe('typescript');
 });

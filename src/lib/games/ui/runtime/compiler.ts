@@ -83,7 +83,7 @@ class UICompiler {
 		language?: GameUI['modules'][string]['language']
 	): void {
 		const ts = this.ts;
-		const extension = language === 'tsx' || language === 'jsx' ? '.' + language : '.ts';
+		const extension = language === 'tsx' ? '.tsx' : '.ts';
 		const fileName = trusted ? id + '.ts' : id + extension;
 		const deps: Record<string, string> = {};
 		if (!trusted) {
@@ -137,7 +137,7 @@ class UICompiler {
 		if (language === 'tsx') {
 			return this.ts.ScriptKind.TSX;
 		}
-		return language === 'jsx' ? this.ts.ScriptKind.JSX : this.ts.ScriptKind.TS;
+		return this.ts.ScriptKind.TS;
 	}
 	private validateStaticModuleNode(node: TypeScript.Node): void {
 		const ts = this.ts;

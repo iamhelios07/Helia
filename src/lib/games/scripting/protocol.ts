@@ -128,7 +128,7 @@ export function parseInput(value: unknown): ActionRequest {
 	}
 	let bytes = 0;
 	for (const [id, script] of Object.entries(scripts)) {
-		if (id.length > 128 || !['javascript', 'typescript', 'js', 'ts'].includes(script.language)) {
+		if (id.length > 128 || !['typescript', 'ts'].includes(script.language)) {
 			throw new CreatorRuntimeError('input');
 		}
 		bytes += new TextEncoder().encode(script.source).length;

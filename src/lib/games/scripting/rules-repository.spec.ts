@@ -33,7 +33,7 @@ async function fixture(extra: string) {
 			additionalProperties: false
 		},
 		initialState: { value: 0 },
-		scripts: { main: { language: 'javascript', source: base + extra } }
+		scripts: { main: { language: 'typescript', source: base + extra } }
 	});
 	await repository.getSessionHistory(gameId, sessionId);
 	const read = () => transport({ kind: 'read', gameId, sessionId });

@@ -32,7 +32,7 @@ async function fixture(source?: string) {
 		initialState: { value: 0, checks: [] },
 		scripts: {
 			main: {
-				language: 'javascript',
+				language: 'typescript',
 				source: `
 helia.defineAction({name:'increment',arguments:{type:'object',properties:{},additionalProperties:false},run({state}){state.value++;return state;}});
 helia.defineAction({name:'check',arguments:{type:'object',properties:{label:{type:'string'}},required:['label'],additionalProperties:false},run({state,args}){state.checks.push(args.label);return state;}});

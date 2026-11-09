@@ -7,7 +7,7 @@ import { isTypeOnlyModule } from './module-syntax.js';
 import { generateStateTypes } from './state/schema.js';
 import { parseGameUI, type GameUI } from './ui/runtime/model.js';
 
-export type CodeLanguage = 'javascript' | 'typescript' | 'jsx' | 'tsx';
+export type CodeLanguage = 'typescript' | 'tsx';
 export interface CodeProject {
 	version: 1;
 	entry: string;
@@ -34,7 +34,7 @@ export function validCodePath(value: unknown, folder = false): value is string {
 			.every(
 				(part) => part && !['.', '..', '__proto__', 'constructor', 'prototype'].includes(part)
 			) &&
-		(folder || /\.(?:js|ts|jsx|tsx)$/.test(value))
+		(folder || /\.(?:ts|tsx)$/.test(value))
 	);
 }
 export function parseCodeProject(input: unknown): CodeProject {
@@ -44,14 +44,18 @@ export function parseCodeProject(input: unknown): CodeProject {
 	const value = input as Record<string, unknown>;
 	if (
 		value.version !== 1 ||
-		!validCodePath(value.entry) ||
+		!validCodePath(value.entry, true) ||
+		!/\.(?:js|jsx|ts|tsx)$/.test(String(value.entry)) ||
 		!value.files ||
 		typeof value.files !== 'object' ||
 		Array.isArray(value.files)
 	) {
 		throw Error('코드 프로젝트의 진입 파일과 소스 파일을 확인해주세요.');
 	}
-	const files = parseFiles(value.files as Record<string, unknown>, value.entry);
+	const { files, entry: resolvedEntry } = parseFiles(
+		value.files as Record<string, unknown>,
+		value.entry
+	);
 	const folders = parseFolders(value.folders);
 	const paths = [...Object.keys(files), ...(folders ?? [])];
 	for (const path of Object.keys(files)) {
@@ -65,35 +69,60 @@ export function parseCodeProject(input: unknown): CodeProject {
 	const presentation = parsePresentation(value.presentation);
 	return {
 		version: 1,
-		entry: value.entry,
+		entry: resolvedEntry,
 		files,
 		...(folders ? { folders } : {}),
 		...(presentation ? { presentation } : {})
 	};
 }
 
+/** Projects authored before TypeScript-only support move to typed extensions when loaded. */
+function typedPath(path: string): string {
+	return path.replace(/\.jsx$/, '.tsx').replace(/\.js$/, '.ts');
+}
+
+/** Relative imports keep resolving once the extension is dropped and the target becomes typed. */
+function retargetImports(source: string): string {
+	return source.replace(
+		/(\bfrom\s*|\bimport\s*\(\s*)(['"])(\.{1,2}\/[^'"]+)\.jsx?\2/g,
+		(_match, lead: string, quote: string, request: string) => `${lead}${quote}${request}${quote}`
+	);
+}
+
 function parseFiles(rawFiles: Record<string, unknown>, entry: string) {
 	const files: CodeProject['files'] = {};
 	let size = 0;
 	for (const [path, raw] of Object.entries(rawFiles)) {
-		if (!validCodePath(path) || !raw || typeof raw !== 'object' || Array.isArray(raw)) {
+		if (!validCodePath(path, true) || !raw || typeof raw !== 'object' || Array.isArray(raw)) {
 			throw Error('사용할 수 없는 코드 파일 경로예요.');
 		}
 		const file = raw as Record<string, unknown>;
+		const language = String(file.language);
 		if (
-			!['javascript', 'typescript', 'jsx', 'tsx'].includes(String(file.language)) ||
+			!['javascript', 'typescript', 'jsx', 'tsx'].includes(language) ||
 			typeof file.source !== 'string'
 		) {
 			throw Error('코드 파일의 언어와 내용을 확인해주세요.');
 		}
+		const target = typedPath(path);
+		if (!validCodePath(target) || Object.hasOwn(files, target)) {
+			throw Error('사용할 수 없는 코드 파일 경로예요.');
+		}
 		size += new TextEncoder().encode(file.source).length;
-		files[path] = { language: file.language as CodeLanguage, source: file.source };
+		files[target] = {
+			language: language === 'jsx' || language === 'tsx' ? 'tsx' : 'typescript',
+			source: retargetImports(file.source)
+		};
 	}
-	if (Object.keys(files).length > 64 || size > 512 * 1024 || !Object.hasOwn(files, entry)) {
+	if (Object.keys(files).length > 64 || size > 512 * 1024) {
+		throw Error('코드 프로젝트는 진입 파일을 포함해 64개 파일, 512 KiB까지 지원해요.');
+	}
+	const resolvedEntry = typedPath(entry);
+	if (!Object.hasOwn(files, resolvedEntry)) {
 		throw Error('코드 프로젝트는 진입 파일을 포함해 64개 파일, 512 KiB까지 지원해요.');
 	}
 
-	return files;
+	return { files, entry: resolvedEntry };
 }
 function parseFolders(raw: unknown) {
 	let folders: string[] | undefined;
@@ -141,10 +170,9 @@ export function createCodeProject(game: Pick<Game, 'scripts' | 'ui' | 'code'>): 
 		.sort(([a], [b]) => comparePaths(a, b))
 		.map(([, script]) => script);
 	for (const [index, script] of scripts.entries()) {
-		const typed = ['typescript', 'ts'].includes(script.language);
-		const path = `logic/part-${index + 1}.${typed ? 'ts' : 'js'}`;
+		const path = `logic/part-${index + 1}.ts`;
 		files[path] = {
-			language: typed ? 'typescript' : 'javascript',
+			language: 'typescript',
 			source: `'use logic';\n${script.source}\n`
 		};
 		imports.push(`import './${path}';`);
@@ -175,14 +203,18 @@ function pickPresentation(ui: GameUI): CodeProject['presentation'] {
 	};
 }
 function convertLegacyUI(ui: GameUI, files: CodeProject['files'], imports: string[]) {
-	const pathFor = (id: string, language: string) =>
-		'ui/' +
-		id +
-		(/\.(js|ts|jsx|tsx)$/.test(id)
-			? ''
-			: '.' + ({ javascript: 'js', typescript: 'ts' }[language] ?? language));
+	const pathFor = (id: string, language: string) => {
+		if (/\.(js|ts|jsx|tsx)$/.test(id)) {
+			return 'ui/' + typedPath(id);
+		}
+		const typed = language === 'jsx' || language === 'tsx' ? 'tsx' : 'ts';
+		return 'ui/' + id + '.' + typed;
+	};
 	for (const [id, file] of Object.entries(ui.modules)) {
-		files[pathFor(id, file.language)] = { ...file, source: `'use ui';\n${file.source}` };
+		files[pathFor(id, file.language)] = {
+			language: file.language === 'tsx' ? 'tsx' : 'typescript',
+			source: `'use ui';\n${file.source}`
+		};
 	}
 	let start = 'ui/start-entry.ts';
 	while (Object.hasOwn(files, start)) {
@@ -252,9 +284,7 @@ class ProjectCompiler {
 		const path = parts.join('/');
 		const found = [
 			path,
-			...['.ts', '.tsx', '.js', '.jsx', '/index.ts', '/index.tsx', '/index.js', '/index.jsx'].map(
-				(ext) => path + ext
-			)
+			...['.ts', '.tsx', '/index.ts', '/index.tsx'].map((ext) => path + ext)
 		].find((id) => Object.hasOwn(this.project.files, id));
 		return found ?? this.error(`파일을 찾을 수 없어요: ${specifier}`, from, node);
 	}
@@ -415,7 +445,7 @@ class ProjectCompiler {
 			);
 		}
 		const file = this.project.files[path];
-		if (graph.target === 'logic' && ['jsx', 'tsx'].includes(file.language)) {
+		if (graph.target === 'logic' && file.language === 'tsx') {
 			this.error(
 				"화면 모듈 맨 위에 'use ui';를 지정해주세요. 로직에서는 JSX를 실행할 수 없어요.",
 				path
@@ -619,10 +649,5 @@ function comparePaths(a: string, b: string) {
 }
 
 function scriptKind(compiler: typeof ts, language: CodeLanguage) {
-	return {
-		tsx: compiler.ScriptKind.TSX,
-		jsx: compiler.ScriptKind.JSX,
-		javascript: compiler.ScriptKind.JS,
-		typescript: compiler.ScriptKind.TS
-	}[language];
+	return language === 'tsx' ? compiler.ScriptKind.TSX : compiler.ScriptKind.TS;
 }

@@ -189,6 +189,11 @@ export function parseGame(value: unknown): Game {
 	};
 }
 
+/** Scripts saved before TypeScript-only support load as TypeScript instead of being rejected. */
+function scriptLanguage(value: string): string {
+	return ['javascript', 'js'].includes(value) ? 'typescript' : value;
+}
+
 export function parseScripts(value: unknown): Game['scripts'] {
 	if (!isRecord(value)) {
 		throw new Error('게임 스크립트의 형식이 올바르지 않아요.');
@@ -205,7 +210,7 @@ export function parseScripts(value: unknown): Game['scripts'] {
 		) {
 			throw new Error('게임 스크립트의 형식이 올바르지 않아요.');
 		}
-		scripts[id] = { language: script.language, source: script.source };
+		scripts[id] = { language: scriptLanguage(script.language), source: script.source };
 	}
 	return scripts;
 }

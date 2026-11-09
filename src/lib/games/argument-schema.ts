@@ -23,7 +23,6 @@ function createProgram(
 		strict: true,
 		exactOptionalPropertyTypes: true,
 		noLib: true,
-		allowJs: true,
 		target: compiler.ScriptTarget.ES2022,
 		module: compiler.ModuleKind.ESNext,
 		moduleResolution: compiler.ModuleResolutionKind.Node10
