@@ -97,8 +97,3 @@ monaco.editor.defineTheme('helia', {
 	}
 });
 export { monaco };
-
-/** JS and TS workers sync only models of their own language; libraries bridge packaged imports. */
-export function addProjectLibrary(source: string, uri: string) {
-	return typescriptDefaults.addExtraLib(source, uri);
-}

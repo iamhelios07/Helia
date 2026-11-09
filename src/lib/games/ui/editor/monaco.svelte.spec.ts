@@ -255,3 +255,59 @@ it('resolves helia and @helia/ui symbols to the shipped declaration file', async
 		host.remove();
 	}
 });
+
+it('reports unused declarations and keeps affecting other files without extra libraries', async () => {
+	const session = new MonacoProject();
+	projects.push(session);
+	session.update(
+		{
+			'main.ts': {
+				language: 'typescript',
+				source: "import { gain } from './helper';\nconst unusedLocal = 1;\nexport {};\n"
+			},
+			'helper.ts': { language: 'typescript', source: 'export const gain = 1;' }
+		},
+		'export type GameState = {gold:number};'
+	);
+	const { monaco } = await session.ready();
+	const main = session.model('main.ts', '', 'typescript');
+	const host = document.createElement('div');
+	document.body.append(host);
+	// Creating the editor registers Monaco's native language providers for the attached model.
+	const instance = monaco.editor.create(host, { model: main });
+	try {
+		await expect
+			.poll(async () => {
+				try {
+					await getTypeScriptWorker();
+					return true;
+				} catch {
+					return false;
+				}
+			})
+			.toBe(true);
+		const proxy = await (
+			await getTypeScriptWorker()
+		)(main.uri, session.model('helper.ts', '', 'typescript').uri);
+		// Unused-code fading comes from suggestion diagnostics' reportsUnnecessary flag.
+		const suggestions = await proxy.getSuggestionDiagnostics(main.uri.toString());
+		expect(suggestions.some((item) => Boolean(item.reportsUnnecessary))).toBe(true);
+		// Cross-file resolution must still work now that files are only models.
+		const definitions = await proxy.getDefinitionAtPosition(
+			main.uri.toString(),
+			main.getValue().indexOf('gain') + 1
+		);
+		expect(definitions?.[0]?.fileName).toBe(session.root + 'helper.ts');
+		// Editing the helper must invalidate the importer, proving models feed the program.
+		session
+			.model('helper.ts', 'export const gain = 1;', 'typescript')
+			.setValue('export const gain = "text";');
+		main.setValue("import { gain } from './helper';\nconst total: number = gain;\nexport {};\n");
+		await expect
+			.poll(async () => (await proxy.getSemanticDiagnostics(main.uri.toString())).length)
+			.toBeGreaterThan(0);
+	} finally {
+		instance.dispose();
+		host.remove();
+	}
+});

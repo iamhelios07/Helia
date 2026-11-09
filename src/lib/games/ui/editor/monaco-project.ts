@@ -17,7 +17,6 @@ export interface MonacoDocument {
 }
 export class MonacoProject {
 	readonly root = 'file:///helia-authoring/project-' + ++sequence + '/';
-	private libraries = new Map<string, { source: string; dispose: () => void }>();
 	private models = new Map<string, editor.ITextModel>();
 	private views = new Map<string, editor.ICodeEditorViewState>();
 	private pending: Record<string, MonacoDocument> = {};
@@ -78,22 +77,13 @@ export class MonacoProject {
 		}
 		for (const [path, file] of Object.entries(this.pending)) {
 			const language = modelLanguage(file.language);
-			if (language !== 'json') {
-				this.syncLibrary(path, file.source);
-			}
 			this.syncModel(path, file, language);
+			// A file with its own model needs no extra library: the worker reads the model first.
+			// Registering both made every keystroke look like an extra-library change, which
+			// re-validates all models and repaints diagnostics such as unused-code fading.
 		}
 		this.removeDeletedModels();
 		this.publishDiagnostics();
-	}
-	private syncLibrary(path: string, source: string) {
-		const previous = this.libraries.get(path);
-		if (previous?.source === source) {
-			return;
-		}
-		previous?.dispose();
-		const library = this.runtime!.addProjectLibrary(source, this.root + path);
-		this.libraries.set(path, { source, dispose: () => library.dispose() });
 	}
 	private syncModel(path: string, file: MonacoDocument, language: string) {
 		const { monaco } = this.runtime!;
@@ -118,8 +108,6 @@ export class MonacoProject {
 				continue;
 			}
 			model.dispose();
-			this.libraries.get(path)?.dispose();
-			this.libraries.delete(path);
 			this.models.delete(path);
 			this.views.delete(path);
 		}
@@ -173,10 +161,6 @@ export class MonacoProject {
 			model.dispose();
 		}
 		this.models.clear();
-		for (const library of this.libraries.values()) {
-			library.dispose();
-		}
-		this.libraries.clear();
 		this.views.clear();
 	}
 }
