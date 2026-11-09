@@ -82,7 +82,9 @@ export class SettingsDialogController {
 		} else {
 			await saveCredential(saved, key);
 		}
-		this.credentialStatus = { ...this.credentialStatus, [saved.id]: true };
+		if (!this.disposed) {
+			this.credentialStatus = { ...this.credentialStatus, [saved.id]: true };
+		}
 	};
 	savedConnectionMessage = (key: string, isVertex: boolean) => {
 		if (!key) {
@@ -130,6 +132,8 @@ export class SettingsDialogController {
 	catalogError = $state('');
 	catalogRequest: AbortController | null = null;
 	statusGeneration = 0;
+	loadGeneration = 0;
+	disposed = false;
 	dirty = $derived(
 		(this.providerDraft !== null && JSON.stringify(this.providerDraft) !== this.initialProvider) ||
 			this.apiKey.length > 0 ||
@@ -345,10 +349,19 @@ export class SettingsDialogController {
 		this.error = '';
 		this.status = '';
 	};
-	load = () => {
+	load = async () => {
+		if (this.disposed || this.busy) {
+			return;
+		}
+		const generation = ++this.loadGeneration;
+		this.ready = false;
 		this.loadError = '';
 		try {
-			this.settings = loadAISettings();
+			const settings = await loadAISettings();
+			if (this.disposed || generation !== this.loadGeneration) {
+				return;
+			}
+			this.settings = settings;
 			this.ready = true;
 			this.creating = false;
 			if (this.settings.providers[0]) {
@@ -358,11 +371,16 @@ export class SettingsDialogController {
 			}
 			void this.refreshCredentialStatus();
 		} catch {
-			this.ready = false;
-			this.loadError = '설정을 불러오지 못했어요. 다시 불러와 주세요.';
+			if (!this.disposed && generation === this.loadGeneration) {
+				this.ready = false;
+				this.loadError = '설정을 불러오지 못했어요. 다시 불러와 주세요.';
+			}
 		}
 	};
 	refreshCredentialStatus = async () => {
+		if (this.disposed) {
+			return;
+		}
 		this.clearVerification();
 		const generation = ++this.statusGeneration;
 		this.checkingCredentials = true;
@@ -476,7 +494,13 @@ export class SettingsDialogController {
 	};
 	saveConnection = async (event: SubmitEvent) => {
 		event.preventDefault();
-		if (!this.providerDraft || this.busy || !this.ready || this.readingServiceAccount) {
+		if (
+			!this.providerDraft ||
+			this.busy ||
+			!this.ready ||
+			this.disposed ||
+			this.readingServiceAccount
+		) {
 			return;
 		}
 		this.error = '';
@@ -495,10 +519,17 @@ export class SettingsDialogController {
 		let metadataSaved = false;
 		try {
 			this.prepareVertexDraft(draft, key);
-			this.settings = saveAISettings(upsertProvider(this.settings, draft));
+			const settings = await saveAISettings(upsertProvider(this.settings, draft), this.settings);
+			if (this.disposed) {
+				return;
+			}
+			this.settings = settings;
 			metadataSaved = true;
 			const saved = this.settings.providers.find((provider) => provider.id === draft.id)!;
 			await this.storeConnectionCredential(saved, key, keepCredential);
+			if (this.disposed) {
+				return;
+			}
 			this.setProvider(saved);
 			this.creating = false;
 			this.status = this.savedConnectionMessage(key, isVertex);
@@ -506,15 +537,22 @@ export class SettingsDialogController {
 				void this.discover(saved);
 			}
 		} catch (cause) {
-			if (metadataSaved) {
-				this.credentialStatus = { ...this.credentialStatus, [draft.id]: false };
-				this.error = `연결 설정은 저장했지만 ${isVertex ? '인증 정보' : 'API 키'}를 저장하지 못했어요. ${this.message(cause, '다시 시도해 주세요.')}`;
-			} else {
-				this.error = this.message(cause, '연결 설정을 저장하지 못했어요. 다시 시도해 주세요.');
-			}
+			this.reportConnectionSaveError(cause, draft, metadataSaved);
 		} finally {
 			this.busy = false;
 		}
+	};
+	reportConnectionSaveError = (cause: unknown, draft: ProviderSettings, metadataSaved: boolean) => {
+		if (this.disposed) {
+			return;
+		}
+		if (!metadataSaved) {
+			this.error = this.message(cause, '연결 설정을 저장하지 못했어요. 다시 시도해 주세요.');
+			return;
+		}
+		this.credentialStatus = { ...this.credentialStatus, [draft.id]: false };
+		const credential = draft.kind === 'google-vertex' ? '인증 정보' : 'API 키';
+		this.error = `연결 설정은 저장했지만 ${credential}를 저장하지 못했어요. ${this.message(cause, '다시 시도해 주세요.')}`;
 	};
 	discover = async (provider = this.selectedProvider) => {
 		if (!provider) {
@@ -554,19 +592,28 @@ export class SettingsDialogController {
 			}
 		}
 	};
-	persist = (next: () => AISettings, text: string) => {
-		if (this.busy || !this.ready) {
+	persist = async (next: () => AISettings, text: string) => {
+		if (this.busy || !this.ready || this.disposed) {
 			return false;
 		}
+		this.busy = true;
 		this.error = '';
 		this.status = '';
 		try {
-			this.settings = saveAISettings(next());
+			const settings = await saveAISettings(next(), this.settings);
+			if (this.disposed) {
+				return false;
+			}
+			this.settings = settings;
 			this.status = text;
 			return true;
 		} catch (cause) {
-			this.error = this.message(cause, '설정을 저장하지 못했어요. 다시 시도해 주세요.');
+			if (!this.disposed) {
+				this.error = this.message(cause, '설정을 저장하지 못했어요. 다시 시도해 주세요.');
+			}
 			return false;
+		} finally {
+			this.busy = false;
 		}
 	};
 	addModel = (catalogModel?: CatalogModel) => {
@@ -593,17 +640,17 @@ export class SettingsDialogController {
 			this.modelError = '';
 		});
 	};
-	saveModel = (event: SubmitEvent) => {
+	saveModel = async (event: SubmitEvent) => {
 		event.preventDefault();
-		if (!this.modelDraft) {
+		if (!this.modelDraft || this.busy || !this.ready || this.disposed) {
 			return;
 		}
 		this.modelError = '';
 		try {
 			const next = upsertModel(this.settings, { ...this.modelDraft });
-			if (this.persist(() => next, '모델을 저장했어요.')) {
+			if (await this.persist(() => next, '모델을 저장했어요.')) {
 				this.modelDraft = null;
-			} else {
+			} else if (!this.disposed) {
 				this.modelError = this.error;
 			}
 		} catch (cause) {
@@ -634,7 +681,7 @@ export class SettingsDialogController {
 				message: `${model.name} 모델을 삭제합니다. 기본 모델이면 다른 모델이 기본으로 선택돼요.`,
 				label: '모델 삭제',
 				action: () => {
-					this.persist(() => removeModel(this.settings, model.id), '모델을 삭제했어요.');
+					void this.persist(() => removeModel(this.settings, model.id), '모델을 삭제했어요.');
 				}
 			};
 		});
@@ -656,7 +703,7 @@ export class SettingsDialogController {
 		});
 	};
 	deleteConnection = async (provider: ProviderSettings) => {
-		if (this.busy) {
+		if (this.busy || !this.ready || this.disposed) {
 			return;
 		}
 		this.clearVerification();
@@ -665,24 +712,43 @@ export class SettingsDialogController {
 		this.status = '';
 		this.statusGeneration++;
 		this.checkingCredentials = false;
+		let metadataSaved = false;
 		try {
+			const settings = await saveAISettings(
+				removeProvider(this.settings, provider.id),
+				this.settings
+			);
+			metadataSaved = true;
+			this.applyConnectionDeletion(settings, provider.id);
 			await deleteCredential(provider.id);
-			this.credentialStatus = { ...this.credentialStatus, [provider.id]: false };
-			this.settings = saveAISettings(removeProvider(this.settings, provider.id));
-			if (this.settings.providers[0]) {
-				this.setProvider(this.settings.providers[0]);
-			} else {
-				this.providerDraft = null;
-				this.initialProvider = '';
-				this.clearCatalog();
+			if (!this.disposed) {
+				this.status = 'API 연결을 삭제했어요.';
 			}
-			this.creating = false;
-			this.status = 'API 연결을 삭제했어요.';
 		} catch (cause) {
-			this.error = this.message(cause, 'API 연결을 삭제하지 못했어요. 다시 시도해 주세요.');
+			if (!this.disposed) {
+				const detail = this.message(cause, '다시 시도해 주세요.');
+				this.error = metadataSaved
+					? `API 연결은 삭제했지만 인증 정보를 정리하지 못했어요. ${detail}`
+					: this.message(cause, 'API 연결을 삭제하지 못했어요. 다시 시도해 주세요.');
+			}
 		} finally {
 			this.busy = false;
 		}
+	};
+	applyConnectionDeletion = (settings: AISettings, providerId: string) => {
+		if (this.disposed) {
+			return;
+		}
+		this.settings = settings;
+		this.credentialStatus = { ...this.credentialStatus, [providerId]: false };
+		if (settings.providers[0]) {
+			this.setProvider(settings.providers[0]);
+		} else {
+			this.providerDraft = null;
+			this.initialProvider = '';
+			this.clearCatalog();
+		}
+		this.creating = false;
 	};
 	confirmAction = () => {
 		const action = this.confirmation?.action;
@@ -690,7 +756,9 @@ export class SettingsDialogController {
 		action?.();
 	};
 	dispose = () => {
-		this.catalogRequest?.abort();
+		this.disposed = true;
+		this.loadGeneration++;
+		this.clearCatalog();
 		this.clearVerification();
 		this.clearServiceAccount();
 		this.statusGeneration++;

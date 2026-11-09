@@ -38,7 +38,7 @@ export async function invokeSessionAI(
 ) {
 	const runtime = options.runtime ?? defaultRuntime();
 	const text = validateMessageContent(input.text),
-		settings = loadAISettings(),
+		settings = await loadAISettings(),
 		prompt = loadSelectedPromptConfig();
 	const { model, provider } = selectedModelConnection(settings, input.modelId);
 	if (options.signal?.aborted) {
@@ -143,7 +143,7 @@ async function runFollowUpHooks({
 }
 
 function selectedModelConnection(
-	settings: ReturnType<typeof loadAISettings>,
+	settings: Awaited<ReturnType<typeof loadAISettings>>,
 	modelId: string | undefined
 ) {
 	const model = settings.models.find((m) => m.id === (modelId ?? settings.defaultModelId));

@@ -4,6 +4,7 @@ import { render } from 'vitest-browser-svelte';
 import { page, userEvent } from 'vitest/browser';
 
 import { createGame } from '#lib/games/repository.js';
+import { memoryAISettingsTransport } from '#lib/testing/ai-settings.js';
 import AppFixture from '#lib/testing/AppFixture.svelte';
 import fixture from '#lib/testing/fixtures/service-account.json';
 
@@ -20,9 +21,12 @@ import {
 import { emptyAISettings, upsertProvider, upsertModel } from './model.js';
 import { AI_SETTINGS_KEY, loadAISettings, saveAISettings } from './repository.js';
 import { SERVICE_PRESETS } from './services.js';
+import { SettingsDialogController } from './settings-dialog-controller.svelte.js';
+import { aiSettingsRequest } from './settings-transport.js';
 import SettingsDialog from './SettingsDialog.svelte';
 
 vi.mock('$app/navigation', () => ({ goto: vi.fn() }));
+vi.mock('./settings-transport.js', () => ({ aiSettingsRequest: vi.fn() }));
 vi.mock('./credentials.js', () => ({
 	getCredentialStatus: vi.fn(),
 	saveCredential: vi.fn(),
@@ -38,6 +42,7 @@ vi.mock('#lib/storage/transport.js', async () => {
 
 beforeEach(async () => {
 	localStorage.clear();
+	vi.mocked(aiSettingsRequest).mockReset().mockImplementation(memoryAISettingsTransport());
 	vi.mocked(getCredentialStatus)
 		.mockReset()
 		.mockImplementation(async (providers) =>
@@ -57,7 +62,7 @@ afterEach(() => vi.restoreAllMocks());
 const dialog = () => page.getByRole('dialog', { name: '설정', exact: true });
 const nav = () => page.getByRole('navigation', { name: '설정 메뉴', exact: true });
 const stored = () => loadAISettings();
-function seed() {
+async function seed() {
 	const provider = {
 		id: 'provider-one',
 		name: '내 연결',
@@ -111,9 +116,9 @@ it.each([
 			expect.objectContaining({ service: id, name, baseUrl, kind: 'openai-compatible' }),
 			'preset-test-only-secret'
 		);
-		expect(stored().providers[0].service).toBe(id);
+		expect((await stored()).providers[0].service).toBe(id);
 		expect(SERVICE_PRESETS.filter((preset) => preset.id === id)).toHaveLength(1);
-		expect(localStorage.getItem(AI_SETTINGS_KEY)).not.toContain('preset-test-only-secret');
+		expect(JSON.stringify(await stored())).not.toContain('preset-test-only-secret');
 		await screen.unmount();
 	}
 );
@@ -153,7 +158,7 @@ it('saves a service key outside metadata, discovers models and supports aliases 
 		'test-secret-never-persist'
 	);
 	expect(fetchProviderModels).toHaveBeenCalled();
-	expect(localStorage.getItem(AI_SETTINGS_KEY)).not.toContain('test-secret');
+	expect(JSON.stringify(await stored())).not.toContain('test-secret');
 	await expect.element(page.getByLabelText('API 키', { exact: true })).toHaveValue('');
 	await page.getByRole('button', { name: 'Fast 모델 추가', exact: true }).click();
 	await expect
@@ -162,8 +167,8 @@ it('saves a service key outside metadata, discovers models and supports aliases 
 	await page.getByRole('button', { name: '모델 저장', exact: true }).click();
 	await manualModel('빠른 모델 별칭', 'org/fast');
 	await page.getByRole('button', { name: '빠른 모델 별칭 기본 모델로 설정', exact: true }).click();
-	expect(stored().models.map((model) => model.modelId)).toEqual(['org/fast', 'org/fast']);
-	expect(stored().defaultModelId).toBe(stored().models[1].id);
+	expect((await stored()).models.map((model) => model.modelId)).toEqual(['org/fast', 'org/fast']);
+	expect((await stored()).defaultModelId).toBe((await stored()).models[1].id);
 	await nav().getByRole('button', { name: '모델', exact: true }).click();
 	await expect
 		.element(page.getByRole('button', { name: '빠른 모델 별칭 모델 편집', exact: true }))
@@ -173,7 +178,7 @@ it('saves a service key outside metadata, discovers models and supports aliases 
 	await expect
 		.element(page.getByRole('button', { name: '테스트 연결 연결 선택', exact: true }))
 		.toBeVisible();
-	expect(stored().models).toHaveLength(2);
+	expect((await stored()).models).toHaveLength(2);
 	await screen.unmount();
 });
 
@@ -194,11 +199,11 @@ it('filters service choices and permits custom connections with manual models be
 	await manualModel('로컬 모델', 'local/model');
 	expect(saveCredential).not.toHaveBeenCalled();
 	expect(fetchProviderModels).not.toHaveBeenCalled();
-	expect(stored().providers[0]).toMatchObject({
+	expect((await stored()).providers[0]).toMatchObject({
 		service: 'custom',
 		baseUrl: 'http://localhost:1234/v1'
 	});
-	expect(stored().models[0].modelId).toBe('local/model');
+	expect((await stored()).models[0].modelId).toBe('local/model');
 	await screen.unmount();
 });
 
@@ -244,9 +249,9 @@ it('stores service-account JSON securely, fills the project and verifies OAuth w
 	await manualModel('Vertex 모델', 'gemini-example');
 	await page.getByRole('button', { name: 'Vertex AI 연결 선택', exact: true }).click();
 	expect(fetchProviderModels).not.toHaveBeenCalled();
-	expect(stored().models[0].modelId).toBe('gemini-example');
-	expect(localStorage.getItem(AI_SETTINGS_KEY)).not.toContain('private_key');
-	expect(localStorage.getItem(AI_SETTINGS_KEY)).not.toContain('client_email');
+	expect((await stored()).models[0].modelId).toBe('gemini-example');
+	expect(JSON.stringify(await stored())).not.toContain('private_key');
+	expect(JSON.stringify(await stored())).not.toContain('client_email');
 	await screen.unmount();
 });
 
@@ -260,11 +265,11 @@ it('retains service-account drafts on failed saves and leaves saved project meta
 	await page.getByRole('button', { name: '모델 선택', exact: true }).click();
 	await expect.element(page.getByRole('alert')).toHaveTextContent('인증 정보를 저장하지 못했어요');
 	await expect.element(json).toHaveValue(JSON.stringify(fixture));
-	expect(localStorage.getItem(AI_SETTINGS_KEY)).not.toContain('PRIVATE KEY');
+	expect(JSON.stringify(await stored())).not.toContain('PRIVATE KEY');
 	await page.getByRole('button', { name: '모델 선택', exact: true }).click();
 	await expect.element(json).toHaveValue('');
 	await page.getByRole('textbox', { name: '프로젝트 ID', exact: true }).fill('changed-project');
-	expect(stored().providers[0].vertex?.projectId).toBe('helia-test-project');
+	expect((await stored()).providers[0].vertex?.projectId).toBe('helia-test-project');
 	await expect
 		.element(page.getByRole('button', { name: '서비스 계정 인증 확인', exact: true }))
 		.toBeDisabled();
@@ -295,12 +300,12 @@ it('imports a service-account file and rejects oversized files without replacing
 	await expect.element(page.getByRole('alert')).toHaveTextContent('64KiB');
 	await page.getByRole('button', { name: '변경 사항 저장', exact: true }).click();
 	expect(saveServiceAccountCredential).toHaveBeenCalledOnce();
-	expect(localStorage.getItem(AI_SETTINGS_KEY)).not.toContain('private_key');
+	expect(JSON.stringify(await stored())).not.toContain('private_key');
 	await screen.unmount();
 });
 
 it('discards stale authentication results when the Vertex project is edited', async () => {
-	saveAISettings(
+	await saveAISettings(
 		upsertProvider(emptyAISettings(), {
 			id: 'vertex',
 			name: 'Vertex AI',
@@ -330,7 +335,7 @@ it('discards stale authentication results when the Vertex project is edited', as
 	finish();
 	await expect.element(verify).toBeDisabled();
 	expect(page.getByText('서비스 계정 인증을 확인했어요.', { exact: true }).query()).toBeNull();
-	expect(stored().providers[0].vertex?.projectId).toBe('helia-test-project');
+	expect((await stored()).providers[0].vertex?.projectId).toBe('helia-test-project');
 	await screen.unmount();
 });
 
@@ -352,7 +357,7 @@ it('requires confirmation before losing key input through navigation or Escape',
 	expect(onclose).not.toHaveBeenCalled();
 	await page.getByRole('button', { name: '변경 사항 버리기', exact: true }).click();
 	expect(onclose).toHaveBeenCalledOnce();
-	expect(stored()).toEqual(emptyAISettings());
+	expect(await stored()).toEqual(emptyAISettings());
 	await screen.unmount();
 });
 
@@ -366,19 +371,19 @@ it('retains failed key writes for retry without reporting the connection as conf
 		.element(page.getByRole('alert'))
 		.toHaveTextContent('연결 설정은 저장했지만 API 키를 저장하지 못했어요');
 	await expect.element(page.getByLabelText('API 키', { exact: true })).toHaveValue('retry-secret');
-	expect(localStorage.getItem(AI_SETTINGS_KEY)).not.toContain('retry-secret');
+	expect(JSON.stringify(await stored())).not.toContain('retry-secret');
 	expect(fetchProviderModels).not.toHaveBeenCalled();
 	await page.getByRole('button', { name: '모델 선택', exact: true }).click();
 	await expect
 		.element(page.getByRole('button', { name: 'Fast 모델 추가', exact: true }))
 		.toBeVisible();
-	expect(stored().providers).toHaveLength(1);
+	expect((await stored()).providers).toHaveLength(1);
 	await screen.unmount();
 });
 
-it('removes credentials before dependent models and preserves unrelated connections', async () => {
-	seed();
-	let settings = upsertProvider(stored(), {
+it('removes connection metadata and credentials while preserving unrelated connections', async () => {
+	await seed();
+	let settings = upsertProvider(await stored(), {
 		id: 'provider-two',
 		name: '다른 연결',
 		kind: 'google',
@@ -390,7 +395,7 @@ it('removes credentials before dependent models and preserves unrelated connecti
 		providerId: 'provider-two',
 		modelId: 'other-model'
 	});
-	saveAISettings(settings);
+	await saveAISettings(settings);
 	const screen = render(SettingsDialog, { onclose: vi.fn() });
 	await page.getByRole('button', { name: '연결 삭제', exact: true }).click();
 	const confirmation = page.getByRole('dialog', { name: 'API 연결을 삭제할까요?', exact: true });
@@ -400,18 +405,18 @@ it('removes credentials before dependent models and preserves unrelated connecti
 	await page.getByRole('button', { name: '연결 삭제', exact: true }).click();
 	await confirmation.getByRole('button', { name: '연결 삭제', exact: true }).click();
 	await expect
-		.poll(() => stored().providers.map((provider) => provider.id))
+		.poll(async () => (await stored()).providers.map((provider) => provider.id))
 		.toEqual(['provider-two']);
 	expect(deleteCredential).toHaveBeenCalledWith('provider-one');
-	expect(stored().models.map((model) => model.id)).toEqual(['model-two']);
-	expect(stored().defaultModelId).toBe('model-two');
+	expect((await stored()).models.map((model) => model.id)).toEqual(['model-two']);
+	expect((await stored()).defaultModelId).toBe('model-two');
 	await screen.unmount();
 });
 
 it('ignores a late catalogue response after selecting a different connection', async () => {
-	seed();
-	saveAISettings(
-		upsertProvider(stored(), {
+	await seed();
+	await saveAISettings(
+		upsertProvider(await stored(), {
 			id: 'provider-two',
 			name: '다른 연결',
 			kind: 'google',
@@ -458,17 +463,14 @@ it('retains a failed metadata save and rejects URLs containing credentials', asy
 	await expect.element(page.getByRole('alert')).toHaveTextContent('인증 정보');
 	expect(localStorage.getItem(AI_SETTINGS_KEY)).toBeNull();
 	await url.fill('https://example.com');
-	const write = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
-		throw new Error('storage blocked');
-	});
+	vi.mocked(aiSettingsRequest).mockRejectedValueOnce(new Error('설정을 저장하지 못했어요.'));
 	await page.getByRole('button', { name: '모델 선택', exact: true }).click();
 	await expect.element(page.getByRole('alert')).toHaveTextContent('저장하지 못했어요');
 	await expect
 		.element(page.getByRole('textbox', { name: '연결 이름', exact: true }))
 		.toHaveValue('저장 재시도');
-	write.mockRestore();
 	await page.getByRole('button', { name: '모델 선택', exact: true }).click();
-	await expect.poll(() => stored().providers[0]?.name).toBe('저장 재시도');
+	await expect.poll(async () => (await stored()).providers[0]?.name).toBe('저장 재시도');
 	await screen.unmount();
 });
 
@@ -477,7 +479,8 @@ it('does not overwrite unreadable settings and can retry after storage recovery'
 	const screen = render(SettingsDialog, { onclose: vi.fn() });
 	await expect.element(page.getByRole('alert')).toHaveTextContent('불러오지 못했어요');
 	expect(localStorage.getItem(AI_SETTINGS_KEY)).toBe('invalid-json');
-	seed();
+	localStorage.removeItem(AI_SETTINGS_KEY);
+	await seed();
 	await page.getByRole('button', { name: '다시 불러오기', exact: true }).click();
 	await expect
 		.element(page.getByRole('button', { name: '내 모델 모델 편집', exact: true }))
@@ -485,12 +488,232 @@ it('does not overwrite unreadable settings and can retry after storage recovery'
 	await screen.unmount();
 });
 
+it('reopens host settings after browser storage is cleared', async () => {
+	await seed();
+	const screen = render(AppFixture, { view: 'home' });
+	const gear = page.getByRole('button', { name: '설정', exact: true });
+	await gear.click();
+	await expect
+		.element(page.getByRole('button', { name: '내 모델 모델 편집', exact: true }))
+		.toBeVisible();
+	await page.getByRole('button', { name: '설정 닫기', exact: true }).click();
+	localStorage.clear();
+	await gear.click();
+	await expect
+		.element(page.getByRole('button', { name: '내 연결 연결 선택', exact: true }))
+		.toBeVisible();
+	expect((await stored()).defaultModelId).toBe('model-one');
+	await screen.unmount();
+});
+
+it('retries a failed host load without enabling mutations before settings arrive', async () => {
+	await seed();
+	vi.mocked(aiSettingsRequest).mockRejectedValueOnce(new Error('host unavailable'));
+	const screen = render(SettingsDialog, { onclose: vi.fn() });
+	await expect.element(page.getByRole('alert')).toHaveTextContent('불러오지 못했어요');
+	await expect.element(page.getByRole('button', { name: '새 연결', exact: true })).toBeDisabled();
+	await page.getByRole('button', { name: '다시 불러오기', exact: true }).click();
+	await expect
+		.element(page.getByRole('button', { name: '내 모델 모델 편집', exact: true }))
+		.toBeVisible();
+	expect((await stored()).models).toHaveLength(1);
+	await screen.unmount();
+});
+
+it('keeps connection mutations busy until the asynchronous metadata write finishes', async () => {
+	const onclose = vi.fn();
+	const screen = render(SettingsDialog, { onclose });
+	await newConnection('느린 연결');
+	const key = page.getByLabelText('API 키', { exact: true });
+	await key.fill('pending-secret');
+	let finish!: () => void;
+	const pending = new Promise<void>((resolve) => {
+		finish = resolve;
+	});
+	const backend = vi.mocked(aiSettingsRequest).getMockImplementation()!;
+	vi.mocked(aiSettingsRequest).mockImplementationOnce(async (request) => {
+		expect(request.kind).toBe('write');
+		await pending;
+		return backend(request);
+	});
+	await page.getByRole('button', { name: '모델 선택', exact: true }).click();
+	await expect.element(dialog()).toHaveAttribute('aria-busy', 'true');
+	await expect.element(key).toBeDisabled();
+	await expect
+		.element(page.getByRole('button', { name: '저장하는 중…', exact: true }))
+		.toBeDisabled();
+	await userEvent.keyboard('{Escape}');
+	expect(onclose).not.toHaveBeenCalled();
+	expect(saveCredential).not.toHaveBeenCalled();
+	finish();
+	await expect
+		.element(page.getByRole('button', { name: 'Fast 모델 추가', exact: true }))
+		.toBeVisible();
+	expect((await stored()).providers[0].name).toBe('느린 연결');
+	await screen.unmount();
+});
+
+it('retains a model draft through a pending failed write and allows retry', async () => {
+	await seed();
+	const screen = render(SettingsDialog, { onclose: vi.fn() });
+	await page.getByRole('button', { name: '내 모델 모델 편집', exact: true }).click();
+	const name = page.getByRole('textbox', { name: '표시 이름', exact: true });
+	await name.fill('다시 저장할 모델');
+	let fail!: (error: Error) => void;
+	vi.mocked(aiSettingsRequest).mockImplementationOnce(
+		() =>
+			new Promise((_, reject) => {
+				fail = reject;
+			})
+	);
+	await page.getByRole('button', { name: '모델 저장', exact: true }).click();
+	await expect.element(dialog()).toHaveAttribute('aria-busy', 'true');
+	await expect.element(name).toHaveValue('다시 저장할 모델');
+	const requests = vi.mocked(aiSettingsRequest).mock.calls.length;
+	await page.getByRole('button', { name: '모델 저장', exact: true }).click();
+	expect(aiSettingsRequest).toHaveBeenCalledTimes(requests);
+	await userEvent.keyboard('{Escape}');
+	await expect.element(name).toBeVisible();
+	fail(new Error('모델 저장 실패'));
+	await expect
+		.element(page.getByRole('alert').filter({ hasText: '모델 저장 실패' }).first())
+		.toBeVisible();
+	await expect.element(name).toHaveValue('다시 저장할 모델');
+	expect((await stored()).models[0].name).toBe('내 모델');
+	await page.getByRole('button', { name: '모델 저장', exact: true }).click();
+	await expect
+		.element(page.getByRole('button', { name: '다시 저장할 모델 모델 편집', exact: true }))
+		.toBeVisible();
+	expect((await stored()).models[0].name).toBe('다시 저장할 모델');
+	await screen.unmount();
+});
+
+it('ignores stale and disposed settings loads without starting credential requests', async () => {
+	const settings = await seed();
+	const controller = new SettingsDialogController();
+	let finish!: (snapshot: { settings: typeof settings; revision: number }) => void;
+	vi.mocked(aiSettingsRequest).mockImplementationOnce(
+		() =>
+			new Promise((resolve) => {
+				finish = resolve;
+			})
+	);
+	const stale = controller.load();
+	await controller.load();
+	finish({ settings: emptyAISettings(), revision: 1 });
+	await stale;
+	expect(controller.settings.models[0].id).toBe('model-one');
+	controller.dispose();
+	vi.mocked(getCredentialStatus).mockClear();
+	const disposed = new SettingsDialogController();
+	vi.mocked(aiSettingsRequest).mockImplementationOnce(
+		() =>
+			new Promise((resolve) => {
+				finish = resolve;
+			})
+	);
+	const pending = disposed.load();
+	disposed.dispose();
+	finish({ settings, revision: 2 });
+	await pending;
+	expect(disposed.ready).toBe(false);
+	expect(disposed.settings).toEqual(emptyAISettings());
+	expect(getCredentialStatus).not.toHaveBeenCalled();
+});
+
+it('rejects stale controller saves without overwriting newer settings or losing the model draft', async () => {
+	await seed();
+	const controller = new SettingsDialogController();
+	await controller.load();
+	controller.editModel(controller.settings.models[0]);
+	controller.modelDraft!.name = '이 창의 변경';
+	const latest = await stored();
+	await saveAISettings(
+		upsertModel(latest, { ...latest.models[0], name: '다른 창의 변경' }),
+		latest
+	);
+	await controller.saveModel(new SubmitEvent('submit'));
+	expect(controller.modelDraft?.name).toBe('이 창의 변경');
+	expect(controller.modelError).toContain('다른 창');
+	expect(controller.busy).toBe(false);
+	expect((await stored()).models[0].name).toBe('다른 창의 변경');
+	controller.dispose();
+});
+
+it('does not delete credentials when a stale connection deletion conflicts', async () => {
+	await seed();
+	const controller = new SettingsDialogController();
+	await controller.load();
+	const provider = controller.settings.providers[0];
+	const latest = await stored();
+	await saveAISettings(
+		upsertProvider(latest, { ...latest.providers[0], name: '다른 창의 연결 변경' }),
+		latest
+	);
+	await controller.deleteConnection(provider);
+	expect(deleteCredential).not.toHaveBeenCalled();
+	expect(controller.error).toContain('다른 창');
+	expect(controller.settings.providers).toHaveLength(1);
+	expect((await stored()).providers[0].name).toBe('다른 창의 연결 변경');
+	expect((await stored()).models[0].id).toBe('model-one');
+	controller.dispose();
+});
+
+it('applies deleted metadata before credential cleanup and reports cleanup failures explicitly', async () => {
+	await seed();
+	const controller = new SettingsDialogController();
+	await controller.load();
+	let fail!: (error: Error) => void;
+	vi.mocked(deleteCredential).mockImplementationOnce(
+		() =>
+			new Promise((_, reject) => {
+				fail = reject;
+			})
+	);
+	const deleting = controller.deleteConnection(controller.settings.providers[0]);
+	await expect.poll(() => deleteCredential).toHaveBeenCalledWith('provider-one');
+	expect(controller.settings.providers).toHaveLength(0);
+	expect(controller.providerDraft).toBeNull();
+	expect(controller.busy).toBe(true);
+	expect((await stored()).models).toHaveLength(0);
+	fail(new Error('보안 저장소 접근 실패'));
+	await deleting;
+	expect(controller.error).toContain('API 연결은 삭제했지만 인증 정보를 정리하지 못했어요.');
+	expect(controller.status).toBe('');
+	expect(controller.busy).toBe(false);
+	controller.dispose();
+});
+
+it('does not apply a pending save after disposal or start a second mutation while busy', async () => {
+	await seed();
+	const controller = new SettingsDialogController();
+	await controller.load();
+	let finish!: () => void;
+	const pending = new Promise<void>((resolve) => {
+		finish = resolve;
+	});
+	const backend = vi.mocked(aiSettingsRequest).getMockImplementation()!;
+	vi.mocked(aiSettingsRequest).mockImplementationOnce(async (request) => {
+		await pending;
+		return backend(request);
+	});
+	const original = controller.settings;
+	const saving = controller.persist(() => emptyAISettings(), '저장 완료');
+	expect(controller.busy).toBe(true);
+	expect(await controller.persist(() => emptyAISettings(), '중복 저장')).toBe(false);
+	controller.dispose();
+	finish();
+	expect(await saving).toBe(false);
+	expect(controller.settings).toBe(original);
+	expect(controller.status).toBe('');
+});
+
 it.each([
 	{ width: 390, height: 844 },
 	{ width: 1000, height: 400 }
 ])('keeps settings and model editing reachable at $width by $height', async ({ width, height }) => {
 	await page.viewport(width, height);
-	seed();
+	await seed();
 	const screen = render(SettingsDialog, { onclose: vi.fn() });
 	await page.getByRole('button', { name: '내 모델 모델 편집', exact: true }).click();
 	const bounds = dialog().element().getBoundingClientRect();
@@ -499,6 +722,6 @@ it.each([
 	expect(bounds.bottom).toBeLessThanOrEqual(height);
 	await page.getByRole('textbox', { name: '표시 이름', exact: true }).fill('화면 크기 변경');
 	await page.getByRole('button', { name: '모델 저장', exact: true }).click();
-	expect(stored().models[0].name).toBe('화면 크기 변경');
+	expect((await stored()).models[0].name).toBe('화면 크기 변경');
 	await screen.unmount();
 });

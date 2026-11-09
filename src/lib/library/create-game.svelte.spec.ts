@@ -5,6 +5,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render as renderSvelte } from 'vitest-browser-svelte';
 import { page, userEvent } from 'vitest/browser';
 
+import { aiSettingsRequest } from '#lib/app/settings/settings-transport.js';
+import { memoryAISettingsTransport } from '#lib/testing/ai-settings.js';
+
 import type { Message, Game, Session, SessionConversation } from '../games/model.js';
 import type { SessionTimeline } from '../games/state/history.js';
 
@@ -33,6 +36,7 @@ import { loadSettingsDraft, storeSettingsDraft } from '../games/settings-draft.j
 import GameWorkspace from '../games/ui/GameWorkspace.svelte';
 import AppFixture from '../testing/AppFixture.svelte';
 
+vi.mock('#lib/app/settings/settings-transport.js', () => ({ aiSettingsRequest: vi.fn() }));
 vi.mock('$app/navigation', () => ({ goto: vi.fn() }));
 vi.mock('../games/ai/browser.js', () => ({ invokeSessionAI: vi.fn() }));
 // Workspace tests isolate the creator renderer; actual iframe behavior has its own browser suite.
@@ -136,8 +140,9 @@ function chatMessage(
 
 beforeEach(async () => {
 	vi.resetAllMocks();
+	vi.mocked(aiSettingsRequest).mockImplementation(memoryAISettingsTransport());
 	localStorage.clear();
-	saveAISettings({
+	await saveAISettings({
 		version: 1,
 		providers: [
 			{ id: 'provider', name: 'API', kind: 'openai-compatible', baseUrl: 'https://example.com/v1' }
@@ -262,7 +267,7 @@ describe('session chat', () => {
 
 describe('session chat', () => {
 	it('uses the model selected by the player for the next explicit AI request', async () => {
-		saveAISettings({
+		await saveAISettings({
 			version: 1,
 			providers: [
 				{
@@ -405,7 +410,7 @@ describe('session chat', () => {
 
 describe('session chat', () => {
 	it('explains missing models and does not generate until one is registered', async () => {
-		localStorage.removeItem('helia:ai-settings');
+		await saveAISettings({ version: 1, providers: [], models: [], defaultModelId: null });
 		render(GameWorkspace, { gameId: game.id });
 		await expect.element(page.getByRole('log')).toBeVisible();
 		await page.getByRole('textbox', { name: '메시지', exact: true }).fill('기다리는 행동');

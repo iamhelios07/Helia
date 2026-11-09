@@ -22,6 +22,14 @@ When deployed behind a reverse proxy, `HELIA_ORIGIN` is the public origin visibl
 
 Desktop development uses `pnpm desktop:dev`. A browser preview of the desktop build cannot access the native database.
 
+## Connection and model settings
+
+Connection metadata, registered models and the default model are stored in the trusted host's `ai_settings` table in `helia.sqlite`. Web browsers using the same Helia server load the same settings through `/api/ai-settings`; the browser is not the source of truth. Desktop uses the private native settings bridge and its own application database, not the web server. Separate servers and desktop installations do not synchronize automatically.
+
+On the first load of an uninitialized host, legacy `helia:ai-settings` browser metadata is imported while preserving connection and model IDs. Initialization is atomic and never replaces an existing host document, including an intentionally empty document. The legacy copy is removed only after a successful host load or import. Unreadable legacy data and failed imports remain untouched for recovery. Unknown fields, including API credentials, are excluded from metadata. Subsequent loads and saves work without browser storage.
+
+Reads are uncached; writes compare the revision of the loaded document so a stale tab cannot overwrite a newer change. A conflict requires reopening settings to load the current version. Loading or saving failures are surfaced instead of silently switching to a local copy. Browser-only layout preferences and prompt presets are unchanged.
+
 ## API credential storage policy
 
 The application settings use separate trusted-host credential storage and model-list requests. Credentials are independent of game storage and exports. [AI execution](../games/ai/README.md) reuses these credentials for host-mediated generation and enforces per-session generation leases on state writes.
@@ -171,7 +179,7 @@ Current host limits are 500 ms for interpreter execution, 16 MiB for its heap an
 
 This game-logic runtime provides Actions, Filters, included/independent Hook chains and commit-dependent UI event delivery. The [Preact UI and workbench](../games/ui/README.md) connect panels to these validated operations and publish successful session changes to live views. Arbitrary synchronous nested calls from inside an Action and asynchronous creator logic APIs are not part of this runtime. Self-contained external bundles use the same registrations and permission boundary; importing distributable package files is a later stage. Existing sessions use their current content until an explicit, successfully validated authoring Apply replaces it atomically.
 
-Native storage, API-connection and AI-generation calls use main-frame-only JavaScript closures carrying a random per-process credential. The Rust commands check the credential before accessing storage or starting provider requests. Application command ACLs grant only these three application commands and do not grant general core commands; opaque game UI frames receive no credential. This avoids relying on iframe-origin reporting, which differs between native WebViews.
+Native storage, model-settings, API-connection and AI-generation calls use main-frame-only JavaScript closures carrying a random per-process credential. The Rust commands check the credential before accessing storage or starting provider requests. Application command ACLs grant only these four application commands and do not grant general core commands; opaque game UI frames receive no credential. This avoids relying on iframe-origin reporting, which differs between native WebViews.
 
 ## Development checks
 

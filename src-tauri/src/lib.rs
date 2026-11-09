@@ -20,12 +20,15 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             storage::storage_request,
+            ai_settings::ai_settings_request,
             credentials::credential_request,
             generation::ai_request
         ])
         .run(tauri::generate_context!())
         .expect("error while running Helia");
 }
+#[cfg(any(feature = "desktop", test))]
+mod ai_settings;
 #[cfg(any(feature = "desktop", test))]
 mod credential_store;
 #[cfg(any(feature = "desktop", test))]

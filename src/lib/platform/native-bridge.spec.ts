@@ -28,7 +28,7 @@ function boot(child = false) {
 	return { window, internals, invoke };
 }
 
-it('captures the ready native invoker for storage, credentials and AI before application code runs', async () => {
+it('captures the ready native invoker for storage, settings, credentials and AI before application code runs', async () => {
 	const { window, internals, invoke } = boot();
 	const credentials = window.__HELIA_CREDENTIALS__ as (request: unknown) => Promise<unknown>;
 	await expect(credentials({ kind: 'status', providers: [] })).resolves.toEqual({ ok: true });
@@ -38,10 +38,12 @@ it('captures the ready native invoker for storage, credentials and AI before app
 	});
 	const request = { kind: 'read' };
 	await (window.__HELIA_STORAGE__ as (request: unknown) => Promise<unknown>)(request);
+	await (window.__HELIA_AI_SETTINGS__ as (request: unknown) => Promise<unknown>)(request);
 	await (window.__HELIA_AI__ as (request: unknown, chunk: unknown) => Promise<unknown>)(request, 1);
 	expect(invoke.mock.calls).toEqual([
 		['credential_request', { request: { kind: 'status', providers: [] }, token }],
 		['storage_request', { request, token }],
+		['ai_settings_request', { request, token }],
 		['ai_request', { request, onChunk: 1, token }]
 	]);
 	expect(window.token).toBeUndefined();
@@ -54,6 +56,7 @@ it('captures the ready native invoker for storage, credentials and AI before app
 it('never installs native bridges in a child frame', () => {
 	const { window } = boot(true);
 	expect(window.__HELIA_STORAGE__).toBeUndefined();
+	expect(window.__HELIA_AI_SETTINGS__).toBeUndefined();
 	expect(window.__HELIA_CREDENTIALS__).toBeUndefined();
 	expect(window.__HELIA_AI__).toBeUndefined();
 });

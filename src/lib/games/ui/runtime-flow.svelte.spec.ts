@@ -4,6 +4,8 @@ import { render } from 'vitest-browser-svelte';
 import { page } from 'vitest/browser';
 
 import { saveAISettings } from '#lib/app/settings/repository.js';
+import { aiSettingsRequest } from '#lib/app/settings/settings-transport.js';
+import { memoryAISettingsTransport } from '#lib/testing/ai-settings.js';
 
 import AppFixture from '../../testing/AppFixture.svelte';
 import {
@@ -19,6 +21,7 @@ import {
 	listSessionMemories
 } from '../repository.js';
 
+vi.mock('#lib/app/settings/settings-transport.js', () => ({ aiSettingsRequest: vi.fn() }));
 vi.mock('$app/navigation', () => ({ goto: vi.fn() }));
 vi.mock('../ai/browser.js', () => ({
 	invokeSessionAI: async (gameId: string, sessionId: string, input: { text: string }) => {
@@ -33,8 +36,9 @@ vi.mock('../../storage/transport.js', async () => {
 });
 
 beforeEach(async () => {
+	vi.mocked(aiSettingsRequest).mockReset().mockImplementation(memoryAISettingsTransport());
 	localStorage.clear();
-	saveAISettings({
+	await saveAISettings({
 		version: 1,
 		providers: [
 			{ id: 'provider', name: 'API', kind: 'openai-compatible', baseUrl: 'https://example.com/v1' }

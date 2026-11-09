@@ -3,5 +3,10 @@
 	"identifier": "default",
 	"description": "enables the default permissions",
 	"windows": ["main"],
-	"permissions": ["allow-storage-request", "allow-credential-request", "allow-ai-request"]
+	"permissions": [
+		"allow-storage-request",
+		"allow-ai-settings-request",
+		"allow-credential-request",
+		"allow-ai-request"
+	]
 }

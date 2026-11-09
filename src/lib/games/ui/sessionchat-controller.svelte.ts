@@ -80,6 +80,8 @@ export class SessionChatController {
 	modelSettings = $state.raw<AISettings>(emptyAISettings());
 	selectedModelId = $state('');
 	modelError = $state('');
+	modelsLoading = $state(false);
+	modelRequestId = 0;
 	externalBusy = $state(false);
 	streamedText = $state('');
 	thinking = $state('');
@@ -256,19 +258,34 @@ export class SessionChatController {
 			void this.reloadTimeline();
 		}
 	};
-	loadModels = () => {
-		if (this.saving) {
-			return;
+	loadModels = async () => {
+		if (this.saving || this.disposed) {
+			return false;
 		}
+		const game = this.gameId;
+		const session = this.sessionId;
+		const request = ++this.modelRequestId;
+		this.modelsLoading = true;
 		try {
-			this.modelSettings = loadAISettings();
-			if (!this.modelSettings.models.some((model) => model.id === this.selectedModelId)) {
-				this.selectedModelId =
-					this.modelSettings.defaultModelId ?? this.modelSettings.models[0]?.id ?? '';
+			const settings = await loadAISettings();
+			if (!this.isCurrent(game, session) || request !== this.modelRequestId || this.saving) {
+				return false;
+			}
+			this.modelSettings = settings;
+			if (!settings.models.some((model) => model.id === this.selectedModelId)) {
+				this.selectedModelId = settings.defaultModelId ?? settings.models[0]?.id ?? '';
 			}
 			this.modelError = '';
+			return true;
 		} catch (error) {
-			this.modelError = error instanceof Error ? error.message : '모델 설정을 불러오지 못했어요.';
+			if (this.isCurrent(game, session) && request === this.modelRequestId) {
+				this.modelError = error instanceof Error ? error.message : '모델 설정을 불러오지 못했어요.';
+			}
+			return false;
+		} finally {
+			if (!this.disposed && request === this.modelRequestId) {
+				this.modelsLoading = false;
+			}
 		}
 	};
 	receiveAgentEvent = (event: AgentEvent) => {
@@ -382,7 +399,9 @@ export class SessionChatController {
 	sendMessage = async (event?: SubmitEvent) => {
 		event?.preventDefault();
 		if (
+			this.disposed ||
 			this.loading ||
+			this.modelsLoading ||
 			this.locked ||
 			this.timelineBusy ||
 			this.blocked ||
@@ -391,13 +410,24 @@ export class SessionChatController {
 		) {
 			return;
 		}
-		this.loadModels();
-		if (this.modelError || !this.selectedModelId) {
+		const game = this.gameId;
+		const session = this.sessionId;
+		const loaded = await this.loadModels();
+		if (
+			!loaded ||
+			!this.isCurrent(game, session) ||
+			this.loading ||
+			this.locked ||
+			this.timelineBusy ||
+			this.blocked ||
+			this.loadError ||
+			!this.draft.trim() ||
+			this.modelError ||
+			!this.selectedModelId
+		) {
 			return;
 		}
 		this.requestId += 1;
-		const game = this.gameId;
-		const session = this.sessionId;
 		this.saving = true;
 		this.resetAttempt();
 		const controller = new AbortController();
@@ -447,7 +477,7 @@ export class SessionChatController {
 		void this.sendMessage();
 	};
 	mount = () => {
-		this.loadModels();
+		void this.loadModels();
 		this.externalBusy = isSessionBusy(this.gameId, this.sessionId);
 		const unsubscribeActivity = subscribeSessionActivity(this.gameId, this.sessionId, () => {
 			this.externalBusy = isSessionBusy(this.gameId, this.sessionId);
@@ -476,6 +506,7 @@ export class SessionChatController {
 		void this.loadConversation();
 		return () => {
 			this.disposed = true;
+			this.modelRequestId++;
 			this.generation?.abort();
 			unsubscribeActivity();
 			unsubscribeAIEvents();

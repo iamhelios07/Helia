@@ -38,6 +38,10 @@ impl StorageAccess {
                 value: request => invoke('storage_request', {{ request, token }}),
                 writable: false, configurable: false
             }});
+            Object.defineProperty(window, '__HELIA_AI_SETTINGS__', {{
+                value: request => invoke('ai_settings_request', {{ request, token }}),
+                writable: false, configurable: false
+            }});
             Object.defineProperty(window, '__HELIA_CREDENTIALS__', {{
                 value: request => invoke('credential_request', {{ request, token }}),
                 writable: false, configurable: false
