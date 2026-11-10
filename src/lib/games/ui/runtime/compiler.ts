@@ -5,7 +5,8 @@ import preactSource from 'preact?raw';
 
 import { isTypeOnlyModule } from '../../module-syntax.js';
 import { parseResources, type GameResources } from '../../resources.js';
-import { FRAME_BOOTSTRAP, FRAME_STYLES } from './frame-bootstrap.js';
+import { FRAME_BOOTSTRAP } from './frame-bootstrap.js';
+import { FRAME_STYLES } from './frame-styles.js';
 import { parseGameUI, type GameUI } from './model.js';
 
 /** Compile without executing creator code in the host. Only packaged modules can be resolved. */

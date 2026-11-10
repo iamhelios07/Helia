@@ -91,7 +91,3 @@ window.addEventListener('message',function initialize(event){
 });
 parent.postMessage({heliaUI:token},'*');
 `;
-
-export const FRAME_STYLES = `
-:root{font:14px system-ui,sans-serif;color:#e6e3ed;background:#17151e;color-scheme:dark}*{box-sizing:border-box}html,body,#workbench{margin:0;width:100%;height:100%;overflow:hidden}button,select,input{font:inherit}button,select{background:#302b3e;border:1px solid #514960;border-radius:5px;color:inherit;padding:5px 8px}button:focus-visible,select:focus-visible{outline:2px solid #b6a1ff;outline-offset:2px}button:disabled{opacity:.5}.content{overflow:auto;padding:12px;background:#201c29}progress{max-width:100%}ul{padding-left:22px}
-`;

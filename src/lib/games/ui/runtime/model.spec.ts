@@ -79,6 +79,9 @@ describe('game UI contracts and compilation', () => {
 		const html = await compileGameUI(ui, 'test-token');
 		expect(html).toContain("connect-src 'none'");
 		expect(html).toContain('test-token');
+		// The frame ships the shared neutral tokens, never the retired purple palette.
+		expect(html).toContain('--palette-pepper');
+		expect(html).not.toContain('#17151e');
 		expect(html).not.toMatch(/<script[^>]+src=/);
 		expect(html).not.toContain('new Function(');
 		const script = html.match(/<script>([\s\S]*)<\/script>/)![1];
