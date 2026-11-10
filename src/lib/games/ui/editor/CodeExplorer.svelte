@@ -154,23 +154,27 @@
 	</header>
 	{#if project}
 		{@render directory('')}
-		<button
-			type="button"
-			class={['file', { selected: active === 'GameState.d.ts' }]}
-			onclick={() => onselect('GameState.d.ts')}
-			title="상태 스키마에서 자동 생성"
-			><span class="mark">TS</span><span>GameState.d.ts</span><span class="annotation">자동</span
-			></button
-		>
-		<button
-			type="button"
-			class={['file', { selected: active === '.helia/runtime.d.ts' }]}
-			onclick={() => onselect('.helia/runtime.d.ts')}
-			title="helia와 @helia/ui의 정의"
-			><span class="mark">TS</span><span>runtime.d.ts</span><span class="annotation">자동</span
-			></button
-		>
-		{#if active !== 'GameState.d.ts' && (active || folder)}<div class="selection-tools">
+		<div class="generated" role="group" aria-label="자동 생성 파일">
+			<button
+				type="button"
+				class={['file', { selected: active === '.helia/GameState.d.ts' }]}
+				onclick={() => onselect('.helia/GameState.d.ts')}
+				title="상태 스키마에서 자동 생성"
+				><span class="mark">TS</span><span>GameState.d.ts</span><span class="annotation">자동</span
+				></button
+			>
+			<button
+				type="button"
+				class={['file', { selected: active === '.helia/runtime.d.ts' }]}
+				onclick={() => onselect('.helia/runtime.d.ts')}
+				title="helia와 @helia/ui의 정의"
+				><span class="mark">TS</span><span>runtime.d.ts</span><span class="annotation">자동</span
+				></button
+			>
+		</div>
+		{#if active !== '.helia/GameState.d.ts' && active !== '.helia/runtime.d.ts' && (active || folder)}<div
+				class="selection-tools"
+			>
 				<button type="button" {disabled} onclick={() => begin('rename')}>이름 변경</button>
 				<button
 					type="button"
@@ -179,7 +183,7 @@
 						(project.entry.startsWith(folder + '/') && !active)}
 					onclick={() => (deleting = true)}>삭제</button
 				>
-				{#if active && active !== 'GameState.d.ts' && active !== project.entry}<button
+				{#if active && active !== '.helia/GameState.d.ts' && active !== '.helia/runtime.d.ts' && active !== project.entry}<button
 						type="button"
 						{disabled}
 						onclick={() => project && active && write({ ...project, entry: active })}
@@ -337,6 +341,11 @@
 		font-size: 9px;
 		white-space: nowrap;
 		color: var(--text-muted);
+	}
+	.generated {
+		margin: 5px 0 0;
+		padding: 4px 0;
+		border-top: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
 	}
 	.children {
 		margin-left: 13px;

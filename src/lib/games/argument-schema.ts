@@ -16,7 +16,7 @@ function createProgram(
 	stateTypes: string
 ) {
 	const sources = new Map(Object.entries(files).map(([path, file]) => [root + path, file.source]));
-	sources.set(root + 'GameState.d.ts', stateTypes);
+	sources.set(root + '.helia/GameState.d.ts', stateTypes);
 	sources.set(root + '.helia/lib.es5.d.ts', standardLibrary);
 	sources.set(runtimePath, HELIA_AUTHORING_DECLARATIONS);
 	const options: ts.CompilerOptions = {

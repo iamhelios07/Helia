@@ -19,8 +19,8 @@ export function cleanProjectPath(value: string): string {
 	if (!validCodePath(path, true)) {
 		throw new Error('경로에는 영문, 숫자, 밑줄, 마침표, 하이픈과 /를 사용해주세요.');
 	}
-	if (path === 'GameState.d.ts') {
-		throw new Error('GameState.d.ts는 자동 생성되는 파일이에요.');
+	if (path === '.helia' || path.startsWith('.helia/')) {
+		throw new Error('.helia는 자동 생성 파일 전용 폴더예요.');
 	}
 	return path;
 }

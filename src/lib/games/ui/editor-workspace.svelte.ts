@@ -260,10 +260,10 @@ export class EditorWorkspace {
 			}
 		}
 		if (id === 'types:GameState') {
-			return 'GameState.d.ts';
+			return '.helia/GameState.d.ts';
 		}
 		if (id === 'types:HeliaRuntime') {
-			return 'runtime.d.ts';
+			return '.helia/runtime.d.ts';
 		}
 		return EDITOR_DOCUMENTS.find((document) => document.id === id)?.label ?? id;
 	};
@@ -272,7 +272,7 @@ export class EditorWorkspace {
 			return id.slice(5);
 		}
 		if (id === 'types:GameState') {
-			return 'GameState.d.ts';
+			return '.helia/GameState.d.ts';
 		}
 		if (id === 'types:HeliaRuntime') {
 			return '.helia/runtime.d.ts';
@@ -665,7 +665,7 @@ export class EditorWorkspace {
 			return id.slice(5);
 		}
 		if (id === 'types:GameState') {
-			return 'GameState.d.ts';
+			return '.helia/GameState.d.ts';
 		}
 		return id === 'types:HeliaRuntime' ? '.helia/runtime.d.ts' : null;
 	}
@@ -700,7 +700,7 @@ export class EditorWorkspace {
 		if (path === '.helia/runtime.d.ts') {
 			return 'types:HeliaRuntime';
 		}
-		if (path === 'GameState.d.ts') {
+		if (path === '.helia/GameState.d.ts') {
 			return 'types:GameState';
 		}
 		return Object.hasOwn(this.codeProject?.files ?? {}, path)

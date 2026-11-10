@@ -41,7 +41,7 @@ export class MonacoProject {
 			...Object.fromEntries(
 				Object.entries(documents).map(([path, source]) => [path, { source, language: 'json' }])
 			),
-			'GameState.d.ts': {
+			'.helia/GameState.d.ts': {
 				source: stateTypes || 'export type GameState = Record<string, unknown>;',
 				language: 'typescript'
 			},

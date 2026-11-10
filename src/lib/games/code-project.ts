@@ -219,6 +219,8 @@ export function createCodeProject(game: Pick<Game, 'scripts' | 'ui' | 'code'>): 
 		language: 'typescript',
 		source: (imports.join('\n') || 'export {};') + '\n'
 	};
+	// Every project starts with the global stylesheet entry, like main.ts for code.
+	files[GAME_STYLESHEET] = { language: 'css', source: '' };
 	return parseCodeProject({
 		version: 1,
 		entry: 'main.ts',

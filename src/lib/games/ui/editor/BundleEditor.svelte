@@ -214,7 +214,7 @@
 					></label
 				>{/if}
 			<button type="button" aria-pressed={showTypes} onclick={() => (showTypes = !showTypes)}
-				>GameState.d.ts</button
+				>GameState.d.ts 자동</button
 			>
 		</div>
 		<div class="module-actions">
@@ -235,9 +235,9 @@
 		{#if showTypes}<div class="types">
 				<SourceEditor
 					{project}
-					path="GameState.d.ts"
+					path=".helia/GameState.d.ts"
 					value={stateTypes}
-					label="생성된 GameState 타입"
+					label="GameState.d.ts 소스"
 					language="TypeScript"
 					readonly
 				/>

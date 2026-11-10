@@ -7,7 +7,7 @@
  * declaration generated from the game's state schema.
  */
 
-type GameState = import('../GameState').GameState;
+type GameState = import('./GameState').GameState;
 type JsonValue =
 	null | boolean | number | string | readonly JsonValue[] | { [key: string]: JsonValue };
 type ReadonlyState<T> = {
@@ -75,7 +75,7 @@ declare namespace JSX {
 }
 
 declare module '@helia/state' {
-	export type GameState = import('../GameState').GameState;
+	export type GameState = import('./GameState').GameState;
 }
 declare module '@helia/ui' {
 	export const helia: HeliaRuntime;

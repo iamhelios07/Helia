@@ -31,10 +31,10 @@ it('edits actual script strings and provides generated state diagnostics', async
 	await expect
 		.element(page.getByText("Type 'string' is not assignable to type 'number'.", { exact: false }))
 		.toBeVisible();
-	await page.getByRole('button', { name: 'GameState.d.ts', exact: true }).click();
-	await expect.poll(() => getMonacoSource('생성된 GameState 타입')).toBe(stateTypes);
+	await page.getByRole('button', { name: /GameState\.d\.ts.*자동/ }).click();
+	await expect.poll(() => getMonacoSource('GameState.d.ts 소스')).toBe(stateTypes);
 	await expect
-		.element(page.getByRole('textbox', { name: '생성된 GameState 타입' }))
+		.element(page.getByRole('textbox', { name: 'GameState.d.ts 소스' }))
 		.toHaveAttribute('readonly');
 });
 

@@ -131,7 +131,7 @@ it('edits source files as project tabs, keeps imports on rename, and hides stora
 		.toContain('answer');
 	await page.getByRole('button', { name: /GameState\.d\.ts.*자동/ }).click();
 	await expect
-		.element(page.getByRole('textbox', { name: 'GameState.d.ts 소스', exact: true }))
+		.element(page.getByRole('textbox', { name: '.helia/GameState.d.ts 소스', exact: true }))
 		.toHaveAttribute('readonly');
 	await expect
 		.element(page.getByRole('button', { name: 'JSON으로 편집', exact: true }))
@@ -141,9 +141,8 @@ it('creates style.css, edits it as CSS, and rejects renaming the stylesheet', as
 	const game = await createGame();
 	render(GameEditor, { gameId: game.id });
 	await expect.element(nameInput()).toBeVisible();
-	await page.getByRole('button', { name: '새 코드 파일', exact: true }).click();
-	await page.getByRole('textbox', { name: '프로젝트 상대 경로' }).fill('style.css');
-	await page.getByRole('button', { name: '확인', exact: true }).click();
+	// Every project starts with the stylesheet entry, like main.ts.
+	await page.getByTitle('style.css').click();
 	const sheet = page.getByRole('textbox', { name: 'style.css 소스', exact: true });
 	await expect.element(sheet).toBeVisible();
 	await setMonacoSource('style.css 소스', '.hp {\n  color: #eab4ae;\n}\n');
