@@ -249,9 +249,6 @@
 						onclick={() => (editor.previewMode = 'test')}>테스트 플레이</button
 					>
 				</div>
-				{#if editor.problems.length}<p class="preview-error">
-						입력 오류를 수정하면 미리보기에 반영돼요. 마지막 정상 콘텐츠를 표시합니다.
-					</p>{/if}
 				<div class="preview-body">
 					{#if editor.previewContent}<EditorPlayground
 							game={editor.previewContent}
@@ -615,13 +612,6 @@
 	.playground-tabs button[aria-pressed='true'] {
 		background: var(--surface-hover);
 		color: var(--text-strong);
-	}
-	.preview-error {
-		padding: 9px 12px;
-		font-size: 11px;
-		line-height: 1.6;
-		color: #eab4ae;
-		border-bottom: 1px solid var(--border);
 	}
 	.status-bar {
 		min-height: 25px;
