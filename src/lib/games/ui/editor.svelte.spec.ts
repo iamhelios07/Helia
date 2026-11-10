@@ -137,6 +137,31 @@ it('edits source files as project tabs, keeps imports on rename, and hides stora
 		.element(page.getByRole('button', { name: 'JSON으로 편집', exact: true }))
 		.not.toBeInTheDocument();
 });
+it('creates style.css, edits it as CSS, and rejects renaming the stylesheet', async () => {
+	const game = await createGame();
+	render(GameEditor, { gameId: game.id });
+	await expect.element(nameInput()).toBeVisible();
+	await page.getByRole('button', { name: '새 코드 파일', exact: true }).click();
+	await page.getByRole('textbox', { name: '프로젝트 상대 경로' }).fill('style.css');
+	await page.getByRole('button', { name: '확인', exact: true }).click();
+	const sheet = page.getByRole('textbox', { name: 'style.css 소스', exact: true });
+	await expect.element(sheet).toBeVisible();
+	await setMonacoSource('style.css 소스', '.hp {\n  color: #eab4ae;\n}\n');
+	await expect
+		.poll(
+			() =>
+				JSON.parse(loadEditorDraft(game.id)?.documents.code ?? '{}').files?.['style.css']?.language
+		)
+		.toBe('css');
+	await page.getByRole('button', { name: '이름 변경', exact: true }).click();
+	await page.getByRole('textbox', { name: '프로젝트 상대 경로' }).fill('theme.css');
+	await page.getByRole('button', { name: '확인', exact: true }).click();
+	await expect
+		.element(page.getByRole('main').getByRole('alert'))
+		.toHaveTextContent('파일 확장자는 .ts, .tsx를 사용해주세요.');
+	await page.getByRole('button', { name: '취소', exact: true }).click();
+	await expect.element(page.getByTitle('style.css')).toBeVisible();
+});
 
 it('keeps document edits in a local draft until atomic apply, preserving the play session', async () => {
 	const game = await createGame();

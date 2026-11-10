@@ -5,9 +5,11 @@ import type { Game } from './model.js';
 import { argumentSchemaCompiler } from './argument-schema.js';
 import { isTypeOnlyModule } from './module-syntax.js';
 import { generateStateTypes } from './state/schema.js';
-import { parseGameUI, type GameUI } from './ui/runtime/model.js';
+import { parseGameUI, UI_LIMITS, type GameUI } from './ui/runtime/model.js';
 
-export type CodeLanguage = 'typescript' | 'tsx';
+export type CodeLanguage = 'typescript' | 'tsx' | 'css';
+/** The single global creator stylesheet, loaded next to the project entry. */
+export const GAME_STYLESHEET = 'style.css';
 export interface CodeProject {
 	version: 1;
 	entry: string;
@@ -27,14 +29,15 @@ export class CodeProjectError extends Error {
 }
 export function validCodePath(value: unknown, folder = false): value is string {
 	return (
-		typeof value === 'string' &&
-		/^[\w][\w./-]{0,127}$/.test(value) &&
-		value
-			.split('/')
-			.every(
-				(part) => part && !['.', '..', '__proto__', 'constructor', 'prototype'].includes(part)
-			) &&
-		(folder || /\.(?:ts|tsx)$/.test(value))
+		value === GAME_STYLESHEET ||
+		(typeof value === 'string' &&
+			/^[\w][\w./-]{0,127}$/.test(value) &&
+			value
+				.split('/')
+				.every(
+					(part) => part && !['.', '..', '__proto__', 'constructor', 'prototype'].includes(part)
+				) &&
+			(folder || /\.(?:ts|tsx)$/.test(value)))
 	);
 }
 export function parseCodeProject(input: unknown): CodeProject {
@@ -89,24 +92,42 @@ function retargetImports(source: string): string {
 	);
 }
 
+/** Validates one raw project entry and returns its source, language and final path. */
+function parseFileEntry(
+	files: CodeProject['files'],
+	path: string,
+	raw: unknown
+): [{ language: CodeLanguage; source: string }, string, string] {
+	if (!validCodePath(path, true) || !raw || typeof raw !== 'object' || Array.isArray(raw)) {
+		throw Error('사용할 수 없는 코드 파일 경로예요.');
+	}
+	const file = raw as Record<string, unknown>;
+	const language = String(file.language);
+	if (
+		!['javascript', 'typescript', 'jsx', 'tsx', 'css'].includes(language) ||
+		typeof file.source !== 'string'
+	) {
+		throw Error('코드 파일의 언어와 내용을 확인해주세요.');
+	}
+	const target = typedPath(path);
+	if (!validCodePath(target) || Object.hasOwn(files, target)) {
+		throw Error('사용할 수 없는 코드 파일 경로예요.');
+	}
+	return [file as { language: CodeLanguage; source: string }, language, target];
+}
+
 function parseFiles(rawFiles: Record<string, unknown>, entry: string) {
 	const files: CodeProject['files'] = {};
 	let size = 0;
 	for (const [path, raw] of Object.entries(rawFiles)) {
-		if (!validCodePath(path, true) || !raw || typeof raw !== 'object' || Array.isArray(raw)) {
-			throw Error('사용할 수 없는 코드 파일 경로예요.');
+		const [file, language, target] = parseFileEntry(files, path, raw);
+		if (language === 'css') {
+			size += stylesheetSize(path, file.source);
+			files[target] = { language: 'css', source: file.source };
+			continue;
 		}
-		const file = raw as Record<string, unknown>;
-		const language = String(file.language);
-		if (
-			!['javascript', 'typescript', 'jsx', 'tsx'].includes(language) ||
-			typeof file.source !== 'string'
-		) {
-			throw Error('코드 파일의 언어와 내용을 확인해주세요.');
-		}
-		const target = typedPath(path);
-		if (!validCodePath(target) || Object.hasOwn(files, target)) {
-			throw Error('사용할 수 없는 코드 파일 경로예요.');
+		if (path === GAME_STYLESHEET) {
+			throw Error('style.css는 스타일시트 전용이에요.');
 		}
 		size += new TextEncoder().encode(file.source).length;
 		files[target] = {
@@ -124,6 +145,19 @@ function parseFiles(rawFiles: Record<string, unknown>, entry: string) {
 
 	return { files, entry: resolvedEntry };
 }
+
+/** style.css is the only stylesheet, reserved for CSS, and capped on its own. */
+function stylesheetSize(path: string, source: string): number {
+	if (path !== GAME_STYLESHEET) {
+		throw Error('스타일시트는 style.css 하나만 지원해요.');
+	}
+	const size = new TextEncoder().encode(source).length;
+	if (size > UI_LIMITS.styleBytes) {
+		throw Error('스타일시트가 너무 커요.');
+	}
+	return size;
+}
+
 function parseFolders(raw: unknown) {
 	let folders: string[] | undefined;
 	if (raw !== undefined) {
@@ -591,7 +625,13 @@ class ProjectCompiler {
 		if (entry) {
 			const { modules } = this.graph(entry, 'ui');
 			if (this.legacy) {
-				ui = parseGameUI({ version: 1, entry, modules, ...this.project.presentation });
+				ui = parseGameUI({
+					version: 1,
+					entry,
+					modules,
+					...this.withStylesheet(),
+					...this.project.presentation
+				});
 			} else {
 				this.uiRoots.add(entry);
 			}
@@ -617,11 +657,27 @@ class ProjectCompiler {
 				language: 'typescript',
 				source: startup.join('\n')
 			};
-			ui = parseGameUI({ version: 1, entry, modules, ...this.project.presentation });
+			ui = parseGameUI({
+				version: 1,
+				entry,
+				modules,
+				...this.withStylesheet(),
+				...this.project.presentation
+			});
 		}
 
 		return ui;
 	}
+	/** The global creator stylesheet rides along with any UI, including none at all. */
+	private withStylesheet(): Pick<GameUI, 'styles'> | undefined {
+		const stylesheet = this.project.files[GAME_STYLESHEET];
+		if (!stylesheet) {
+			return undefined;
+		}
+		// Reuse GameUI validation so both editors and the runtime enforce the same limits.
+		return { styles: parseGameUI(parseGameUIStyles(stylesheet.source)).styles };
+	}
+
 	compile(schema?: unknown) {
 		const { targets, legacy } = this.readTargets();
 		this.legacy = legacy;
@@ -639,6 +695,15 @@ export async function compileAuthoringGame(game: Game): Promise<Game> {
 	}
 	const compiled = await compileCodeProject(game.code, game.schema);
 	return { ...game, scripts: compiled.scripts, ui: compiled.ui };
+}
+
+function parseGameUIStyles(source: string) {
+	return {
+		version: 1 as const,
+		entry: 'x.tsx',
+		modules: { 'x.tsx': { language: 'tsx' as const, source: '' } },
+		styles: source
+	};
 }
 
 function comparePaths(a: string, b: string) {

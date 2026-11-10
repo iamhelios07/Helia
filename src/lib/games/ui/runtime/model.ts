@@ -25,6 +25,8 @@ export interface GameUI {
 	version: 1;
 	entry: string;
 	modules: Record<string, { language: 'tsx' | 'typescript'; source: string }>;
+	/** Global stylesheet injected after the frame base styles. */
+	styles?: string;
 	layout?: PanelLayout;
 	chatDock?: 'left' | 'right' | 'top' | 'bottom';
 	chatRatio?: number;
@@ -40,6 +42,7 @@ export const UI_LIMITS = Object.freeze({
 	panels: 16,
 	modules: 32,
 	sourceBytes: 512 * 1024,
+	styleBytes: 64 * 1024,
 	wireBytes: 2 * 1024 * 1024,
 	pending: 16
 });
@@ -176,6 +179,17 @@ export function parseGameUI(value: unknown): GameUI {
 		throw Error('게임 UI 진입점을 찾을 수 없어요.');
 	}
 	const result: GameUI = { version: 1, entry: input.entry, modules };
+	if (input.styles !== undefined) {
+		if (typeof input.styles !== 'string' || input.styles.length > UI_LIMITS.styleBytes) {
+			throw Error('게임 UI 스타일시트가 올바르지 않아요.');
+		}
+		// The frame CSP already blocks @import and url() loads; reject them loudly
+		// instead of letting them fail silently at runtime.
+		if (/@(?:import|charset|namespace)\b|url\s*\(|expression\s*\(/i.test(input.styles)) {
+			throw Error('게임 스타일시트에는 @import와 url()을 쓸 수 없어요.');
+		}
+		result.styles = input.styles;
+	}
 	if (input.layout !== undefined) {
 		result.layout = parsePanelLayout(input.layout);
 	}

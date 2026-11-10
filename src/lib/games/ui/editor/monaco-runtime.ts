@@ -30,6 +30,8 @@ import 'monaco-editor/editor/standalone/browser/quickAccess/standaloneCommandsQu
 import 'monaco-editor/editor/standalone/browser/quickAccess/standaloneGotoLineQuickAccess.js';
 import 'monaco-editor/languages/definitions/typescript/register.js';
 import EditorWorker from 'monaco-editor/editor/editor.worker.js?worker';
+import 'monaco-editor/language/css/monaco.contribution.js';
+import CssWorker from 'monaco-editor/language/css/css.worker.js?worker';
 import JsonWorker from 'monaco-editor/languages/features/json/json.worker.js?worker';
 import { jsonDefaults } from 'monaco-editor/languages/features/json/register.js';
 import {
@@ -49,6 +51,9 @@ self.MonacoEnvironment = {
 		}
 		if (label === 'json') {
 			return new JsonWorker();
+		}
+		if (label === 'css') {
+			return new CssWorker();
 		}
 		return new EditorWorker();
 	}

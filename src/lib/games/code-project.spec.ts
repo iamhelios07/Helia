@@ -12,6 +12,7 @@ import { editorContent } from './editor.js';
 import { createGameRepository } from './repository-core.js';
 import { evaluateAction } from './scripting/engine.js';
 import { compileGameUI } from './ui/runtime/compiler.js';
+import { parseGameUI } from './ui/runtime/model.js';
 
 function fixture(): CodeProject {
 	return {
@@ -330,4 +331,82 @@ it('migrates saved JavaScript projects to typed files on load', async () => {
 	// Extension-qualified imports are rewritten so resolution still finds the typed target.
 	expect(project.files['main.ts'].source).toContain("from './shared'");
 	expect(await compileCodeProject(project)).toBeTruthy();
+});
+
+it('ships style.css as the global UI stylesheet injected after frame base styles', async () => {
+	const input: CodeProject = {
+		version: 1,
+		entry: 'main.ts',
+		files: {
+			'main.ts': {
+				language: 'typescript',
+				source:
+					"'use ui';\nimport { registerPanel } from '@helia/ui';\nregisterPanel({ id: 'a', title: 'A', component: () => null });\n"
+			},
+			'style.css': {
+				language: 'css',
+				source: '.hp { color: #eab4ae; }\nbutton { border-radius: 0; }'
+			}
+		}
+	};
+	const compiled = await compileCodeProject(input);
+	expect(compiled.ui?.styles).toBe(input.files['style.css'].source);
+	const html = await compileGameUI(compiled.ui!, 'token');
+	// Creator styles come after the shared base so they can override frame defaults.
+	expect(html.indexOf('--palette-pepper')).toBeLessThan(html.indexOf('.hp'));
+	// A project without a stylesheet stays byte-identical to the previous output shape.
+	const bare = await compileCodeProject({ ...input, files: { 'main.ts': input.files['main.ts'] } });
+	expect(bare.ui?.styles).toBeUndefined();
+});
+
+it('rejects a second stylesheet and non-css use of style.css', () => {
+	const base = { version: 1 as const, entry: 'main.ts' };
+	expect(() =>
+		parseCodeProject({
+			...base,
+			files: {
+				'main.ts': { language: 'typescript', source: 'export {};' },
+				'style.css': { language: 'css', source: 'p{}' },
+				'ui/extra.css': { language: 'css', source: '' }
+			}
+		})
+	).toThrow();
+	expect(() =>
+		parseCodeProject({
+			...base,
+			files: {
+				'main.ts': { language: 'typescript', source: 'export {};' },
+				'style.css': { language: 'typescript', source: 'export {};' }
+			}
+		})
+	).toThrow('스타일시트 전용');
+});
+
+it('enforces the stylesheet size and load-free rules', async () => {
+	const base = { version: 1 as const, entry: 'main.ts' };
+	expect(() =>
+		parseGameUI({
+			version: 1,
+			entry: 'm.tsx',
+			modules: { 'm.tsx': { language: 'tsx', source: '' } },
+			styles: '@import url("https://example.com/x.css");'
+		})
+	).toThrow('@import와 url()을 쓸 수 없어요');
+	expect(() =>
+		parseGameUI({
+			version: 1,
+			entry: 'm.tsx',
+			modules: { 'm.tsx': { language: 'tsx', source: '' } },
+			styles: 'a { background: url(images/x.png); }'
+		})
+	).toThrow('@import와 url()을 쓸 수 없어요');
+	await expect(
+		compileCodeProject({
+			...base,
+			files: {
+				'main.ts': { language: 'typescript', source: 'export {};' },
+				'style.css': { language: 'css', source: 'a { color: red; }'.repeat(10_000) }
+			}
+		})
+	).rejects.toThrow('스타일시트가 너무 커요');
 });

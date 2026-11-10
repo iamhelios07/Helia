@@ -34,7 +34,7 @@ export async function compileGameUI(
 		])
 	);
 	const code = `((run) => {const factories={${compiler.factories.join(',')}};run(factories,${JSON.stringify(Object.fromEntries(compiler.dependencies))},${JSON.stringify(ui.entry)},${JSON.stringify(token)},JSON.parse(${JSON.stringify(JSON.stringify(resourceURLs))}));})(function(factories,dependencies,entry,token,resources){${FRAME_BOOTSTRAP}\n})`;
-	return `<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; media-src data:; connect-src 'none'; frame-src 'none'; form-action 'none'; base-uri 'none'"><meta name="referrer" content="no-referrer"><style>${FRAME_STYLES}</style></head><body><div id="workbench"></div><script>${code.replace(/<\/script/gi, '<\\/script')}</script></body></html>`;
+	return `<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; media-src data:; connect-src 'none'; frame-src 'none'; form-action 'none'; base-uri 'none'"><meta name="referrer" content="no-referrer"><style>${FRAME_STYLES}${ui.styles ? '\n' + ui.styles : ''}</style></head><body><div id="workbench"></div><script>${code.replace(/<\/script/gi, '<\\/script')}</script></body></html>`;
 }
 
 class UICompiler {

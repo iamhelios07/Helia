@@ -1,12 +1,15 @@
-import { validCodePath, type CodeProject } from '../../code-project.js';
+import { GAME_STYLESHEET, validCodePath, type CodeProject } from '../../code-project.js';
 
-export function codeLanguage(path: string): 'typescript' | 'tsx' {
+export function codeLanguage(path: string): 'typescript' | 'tsx' | 'css' {
 	const extension = path.split('.').at(-1);
 	if (extension === 'ts') {
 		return 'typescript';
 	}
 	if (extension === 'tsx') {
 		return 'tsx';
+	}
+	if (path === GAME_STYLESHEET) {
+		return 'css';
 	}
 	throw new Error('파일 확장자는 .ts, .tsx를 사용해주세요.');
 }
@@ -60,6 +63,9 @@ export async function renameCodePath(
 	before: string,
 	after: string
 ): Promise<CodeProject> {
+	if (before === GAME_STYLESHEET && after !== GAME_STYLESHEET) {
+		throw new Error('style.css는 이름을 바꿀 수 없어요. 삭제 후 다시 만들어주세요.');
+	}
 	const { default: ts } = await import('typescript');
 	const moved = (path: string) => {
 		if (path === before) {

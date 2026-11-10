@@ -8,3 +8,4 @@ declare module 'monaco-editor/languages/features/typescript/ts.worker.js' {
 	}
 	export function initialize(factory: (context: unknown, data: unknown) => object): void;
 }
+declare module 'monaco-editor/language/css/monaco.contribution.js';

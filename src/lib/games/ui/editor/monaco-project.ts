@@ -192,5 +192,8 @@ function modelLanguage(language: string) {
 	if (['ts', 'typescript', 'tsx'].includes(normalized)) {
 		return 'typescript';
 	}
+	if (normalized === 'css') {
+		return 'css';
+	}
 	return 'json';
 }
