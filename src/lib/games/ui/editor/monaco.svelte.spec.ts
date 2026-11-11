@@ -311,3 +311,42 @@ it('reports unused declarations and keeps affecting other files without extra li
 		host.remove();
 	}
 });
+
+it('registers the css language service: markers and highlighting run through the css worker', async () => {
+	const session = new MonacoProject();
+	projects.push(session);
+	session.update({}, '');
+	const { monaco } = await session.ready();
+	const model = session.model('style.css', '.hp { colr: red; }', 'css');
+	const host = document.createElement('div');
+	document.body.append(host);
+	const instance = monaco.editor.create(host, { model, theme: 'helia' });
+	try {
+		// cssMode diagnostics come from the css worker; an unknown property must be flagged.
+		await expect
+			.poll(
+				() =>
+					monaco.editor
+						.getModelMarkers({ resource: model.uri })
+						.map((m) => m.message)
+						.join('|'),
+				{ timeout: 20000 }
+			)
+			.toContain('Unknown property');
+		// The monarch tokenizer produces css token types once the language loads.
+		await expect
+			.poll(
+				() =>
+					monaco.editor
+						.tokenize('.hp { color: #eab4ae; }', 'css')
+						.flat()
+						.map((t) => t.type)
+						.join('|'),
+				{ timeout: 10000 }
+			)
+			.toContain('attribute.name.css');
+	} finally {
+		instance.dispose();
+		host.remove();
+	}
+});

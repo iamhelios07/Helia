@@ -28,6 +28,7 @@ import 'monaco-editor/editor/contrib/wordOperations/browser/wordOperations.js';
 import 'monaco-editor/editor/contrib/wordPartOperations/browser/wordPartOperations.js';
 import 'monaco-editor/editor/standalone/browser/quickAccess/standaloneCommandsQuickAccess.js';
 import 'monaco-editor/editor/standalone/browser/quickAccess/standaloneGotoLineQuickAccess.js';
+import 'monaco-editor/languages/definitions/css/register.js';
 import 'monaco-editor/languages/definitions/typescript/register.js';
 import EditorWorker from 'monaco-editor/editor/editor.worker.js?worker';
 import 'monaco-editor/language/css/monaco.contribution.js';
