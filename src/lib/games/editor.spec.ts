@@ -125,7 +125,11 @@ describe('IDE authoring drafts', () => {
 		expect(saved.activeSessionId).toBe(other.id);
 		const refreshed = await repo.getSessionHistory(game.id, game.activeSessionId);
 		expect(refreshed.snapshot.settings).toEqual(saved.settings);
-		expect(refreshed.snapshot.migrationFrom).toBe(history.snapshot.id);
+		// The migrated content is a new shared snapshot; checkpoints moved to their own table.
+		expect(refreshed.snapshot.id).not.toBe(history.snapshot.id);
+		expect(refreshed.checkpoints.map((row) => row.transactionId).sort()).toEqual(
+			history.transactions.map((row) => row.id).sort()
+		);
 		expect(refreshed.transactions).toEqual(history.transactions);
 	});
 });

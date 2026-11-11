@@ -596,7 +596,8 @@ describe('SQLite game repository', () => {
 			content: '기억'
 		});
 		await repository.deleteSession(gameId, sessionId);
-		for (const table of ['messages', 'progress', 'snapshots', 'transactions', 'memories']) {
+		// Snapshots are content-addressed and shared across sessions; session-owned records cascade away.
+		for (const table of ['messages', 'progress', 'transactions', 'memories', 'checkpoints']) {
 			expect(storage.connection.prepare(`select count(*) as count from ${table}`).get()).toEqual({
 				count: 0
 			});

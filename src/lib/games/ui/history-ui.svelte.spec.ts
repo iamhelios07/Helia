@@ -216,9 +216,17 @@ it('confirms subtree deletion, preserves sibling branches and removes attached m
 	expect((await getSessionTimeline(setup.gameId, setup.sessionId)).events).toHaveLength(4);
 	await panel.getByRole('button', { name: '구매 삭제', exact: true }).click();
 	await modal.getByRole('button', { name: '삭제', exact: true }).click();
+	const afterRows = await getSessionTimeline(setup.gameId, setup.sessionId);
+	console.log(
+		'AFTER-DEL events=' +
+			afterRows.events.length +
+			' head=' +
+			String(afterRows.history.progress.headId).slice(0, 8)
+	);
 	await expect.element(modal).not.toBeInTheDocument();
 	await expect.poll(conversation).toEqual(['상점에 도착했다.', '입장 완료']);
 	const timeline = await getSessionTimeline(setup.gameId, setup.sessionId);
+	console.log('AFTER-DEL', JSON.stringify(timeline.events.map((e) => e.id.slice(0, 8))));
 	expect(timeline.events.map((event) => event.id)).toEqual([setup.shared, setup.other]);
 	expect(timeline.history.progress.headId).toBe(setup.shared);
 	expect(timeline.memories).toEqual([]);

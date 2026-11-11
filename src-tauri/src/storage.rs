@@ -66,6 +66,9 @@ enum Table {
     Progress,
     Transactions,
     Memories,
+    Blobs,
+    SnapshotResources,
+    Checkpoints,
 }
 impl Table {
     fn name(self) -> &'static str {
@@ -77,17 +80,23 @@ impl Table {
             Self::Progress => "progress",
             Self::Transactions => "transactions",
             Self::Memories => "memories",
+            Self::Blobs => "blobs",
+            Self::SnapshotResources => "snapshot_resources",
+            Self::Checkpoints => "checkpoints",
         }
     }
     fn order(self) -> u8 {
         match self {
             Self::Games => 0,
             Self::Sessions => 1,
-            Self::Snapshots => 2,
-            Self::Messages => 3,
-            Self::Progress => 4,
-            Self::Transactions => 5,
-            Self::Memories => 6,
+            Self::Blobs => 2,
+            Self::Snapshots => 3,
+            Self::SnapshotResources => 4,
+            Self::Messages => 5,
+            Self::Progress => 6,
+            Self::Transactions => 7,
+            Self::Memories => 8,
+            Self::Checkpoints => 9,
         }
     }
 }
@@ -264,13 +273,18 @@ fn read_rows(
     game_id: Option<&str>,
     session_id: Option<&str>,
 ) -> Result<Vec<StoredRecord>, String> {
+    // Game-scoped tables (shared snapshots, blobs, resource references) ignore session filters.
+    let shared = matches!(
+        table,
+        Table::Snapshots | Table::Blobs | Table::SnapshotResources
+    );
     let (query, parameters) = if let Some(game) = game_id {
         if table == Table::Games {
             (
                 "SELECT id, value FROM games WHERE id=?1".to_owned(),
                 vec![game],
             )
-        } else if let Some(session) = session_id.filter(|_| table != Table::Sessions) {
+        } else if let Some(session) = session_id.filter(|_| table != Table::Sessions && !shared) {
             (
                 format!(
                     "SELECT id, game_id, session_id, value FROM {} WHERE game_id=?1 AND session_id=?2",
@@ -300,6 +314,8 @@ fn read_rows(
                 None
             } else if table == Table::Sessions {
                 Some(id.clone())
+            } else if shared {
+                None
             } else {
                 Some(row.get("session_id")?)
             };
@@ -335,11 +351,13 @@ fn validate(row: &StoredRecord, game_id: &str) -> Result<(), String> {
     } else {
         "id"
     };
+    let game_scoped = matches!(row.table, Table::Snapshots | Table::Blobs | Table::SnapshotResources);
+    let session_scoped = !game_scoped && row.table != Table::Games && row.table != Table::Sessions;
     if row.id.trim().is_empty()
         || row.game_id != game_id
         || row.value[id_key].as_str() != Some(row.id.as_str())
         || row.value["schemaVersion"].as_u64() != Some(expected)
-        || (row.table != Table::Games && row.value["gameId"].as_str() != Some(game_id))
+        || (session_scoped && row.value["gameId"].as_str() != Some(game_id))
     {
         return Err("저장 항목의 소유 정보나 형식이 올바르지 않아요.".into());
     }
@@ -354,15 +372,12 @@ fn validate(row: &StoredRecord, game_id: &str) -> Result<(), String> {
         Table::Sessions if row.session_id.as_deref() != Some(row.id.as_str()) => {
             return Err("세션 정보가 올바르지 않아요.".into());
         }
-        Table::Snapshots
-            if row
-                .session_id
-                .as_deref()
-                .is_none_or(|id| id.trim().is_empty()) =>
+        Table::Snapshots | Table::Blobs | Table::SnapshotResources
+            if row.session_id.is_some() =>
         {
-            return Err("스냅샷 소유 정보가 없어요.".into());
+            return Err("공유 저장 항목이 세션을 소유할 수 없어요.".into());
         }
-        Table::Messages | Table::Progress | Table::Transactions | Table::Memories
+        Table::Messages | Table::Progress | Table::Transactions | Table::Memories | Table::Checkpoints
             if row.session_id.as_deref() != row.value["sessionId"].as_str()
                 || row.session_id.is_none() =>
         {
@@ -717,15 +732,24 @@ fn valid_snapshot(value: &Value) -> bool {
         && object_state(&value["initialState"])
         && scripts(&value["scripts"])
         && game_ui(value.get("ui"))
-        && resources(value.get("resources"))
         && code_project(value.get("code"))
-        && value.get("restoredStates").is_none_or(|states| {
-            states.as_object().is_some_and(|states| {
-                states
-                    .iter()
-                    .all(|(key, state)| !key.trim().is_empty() && object_state(state))
-            }) && id(&value["migrationFrom"])
-        })
+}
+fn valid_blob(value: &Value) -> bool {
+    blob_id(&value["id"]) && id(&value["mime"]) && !value["data"].as_str().unwrap_or("").is_empty()
+}
+fn blob_id(value: &Value) -> bool {
+    value
+        .as_str()
+        .is_some_and(|v| v.len() == 64 && v.chars().all(|c| c.is_ascii_hexdigit()))
+}
+fn valid_snapshot_resource(value: &Value) -> bool {
+    blob_id(&value["blobId"]) && id(&value["assetId"]) && id(&value["name"])
+}
+fn valid_checkpoint(value: &Value) -> bool {
+    id(&value["transactionId"])
+        && id(&value["snapshotId"])
+        && id(&value["sessionId"])
+        && object_state(&value["state"])
 }
 fn valid_transaction(value: &Value) -> bool {
     timestamp(&value["createdAt"])
@@ -797,6 +821,9 @@ fn valid_value(table: Table, value: &Value) -> bool {
                 && (value["kind"] != "opening" || value["role"] == "assistant")
         }
         Table::Snapshots => valid_snapshot(value),
+        Table::Blobs => valid_blob(value),
+        Table::SnapshotResources => valid_snapshot_resource(value),
+        Table::Checkpoints => valid_checkpoint(value),
         Table::Progress => {
             id(&value["snapshotId"])
                 && (value["headId"].is_null() || id(&value["headId"]))
@@ -816,6 +843,10 @@ fn valid_value(table: Table, value: &Value) -> bool {
 }
 
 fn write_row(connection: &Connection, row: &StoredRecord, create: bool) -> Result<(), String> {
+    let shared = matches!(
+        row.table,
+        Table::Snapshots | Table::Blobs | Table::SnapshotResources
+    );
     let value = row.value.to_string();
     let count = if row.table == Table::Games {
         if create {
@@ -836,7 +867,7 @@ fn write_row(connection: &Connection, row: &StoredRecord, create: bool) -> Resul
             Value::String(row.id.clone()),
             Value::String(row.game_id.clone()),
         ];
-        if row.table != Table::Sessions {
+        if row.table != Table::Sessions && !shared {
             fields.push("session_id");
             values.push(json!(row.session_id));
         }
@@ -846,16 +877,21 @@ fn write_row(connection: &Connection, row: &StoredRecord, create: bool) -> Resul
             fields.push("sequence");
             values.push(row.value["sequence"].clone());
         }
-        if row.table == Table::Progress {
+        if matches!(
+            row.table,
+            Table::Progress | Table::Checkpoints | Table::SnapshotResources
+        ) {
             fields.push("snapshot_id");
             values.push(row.value["snapshotId"].clone());
         }
-        let immutable = matches!(
-            row.table,
-            Table::Snapshots | Table::Transactions | Table::Memories
-        );
-        let conflict = if create || immutable {
-            String::new()
+        let immutable = matches!(row.table, Table::Transactions | Table::Memories);
+        // Content-addressed shared rows are keyed by their own hash: identical bytes re-inserting is a no-op.
+        let conflict = if create || immutable || shared {
+            if shared {
+                " ON CONFLICT(id, game_id) DO NOTHING".to_owned()
+            } else {
+                String::new()
+            }
         } else {
             let updates: Vec<_> = fields
                 .iter()
@@ -891,7 +927,7 @@ fn write_row(connection: &Connection, row: &StoredRecord, create: bool) -> Resul
         connection.execute(&query, rusqlite::params_from_iter(parameters?))
     }
     .map_err(db_error)?;
-    if count != 1 {
+    if count != 1 && !shared {
         return Err("다른 세션의 저장 항목이에요.".into());
     }
     Ok(())
@@ -945,8 +981,12 @@ fn read_game(
                 Table::Progress,
                 Table::Transactions,
                 Table::Memories,
+                Table::Checkpoints,
             ] {
                 records.extend(read_rows(connection, table, Some(game_id), session_id)?);
+            }
+            for table in [Table::Blobs, Table::SnapshotResources] {
+                records.extend(read_rows(connection, table, Some(game_id), None)?);
             }
         }
         json!({ "version": version, "records": records })
@@ -1052,10 +1092,19 @@ fn apply_recorded_change(state: &mut Value, change: &Value) -> Result<(), String
     Ok(())
 }
 fn restored_state<'a>(
+    connection: &Connection,
+    game_id: &str,
+    session_id: &str,
     snapshot: &Value,
     nodes: &'a std::collections::HashMap<String, Value>,
     mut head: Option<&'a str>,
 ) -> Result<Value, String> {
+    let checkpoints = read_rows(
+        connection,
+        Table::Checkpoints,
+        Some(game_id),
+        Some(session_id),
+    )?;
     let mut visited = std::collections::HashSet::new();
     let mut path = vec![];
     while let Some(id) = head {
@@ -1074,11 +1123,13 @@ fn restored_state<'a>(
             return Err("게임 진행 리비전이 올바르지 않아요.".into());
         }
         revision = next;
-        if let Some(mapped) = snapshot
-            .get("restoredStates")
-            .and_then(|states| states.get(node["id"].as_str().unwrap()))
-        {
-            state = mapped.clone();
+        let node_id = node["id"].as_str().unwrap_or("");
+        let checkpoint = checkpoints.iter().find(|row| {
+            row.value["snapshotId"].as_str() == snapshot["id"].as_str()
+                && row.value["transactionId"].as_str() == Some(node_id)
+        });
+        if let Some(mapped) = checkpoint {
+            state = mapped.value["state"].clone();
         } else {
             for change in node["changes"].as_array().unwrap() {
                 apply_recorded_change(&mut state, change)?;
@@ -1089,27 +1140,28 @@ fn restored_state<'a>(
     Ok(state)
 }
 fn validate_restored(
+    connection: &Connection,
+    game_id: &str,
+    session_id: &str,
     snapshot: &Value,
-    snapshots: &[StoredRecord],
     transactions: &[StoredRecord],
 ) -> Result<(), String> {
-    if let Some(states) = snapshot.get("restoredStates") {
-        let source = snapshot["migrationFrom"]
-            .as_str()
-            .ok_or("상태 변환 원본이 없어요.")?;
-        if source == snapshot["id"].as_str().unwrap_or("")
-            || !snapshots.iter().any(|row| row.id == source)
-        {
-            return Err("상태 변환 원본을 찾을 수 없어요.".into());
+    let checkpoints = read_rows(
+        connection,
+        Table::Checkpoints,
+        Some(game_id),
+        Some(session_id),
+    )?;
+    for checkpoint in &checkpoints {
+        if checkpoint.value["snapshotId"].as_str() != snapshot["id"].as_str() {
+            continue;
         }
-        for (id, state) in states.as_object().ok_or("잘못된 상태 변환 기록이에요.")? {
-            if !transactions.iter().any(|row| row.id == *id) {
-                return Err("상태 변환의 기록을 찾을 수 없어요.".into());
-            }
-            crate::state_schema::validate_value(&snapshot["schema"], state, "load")?;
+        let transaction_id = checkpoint.value["transactionId"].as_str().unwrap_or("");
+        if !transactions.iter().any(|row| row.id == transaction_id) {
+            return Err("상태 변환의 기록을 찾을 수 없어요.".into());
         }
+        crate::state_schema::validate_value(&snapshot["schema"], &checkpoint.value["state"], "load")?;
     }
-
     Ok(())
 }
 fn validate_message_links(
@@ -1182,7 +1234,7 @@ fn validate_history(
         .find(|row| Some(row.id.as_str()) == progress.value["snapshotId"].as_str())
         .ok_or("세션의 게임 정의가 일치하지 않아요.")?
         .value;
-    validate_restored(snapshot, &snapshots, &transactions)?;
+    validate_restored(connection, game_id, session_id, snapshot, &transactions)?;
     crate::state_schema::validate_value(&snapshot["schema"], &progress.value["state"], "load")?;
     let mut nodes = std::collections::HashMap::new();
     let mut revisions = std::collections::HashSet::new();
@@ -1208,9 +1260,16 @@ fn validate_history(
         }
     }
     for id in nodes.keys() {
-        restored_state(snapshot, &nodes, Some(id))?;
+        restored_state(connection, game_id, session_id, snapshot, &nodes, Some(id))?;
     }
-    let state = restored_state(snapshot, &nodes, progress.value["headId"].as_str())?;
+    let state = restored_state(
+        connection,
+        game_id,
+        session_id,
+        snapshot,
+        &nodes,
+        progress.value["headId"].as_str(),
+    )?;
     if !crate::state_schema::equal(&state, &progress.value["state"]) {
         return Err("저장된 상태가 진행 기록과 일치하지 않아요.".into());
     }
@@ -1285,32 +1344,20 @@ fn delete_pruned_records(
         .collect();
     Ok(surviving)
 }
-fn prune_restored_states(
+/// Removed events drop their migration checkpoints as plain rows.
+fn delete_pruned_checkpoints(
     connection: &Connection,
     game_id: &str,
     session_id: &str,
-    snapshots: Vec<StoredRecord>,
     removed: &std::collections::HashSet<String>,
 ) -> Result<(), String> {
-    for mut row in snapshots {
-        if let Some(states) = row
-            .value
-            .get_mut("restoredStates")
-            .and_then(Value::as_object_mut)
-        {
-            states.retain(|id, _| !removed.contains(id));
-            connection
-                .execute(
-                    "UPDATE snapshots SET value=?1 WHERE id=?2 AND game_id=?3 AND session_id=?4",
-                    params![
-                        serde_json::to_string(&row.value).map_err(|_| "잘못된 복원 상태")?,
-                        row.id,
-                        game_id,
-                        session_id
-                    ],
-                )
-                .map_err(db_error)?;
-        }
+    for id in removed {
+        connection
+            .execute(
+                "DELETE FROM checkpoints WHERE id=?1 AND game_id=?2 AND session_id=?3",
+                params![id, game_id, session_id],
+            )
+            .map_err(db_error)?;
     }
 
     Ok(())
@@ -1356,6 +1403,7 @@ fn publish_prune(
         Table::Progress,
         Table::Transactions,
         Table::Memories,
+        Table::Checkpoints,
     ] {
         records.extend(read_rows(
             connection,
@@ -1363,6 +1411,9 @@ fn publish_prune(
             Some(game_id),
             Some(session_id),
         )?);
+    }
+    for table in [Table::Blobs, Table::SnapshotResources] {
+        records.extend(read_rows(connection, table, Some(game_id), None)?);
     }
     Ok(json!({"version":version,"records":records}))
 }
@@ -1422,10 +1473,17 @@ fn prune(
         .iter()
         .map(|row| (row.id.clone(), row.value.clone()))
         .collect();
-    let state = restored_state(snapshot, &nodes, next_head.as_str())?;
+    let state = restored_state(
+        connection,
+        game_id,
+        session_id,
+        snapshot,
+        &nodes,
+        next_head.as_str(),
+    )?;
     let mut surviving =
         delete_pruned_records(connection, game_id, session_id, &removed, &transactions)?;
-    prune_restored_states(connection, game_id, session_id, snapshots, &removed)?;
+    delete_pruned_checkpoints(connection, game_id, session_id, &removed)?;
     surviving.sort_by_key(|row| row.value["sequence"].as_u64().unwrap());
     session.value["messageCount"] = json!(surviving.len());
     for (index, row) in surviving.iter_mut().enumerate() {
@@ -1722,7 +1780,7 @@ mod tests {
         current_session["messageCount"] = json!(6);
         let mut records = vec![
             row("sessions", "session", Some("session"), &current_session),
-            row("snapshots", "snapshot", Some("session"), &snapshot),
+            row("snapshots", "snapshot", None, &snapshot),
             row("progress", "session", Some("session"), &progress),
         ];
         for (index, (name, parent, before, after)) in [
@@ -1780,7 +1838,7 @@ mod tests {
             .request(commit(
                 1,
                 &[
-                    row("snapshots", "updated-content", Some("session"), &snapshot),
+                    row("snapshots", "updated-content", None, &snapshot),
                     row("progress", "session", Some("session"), &progress),
                 ],
             ))
@@ -1922,7 +1980,7 @@ mod tests {
             .request(commit(
                 0,
                 &[
-                    row("snapshots", "snapshot", Some("session"), &snapshot),
+                    row("snapshots", "snapshot", None, &snapshot),
                     row("progress", "session", Some("session"), &progress),
                 ],
             ))
@@ -1981,7 +2039,7 @@ mod tests {
                 0,
                 &[
                     row("sessions", "session", Some("session"), &current_session),
-                    row("snapshots", "snapshot", Some("session"), &snapshot),
+                    row("snapshots", "snapshot", None, &snapshot),
                     row("messages", "message", Some("session"), &message),
                     row("progress", "session", Some("session"), &progress),
                     row("transactions", "event", Some("session"), &event),

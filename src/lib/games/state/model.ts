@@ -1,8 +1,9 @@
 import { parseGameSettings, parseScripts, type Game } from '#lib/games/model.js';
 
+import type { GameResources } from '../resources.js';
+
 import { parseGameAIContent } from '../ai/prompts.js';
 import { parseCodeProject } from '../code-project.js';
-import { parseResources } from '../resources.js';
 import { parseGameUI } from '../ui/runtime/model.js';
 import { parseStateDocument } from './schema.js';
 import {
@@ -13,17 +14,44 @@ import {
 	type StateValue
 } from './value.js';
 
+/**
+ * The game-content fingerprint shared by every session that plays it. Resources live in the
+ * blob store and migration checkpoints in their own table; neither is part of this record.
+ */
 export interface GameSnapshot extends Pick<
 	Game,
-	'schema' | 'initialState' | 'scripts' | 'settings' | 'ui' | 'ai' | 'resources' | 'code'
+	'schema' | 'initialState' | 'scripts' | 'settings' | 'ui' | 'ai' | 'code'
 > {
 	schemaVersion: 1;
+	/** Content-addressed identity: identical authored content across sessions shares one row. */
 	id: string;
 	gameId: string;
 	createdAt: string;
-	/** Validated restoration checkpoints produced by a content migration; recorded events stay immutable. */
-	restoredStates?: Record<string, GameState>;
-	migrationFrom?: string;
+}
+/** One migrated historical state, keyed by the transaction it restores. */
+export interface SnapshotCheckpoint {
+	schemaVersion: 1;
+	/** Row identity: the restored transaction's id. */
+	id: string;
+	transactionId: string;
+	snapshotId: string;
+	gameId: string;
+	sessionId: string;
+	state: GameState;
+}
+/** One stored blob plus the per-snapshot logical path it is exposed under. */
+export interface SnapshotResource {
+	schemaVersion: 1;
+	/** Row identity: the logical path fingerprint inside its snapshot. */
+	id: string;
+	snapshotId: string;
+	gameId: string;
+	blobId: string;
+	/** Stable creator-facing reference used by asset(); renaming rewrites 
+ame only. */
+	assetId: string;
+	/** Creator-facing asset path; renaming only rewrites this reference. */
+	name: string;
 }
 
 export type StateSlot = { exists: false } | { exists: true; value: StateValue };
@@ -69,6 +97,10 @@ export interface SessionHistory {
 	snapshot: GameSnapshot;
 	progress: SessionState;
 	transactions: Transaction[];
+	/** Migration checkpoints for this snapshot; empty when the schema never changed under it. */
+	checkpoints: SnapshotCheckpoint[];
+	/** Assets referenced by this snapshot, resolved from the shared blob store. */
+	resources: GameResources;
 }
 
 export interface Memory {
@@ -123,19 +155,7 @@ export function parseGameSnapshot(value: unknown): GameSnapshot {
 		scripts: parseScripts(input.scripts),
 		...(input.ui === undefined ? {} : { ui: parseGameUI(input.ui) }),
 		...(input.ai === undefined ? {} : { ai: parseGameAIContent(input.ai) }),
-		...(input.resources === undefined ? {} : { resources: parseResources(input.resources) }),
 		...(input.code === undefined ? {} : { code: parseCodeProject(input.code) }),
-		...(input.restoredStates === undefined
-			? {}
-			: {
-					restoredStates: Object.fromEntries(
-						Object.entries(record(input.restoredStates)).map(([id, state]) => [
-							identifier(id),
-							parseGameState(state)
-						])
-					),
-					migrationFrom: identifier(input.migrationFrom)
-				}),
 		settings: parseGameSettings(input.settings)
 	};
 }
@@ -217,4 +237,80 @@ export function parseMemory(value: unknown): Memory {
 		content: identifier(input.content),
 		createdAt: timestamp(input.createdAt)
 	};
+}
+
+export function parseSnapshotCheckpoint(value: unknown): SnapshotCheckpoint {
+	const input = record(value);
+	version(input);
+	const transactionId = identifier(input.transactionId);
+	return {
+		schemaVersion: 1,
+		id: identifier(input.id ?? transactionId),
+		transactionId,
+		snapshotId: identifier(input.snapshotId),
+		gameId: identifier(input.gameId),
+		sessionId: identifier(input.sessionId),
+		state: parseGameState(input.state)
+	};
+}
+
+export function parseSnapshotResource(value: unknown): SnapshotResource {
+	const input = record(value);
+	version(input);
+	return {
+		schemaVersion: 1,
+		id: identifier(input.id),
+		snapshotId: identifier(input.snapshotId),
+		gameId: identifier(input.gameId),
+		blobId: blobId(input.blobId),
+		assetId: identifier(input.assetId),
+		name: identifier(input.name)
+	};
+}
+/** Content-addressed blob identity: 64 lowercase hex characters. */
+export function blobId(value: unknown): string {
+	if (typeof value !== 'string' || !/^[0-9a-f]{64}$/.test(value)) {
+		throw new Error('리소스 지문이 올바르지 않아요.');
+	}
+	return value;
+}
+
+/** Canonical JSON with sorted object keys; the input of the content fingerprint. */
+function canonical(value: unknown): string {
+	if (Array.isArray(value)) {
+		return `[${value.map(canonical).join(',')}]`;
+	}
+	if (value && typeof value === 'object') {
+		const entries = Object.entries(value)
+			.filter(([, item]) => item !== undefined)
+			.sort(([left], [right]) => (left < right ? -1 : 1));
+		return `{${entries.map(([key, item]) => `${JSON.stringify(key)}:${canonical(item)}`).join(',')}}`;
+	}
+	return JSON.stringify(value) ?? 'null';
+}
+/**
+ * Deterministic 256-bit fingerprint (four independent 64-bit FNV-1a rounds) of the value.
+ * Runs synchronously in web and desktop with identical output; collision odds are
+ * negligible at game-content scale, and a collision only costs a shared row, never
+ * correctness: sessions verify schema fit when loading.
+ */
+export function contentHash(value: unknown): string {
+	const text = canonical(value);
+	let high = 0xcbf29ce484222325n;
+	let low = 0x9e3779b97f4a7c15n;
+	let third = 0x2545f4914f6cdd1dn;
+	let fourth = 0x9e3779b185ebca87n;
+	for (let index = 0; index < text.length; index += 1) {
+		const byte = BigInt(text.charCodeAt(index));
+		high = ((high ^ byte) * 0x100000001b3n) & 0xffffffffffffffffn;
+		low = ((low ^ ((byte << 8n) & 0xffn)) * 0x100000001b3n) & 0xffffffffffffffffn;
+		third = ((third ^ ((byte << 16n) & 0xffffn)) * 0x100000001b3n) & 0xffffffffffffffffn;
+		fourth = ((fourth ^ ((byte << 24n) & 0xffffffn)) * 0x100000001b3n) & 0xffffffffffffffffn;
+	}
+	return (
+		high.toString(16).padStart(16, '0') +
+		low.toString(16).padStart(16, '0') +
+		third.toString(16).padStart(16, '0') +
+		fourth.toString(16).padStart(16, '0')
+	);
 }

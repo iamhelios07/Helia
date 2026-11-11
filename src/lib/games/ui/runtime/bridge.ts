@@ -73,7 +73,7 @@ export async function mountGameUI(
 		return watchContent(context, history);
 	}
 	const token = crypto.randomUUID();
-	const document = await compileGameUI(ui, token, history.snapshot.resources);
+	const document = await compileGameUI(ui, token, history.resources);
 	return new GameUIBridge(context, history, token).mount(document);
 }
 

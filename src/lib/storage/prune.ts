@@ -3,8 +3,10 @@ import { deleteHistoryEvent } from '#lib/games/state/history.js';
 import {
 	parseGameSnapshot,
 	parseSessionState,
+	parseSnapshotCheckpoint,
 	parseTransaction,
-	parseMemory
+	parseMemory,
+	type SessionHistory
 } from '#lib/games/state/model.js';
 
 import { storedRecord, type StoredRecord, type StorageRequest } from './protocol.js';
@@ -19,19 +21,25 @@ export function pruneRecords(
 	validateStoredHistory(records);
 	const game = parseGame(records.find((row) => row.table === 'games' && row.id === gameId)?.value);
 	const owned = records.filter((row) => row.gameId === gameId && row.sessionId === sessionId);
+	const shared = records.filter((row) => row.gameId === gameId);
 	const session = parseSession(owned.find((row) => row.table === 'sessions')?.value);
 	const progress = parseSessionState(owned.find((row) => row.table === 'progress')?.value);
 	const snapshot = parseGameSnapshot(
-		owned.find((row) => row.table === 'snapshots' && row.id === progress.snapshotId)?.value
+		shared.find((row) => row.table === 'snapshots' && row.id === progress.snapshotId)?.value
 	);
 	const transactions = owned
 		.filter((row) => row.table === 'transactions')
 		.map((row) => parseTransaction(row.value));
-	const { history, removedIds } = deleteHistoryEvent(
-		{ snapshot, progress, transactions },
-		eventId,
-		revision
-	);
+	const history: SessionHistory = {
+		snapshot,
+		progress,
+		transactions,
+		checkpoints: owned
+			.filter((row) => row.table === 'checkpoints')
+			.map((row) => parseSnapshotCheckpoint(row.value)),
+		resources: {}
+	};
+	const { history: next, removedIds } = deleteHistoryEvent(history, eventId, revision);
 	const removedMessages = new Set(
 		transactions
 			.filter((node) => removedIds.has(node.id))
@@ -42,7 +50,8 @@ export function pruneRecords(
 			(row.table === 'transactions' && removedIds.has(row.id)) ||
 			(row.table === 'messages' && removedMessages.has(row.id)) ||
 			(row.table === 'memories' &&
-				parseMemory(row.value).sourceTransactionIds.some((id) => removedIds.has(id)))
+				parseMemory(row.value).sourceTransactionIds.some((id) => removedIds.has(id))) ||
+			(row.table === 'checkpoints' && removedIds.has(row.id))
 	);
 	const messages = owned
 		.filter((row) => row.table === 'messages' && !removedMessages.has(row.id))
@@ -53,31 +62,8 @@ export function pruneRecords(
 	const updates = [
 		storedRecord('games', { ...game, updatedAt: now }),
 		storedRecord('sessions', { ...session, messageCount: messages.length, updatedAt: now }),
-		storedRecord('progress', history.progress),
-		...messages.map((message) => storedRecord('messages', message)),
-		...owned
-			.filter((row) => row.table === 'snapshots')
-			.flatMap((row) => {
-				const snapshot = parseGameSnapshot(row.value);
-				if (
-					!snapshot.restoredStates ||
-					!Object.keys(snapshot.restoredStates).some((id) => removedIds.has(id))
-				) {
-					return [];
-				}
-				return [
-					storedRecord(
-						'snapshots',
-						{
-							...snapshot,
-							restoredStates: Object.fromEntries(
-								Object.entries(snapshot.restoredStates).filter(([id]) => !removedIds.has(id))
-							)
-						},
-						sessionId
-					)
-				];
-			})
+		storedRecord('progress', next.progress),
+		...messages.map((message) => storedRecord('messages', message))
 	];
 	return { deleted, updates };
 }

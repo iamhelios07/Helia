@@ -202,7 +202,7 @@ export class SessionChatController {
 				this.timelineError = '이력을 불러오지 못했어요. 다시 시도해주세요.';
 			}
 		} finally {
-			if (this.isCurrent(game, session) && request === this.requestId) {
+			if (this.isCurrent(game, session)) {
 				this.timelineBusy = false;
 			}
 			this.scheduleRefresh();

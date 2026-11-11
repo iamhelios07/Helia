@@ -53,7 +53,13 @@ function start(): SessionHistory {
 		initialState: { gold: 100, inventory: { iron: 3 }, orders: [] },
 		scripts: {}
 	});
-	return { snapshot, progress: createSessionState(snapshot, 'session'), transactions: [] };
+	return {
+		snapshot,
+		progress: createSessionState(snapshot, 'session'),
+		transactions: [],
+		checkpoints: [],
+		resources: {}
+	};
 }
 function commit(
 	history: SessionHistory,
@@ -312,7 +318,9 @@ describe('transaction state engine', () => {
 		const restored: SessionHistory = {
 			snapshot: parseGameSnapshot(stored.snapshot),
 			progress: parseSessionState(stored.progress),
-			transactions: stored.transactions.map(parseTransaction)
+			transactions: stored.transactions.map(parseTransaction),
+			checkpoints: [],
+			resources: {}
 		};
 		expect(stateAt(restored)).toEqual(original.progress.state);
 		expect(() =>

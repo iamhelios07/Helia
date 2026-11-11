@@ -4,6 +4,7 @@ import {
 	foreignKey,
 	index,
 	integer,
+	primaryKey,
 	sqliteTable,
 	text,
 	unique
@@ -61,15 +62,70 @@ export const messages = sqliteTable(
 	]
 );
 
-export const snapshots = sqliteTable('snapshots', childColumns(), (t) => [
-	foreignKey({
-		columns: [t.sessionId, t.gameId],
-		foreignColumns: [sessions.id, sessions.gameId]
-	}).onDelete('cascade'),
-	unique().on(t.id, t.gameId, t.sessionId),
-	index('snapshots_owner').on(t.gameId, t.sessionId),
-	check('snapshots_json', sql`json_valid(${t.value})`)
-]);
+export const snapshots = sqliteTable(
+	'snapshots',
+	{
+		id: text('id').notNull(),
+		gameId: text('game_id')
+			.notNull()
+			.references(() => games.id, { onDelete: 'cascade' }),
+		value: text('value').notNull()
+	},
+	(t) => [
+		primaryKey({ columns: [t.id, t.gameId] }),
+		index('snapshots_owner').on(t.gameId),
+		check('snapshots_json', sql`json_valid(${t.value})`)
+	]
+);
+
+/** Content-addressed bytes: game-owned, deduplicated by fingerprint. */
+export const blobs = sqliteTable(
+	'blobs',
+	{
+		id: text('id').primaryKey(),
+		gameId: text('game_id')
+			.notNull()
+			.references(() => games.id, { onDelete: 'cascade' }),
+		value: text('value').notNull()
+	},
+	(t) => [index('blobs_owner').on(t.gameId), check('blobs_json', sql`json_valid(${t.value})`)]
+);
+
+/** Per-snapshot logical asset paths pointing into the shared blob store. */
+export const snapshotResources = sqliteTable(
+	'snapshot_resources',
+	{
+		id: text('id').primaryKey(),
+		gameId: text('game_id')
+			.notNull()
+			.references(() => games.id, { onDelete: 'cascade' }),
+		snapshotId: text('snapshot_id').notNull(),
+		value: text('value').notNull()
+	},
+	(t) => [
+		unique().on(t.id, t.gameId, t.snapshotId),
+		index('snapshot_resources_snapshot').on(t.gameId, t.snapshotId),
+		check('snapshot_resources_json', sql`json_valid(${t.value})`)
+	]
+);
+
+/** Migration checkpoints keyed by the transaction they restore. */
+export const checkpoints = sqliteTable(
+	'checkpoints',
+	{
+		...childColumns(),
+		snapshotId: text('snapshot_id').notNull()
+	},
+	(t) => [
+		foreignKey({
+			columns: [t.sessionId, t.gameId],
+			foreignColumns: [sessions.id, sessions.gameId]
+		}).onDelete('cascade'),
+		unique().on(t.id, t.gameId, t.sessionId),
+		index('checkpoints_snapshot').on(t.gameId, t.snapshotId),
+		check('checkpoints_json', sql`json_valid(${t.value})`)
+	]
+);
 
 export const progress = sqliteTable(
 	'progress',
@@ -79,8 +135,8 @@ export const progress = sqliteTable(
 	},
 	(t) => [
 		foreignKey({
-			columns: [t.snapshotId, t.gameId, t.sessionId],
-			foreignColumns: [snapshots.id, snapshots.gameId, snapshots.sessionId]
+			columns: [t.snapshotId, t.gameId],
+			foreignColumns: [snapshots.id, snapshots.gameId]
 		}),
 		foreignKey({
 			columns: [t.sessionId, t.gameId],

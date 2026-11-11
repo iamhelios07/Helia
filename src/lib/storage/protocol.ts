@@ -1,11 +1,14 @@
 import { parseGame, parseMessage, parseSession } from '#lib/games/model.js';
 import {
+	blobId,
 	counter,
 	identifier,
 	record,
 	parseGameSnapshot,
 	parseMemory,
 	parseSessionState,
+	parseSnapshotCheckpoint,
+	parseSnapshotResource,
 	parseTransaction
 } from '#lib/games/state/model.js';
 
@@ -16,7 +19,10 @@ export const tables = [
 	'snapshots',
 	'progress',
 	'transactions',
-	'memories'
+	'memories',
+	'blobs',
+	'snapshot_resources',
+	'checkpoints'
 ] as const;
 export type Table = (typeof tables)[number];
 export interface StoredRecord {
@@ -55,16 +61,33 @@ function storedSessionId(
 	object: Record<string, unknown>,
 	owner: { id: string; ownerSessionId?: string }
 ): string | null {
-	if (table === 'games') {
+	if (
+		table === 'games' ||
+		table === 'blobs' ||
+		table === 'snapshots' ||
+		table === 'snapshot_resources'
+	) {
 		return null;
 	}
 	if (table === 'sessions') {
 		return owner.id;
 	}
-	if (table === 'snapshots') {
-		return identifier(owner.ownerSessionId);
-	}
 	return identifier(object.sessionId);
+}
+
+/** A stored blob: game-owned immutable bytes keyed by their content fingerprint. */
+function parseBlob(value: unknown) {
+	const input = record(value);
+	if (input.schemaVersion !== 1) {
+		throw new Error('지원하지 않는 저장 데이터 버전이에요.');
+	}
+	return {
+		schemaVersion: 1 as const,
+		id: blobId(input.id),
+		gameId: identifier(input.gameId),
+		mime: identifier(input.mime),
+		data: identifier(input.data)
+	};
 }
 
 export function storedRecord(table: Table, value: unknown, ownerSessionId?: string): StoredRecord {
@@ -75,7 +98,10 @@ export function storedRecord(table: Table, value: unknown, ownerSessionId?: stri
 		snapshots: parseGameSnapshot,
 		progress: parseSessionState,
 		transactions: parseTransaction,
-		memories: parseMemory
+		memories: parseMemory,
+		blobs: parseBlob,
+		snapshot_resources: parseSnapshotResource,
+		checkpoints: parseSnapshotCheckpoint
 	};
 	const parsed = parsers[table](value);
 	const object = record(parsed);

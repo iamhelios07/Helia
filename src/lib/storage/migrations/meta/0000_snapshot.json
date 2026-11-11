@@ -1,9 +1,132 @@
 {
 	"version": "6",
 	"dialect": "sqlite",
-	"id": "217093d7-aff8-417e-9da1-4ece44b1dcba",
+	"id": "287872f4-10dc-4543-8ddb-c3bea12b4d43",
 	"prevId": "00000000-0000-0000-0000-000000000000",
 	"tables": {
+		"blobs": {
+			"name": "blobs",
+			"columns": {
+				"id": {
+					"name": "id",
+					"type": "text",
+					"primaryKey": true,
+					"notNull": true,
+					"autoincrement": false
+				},
+				"game_id": {
+					"name": "game_id",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true,
+					"autoincrement": false
+				},
+				"value": {
+					"name": "value",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true,
+					"autoincrement": false
+				}
+			},
+			"indexes": {
+				"blobs_owner": {
+					"name": "blobs_owner",
+					"columns": ["game_id"],
+					"isUnique": false
+				}
+			},
+			"foreignKeys": {
+				"blobs_game_id_games_id_fk": {
+					"name": "blobs_game_id_games_id_fk",
+					"tableFrom": "blobs",
+					"tableTo": "games",
+					"columnsFrom": ["game_id"],
+					"columnsTo": ["id"],
+					"onDelete": "cascade",
+					"onUpdate": "no action"
+				}
+			},
+			"compositePrimaryKeys": {},
+			"uniqueConstraints": {},
+			"checkConstraints": {
+				"blobs_json": {
+					"name": "blobs_json",
+					"value": "json_valid(\"blobs\".\"value\")"
+				}
+			}
+		},
+		"checkpoints": {
+			"name": "checkpoints",
+			"columns": {
+				"id": {
+					"name": "id",
+					"type": "text",
+					"primaryKey": true,
+					"notNull": true,
+					"autoincrement": false
+				},
+				"game_id": {
+					"name": "game_id",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true,
+					"autoincrement": false
+				},
+				"session_id": {
+					"name": "session_id",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true,
+					"autoincrement": false
+				},
+				"value": {
+					"name": "value",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true,
+					"autoincrement": false
+				},
+				"snapshot_id": {
+					"name": "snapshot_id",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true,
+					"autoincrement": false
+				}
+			},
+			"indexes": {
+				"checkpoints_snapshot": {
+					"name": "checkpoints_snapshot",
+					"columns": ["game_id", "snapshot_id"],
+					"isUnique": false
+				},
+				"checkpoints_id_game_id_session_id_unique": {
+					"name": "checkpoints_id_game_id_session_id_unique",
+					"columns": ["id", "game_id", "session_id"],
+					"isUnique": true
+				}
+			},
+			"foreignKeys": {
+				"checkpoints_session_id_game_id_sessions_id_game_id_fk": {
+					"name": "checkpoints_session_id_game_id_sessions_id_game_id_fk",
+					"tableFrom": "checkpoints",
+					"tableTo": "sessions",
+					"columnsFrom": ["session_id", "game_id"],
+					"columnsTo": ["id", "game_id"],
+					"onDelete": "cascade",
+					"onUpdate": "no action"
+				}
+			},
+			"compositePrimaryKeys": {},
+			"uniqueConstraints": {},
+			"checkConstraints": {
+				"checkpoints_json": {
+					"name": "checkpoints_json",
+					"value": "json_valid(\"checkpoints\".\"value\")"
+				}
+			}
+		},
 		"games": {
 			"name": "games",
 			"columns": {
@@ -218,12 +341,12 @@
 				}
 			},
 			"foreignKeys": {
-				"progress_snapshot_id_game_id_session_id_snapshots_id_game_id_session_id_fk": {
-					"name": "progress_snapshot_id_game_id_session_id_snapshots_id_game_id_session_id_fk",
+				"progress_snapshot_id_game_id_snapshots_id_game_id_fk": {
+					"name": "progress_snapshot_id_game_id_snapshots_id_game_id_fk",
 					"tableFrom": "progress",
 					"tableTo": "snapshots",
-					"columnsFrom": ["snapshot_id", "game_id", "session_id"],
-					"columnsTo": ["id", "game_id", "session_id"],
+					"columnsFrom": ["snapshot_id", "game_id"],
+					"columnsTo": ["id", "game_id"],
 					"onDelete": "no action",
 					"onUpdate": "no action"
 				},
@@ -303,8 +426,8 @@
 				}
 			}
 		},
-		"snapshots": {
-			"name": "snapshots",
+		"snapshot_resources": {
+			"name": "snapshot_resources",
 			"columns": {
 				"id": {
 					"name": "id",
@@ -320,8 +443,65 @@
 					"notNull": true,
 					"autoincrement": false
 				},
-				"session_id": {
-					"name": "session_id",
+				"snapshot_id": {
+					"name": "snapshot_id",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true,
+					"autoincrement": false
+				},
+				"value": {
+					"name": "value",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true,
+					"autoincrement": false
+				}
+			},
+			"indexes": {
+				"snapshot_resources_snapshot": {
+					"name": "snapshot_resources_snapshot",
+					"columns": ["game_id", "snapshot_id"],
+					"isUnique": false
+				},
+				"snapshot_resources_id_game_id_snapshot_id_unique": {
+					"name": "snapshot_resources_id_game_id_snapshot_id_unique",
+					"columns": ["id", "game_id", "snapshot_id"],
+					"isUnique": true
+				}
+			},
+			"foreignKeys": {
+				"snapshot_resources_game_id_games_id_fk": {
+					"name": "snapshot_resources_game_id_games_id_fk",
+					"tableFrom": "snapshot_resources",
+					"tableTo": "games",
+					"columnsFrom": ["game_id"],
+					"columnsTo": ["id"],
+					"onDelete": "cascade",
+					"onUpdate": "no action"
+				}
+			},
+			"compositePrimaryKeys": {},
+			"uniqueConstraints": {},
+			"checkConstraints": {
+				"snapshot_resources_json": {
+					"name": "snapshot_resources_json",
+					"value": "json_valid(\"snapshot_resources\".\"value\")"
+				}
+			}
+		},
+		"snapshots": {
+			"name": "snapshots",
+			"columns": {
+				"id": {
+					"name": "id",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true,
+					"autoincrement": false
+				},
+				"game_id": {
+					"name": "game_id",
 					"type": "text",
 					"primaryKey": false,
 					"notNull": true,
@@ -338,27 +518,27 @@
 			"indexes": {
 				"snapshots_owner": {
 					"name": "snapshots_owner",
-					"columns": ["game_id", "session_id"],
+					"columns": ["game_id"],
 					"isUnique": false
-				},
-				"snapshots_id_game_id_session_id_unique": {
-					"name": "snapshots_id_game_id_session_id_unique",
-					"columns": ["id", "game_id", "session_id"],
-					"isUnique": true
 				}
 			},
 			"foreignKeys": {
-				"snapshots_session_id_game_id_sessions_id_game_id_fk": {
-					"name": "snapshots_session_id_game_id_sessions_id_game_id_fk",
+				"snapshots_game_id_games_id_fk": {
+					"name": "snapshots_game_id_games_id_fk",
 					"tableFrom": "snapshots",
-					"tableTo": "sessions",
-					"columnsFrom": ["session_id", "game_id"],
-					"columnsTo": ["id", "game_id"],
+					"tableTo": "games",
+					"columnsFrom": ["game_id"],
+					"columnsTo": ["id"],
 					"onDelete": "cascade",
 					"onUpdate": "no action"
 				}
 			},
-			"compositePrimaryKeys": {},
+			"compositePrimaryKeys": {
+				"snapshots_id_game_id_pk": {
+					"columns": ["id", "game_id"],
+					"name": "snapshots_id_game_id_pk"
+				}
+			},
 			"uniqueConstraints": {},
 			"checkConstraints": {
 				"snapshots_json": {

@@ -9,6 +9,11 @@ import {
 } from '#lib/storage/protocol.js';
 import { pruneRecords } from '#lib/storage/prune.js';
 
+/** Rows are keyed by table + game + id: shared content rows collide across games otherwise. */
+function keyOf(row: StoredRecord): string {
+	return `${row.table}:${row.gameId}:${row.id}`;
+}
+
 class MemoryStorage {
 	private rows = new Map<string, StoredRecord>();
 	private versions = new Map<string, number>();
@@ -16,10 +21,10 @@ class MemoryStorage {
 		const plan = pruneRecords([...this.rows.values()], request);
 		const next = new Map(this.rows);
 		for (const row of plan.deleted) {
-			next.delete(`${row.table}:${row.id}`);
+			next.delete(keyOf(row));
 		}
 		for (const row of plan.updates) {
-			next.set(`${row.table}:${row.id}`, row);
+			next.set(keyOf(row), row);
 		}
 		this.rows = next;
 		const version = (this.versions.get(request.gameId) ?? 0) + 1;
@@ -47,6 +52,7 @@ class MemoryStorage {
 					row.gameId === request.gameId &&
 					(row.table === 'games' ||
 						row.table === 'sessions' ||
+						row.sessionId === null ||
 						request.includeHistory === true ||
 						(request.sessionId !== undefined && row.sessionId === request.sessionId))
 			)
@@ -77,13 +83,13 @@ class MemoryStorage {
 			this.deleteSessions(next, request);
 		}
 		for (const row of request.records) {
-			const key = `${row.table}:${row.id}`;
+			const key = keyOf(row);
 			const existing = next.get(key);
 			if (
 				existing &&
 				(existing.gameId !== row.gameId ||
 					existing.sessionId !== row.sessionId ||
-					['snapshots', 'transactions', 'memories'].includes(row.table))
+					['transactions', 'memories'].includes(row.table))
 			) {
 				throw new Error('Invalid test storage write.');
 			}

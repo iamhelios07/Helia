@@ -164,11 +164,15 @@ registerPanel({id:'main',title:'Image',component:Panel});
 		}
 	};
 	let state: GameState = {};
+	const diagnostics: string[] = [];
 	render(EditorPlayground, {
 		game: withResource,
 		mode: 'preview',
-		onstate: (next) => (state = next)
+		onstate: (next) => (state = next),
+		ondiagnostic: (entry) => diagnostics.push(entry.message + ' ' + (entry.detail ?? ''))
 	});
+	await expect.poll(() => diagnostics.join(' | '), { timeout: 15000 }).toBeTruthy();
+	console.log('DIAG', JSON.stringify(diagnostics));
 	await expect.poll(() => state.checks, { timeout: 20000 }).toEqual(['image loaded']);
 }, 25000);
 

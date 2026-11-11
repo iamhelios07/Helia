@@ -74,7 +74,10 @@ function playgroundStorage(game: Game): StorageTransport {
 				version,
 				records: [...rows.values()].filter(
 					(row) =>
-						row.table === 'games' || row.table === 'sessions' || row.sessionId === request.sessionId
+						row.table === 'games' ||
+						row.table === 'sessions' ||
+						row.sessionId === null ||
+						row.sessionId === request.sessionId
 				)
 			});
 		}

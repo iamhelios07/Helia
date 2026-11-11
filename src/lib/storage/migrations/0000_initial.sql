@@ -1,3 +1,24 @@
+CREATE TABLE `blobs` (
+	`id` text PRIMARY KEY NOT NULL,
+	`game_id` text NOT NULL,
+	`value` text NOT NULL,
+	FOREIGN KEY (`game_id`) REFERENCES `games`(`id`) ON UPDATE no action ON DELETE cascade,
+	CONSTRAINT "blobs_json" CHECK(json_valid("blobs"."value"))
+);
+--> statement-breakpoint
+CREATE INDEX `blobs_owner` ON `blobs` (`game_id`);--> statement-breakpoint
+CREATE TABLE `checkpoints` (
+	`id` text PRIMARY KEY NOT NULL,
+	`game_id` text NOT NULL,
+	`session_id` text NOT NULL,
+	`value` text NOT NULL,
+	`snapshot_id` text NOT NULL,
+	FOREIGN KEY (`session_id`,`game_id`) REFERENCES `sessions`(`id`,`game_id`) ON UPDATE no action ON DELETE cascade,
+	CONSTRAINT "checkpoints_json" CHECK(json_valid("checkpoints"."value"))
+);
+--> statement-breakpoint
+CREATE INDEX `checkpoints_snapshot` ON `checkpoints` (`game_id`,`snapshot_id`);--> statement-breakpoint
+CREATE UNIQUE INDEX `checkpoints_id_game_id_session_id_unique` ON `checkpoints` (`id`,`game_id`,`session_id`);--> statement-breakpoint
 CREATE TABLE `games` (
 	`id` text PRIMARY KEY NOT NULL,
 	`version` integer DEFAULT 0 NOT NULL,
@@ -33,7 +54,7 @@ CREATE TABLE `progress` (
 	`session_id` text NOT NULL,
 	`value` text NOT NULL,
 	`snapshot_id` text NOT NULL,
-	FOREIGN KEY (`snapshot_id`,`game_id`,`session_id`) REFERENCES `snapshots`(`id`,`game_id`,`session_id`) ON UPDATE no action ON DELETE no action,
+	FOREIGN KEY (`snapshot_id`,`game_id`) REFERENCES `snapshots`(`id`,`game_id`) ON UPDATE no action ON DELETE no action,
 	FOREIGN KEY (`session_id`,`game_id`) REFERENCES `sessions`(`id`,`game_id`) ON UPDATE no action ON DELETE cascade,
 	CONSTRAINT "progress_json" CHECK(json_valid("progress"."value"))
 );
@@ -49,17 +70,27 @@ CREATE TABLE `sessions` (
 --> statement-breakpoint
 CREATE INDEX `sessions_game` ON `sessions` (`game_id`);--> statement-breakpoint
 CREATE UNIQUE INDEX `sessions_id_game_id_unique` ON `sessions` (`id`,`game_id`);--> statement-breakpoint
-CREATE TABLE `snapshots` (
+CREATE TABLE `snapshot_resources` (
 	`id` text PRIMARY KEY NOT NULL,
 	`game_id` text NOT NULL,
-	`session_id` text NOT NULL,
+	`snapshot_id` text NOT NULL,
 	`value` text NOT NULL,
-	FOREIGN KEY (`session_id`,`game_id`) REFERENCES `sessions`(`id`,`game_id`) ON UPDATE no action ON DELETE cascade,
+	FOREIGN KEY (`game_id`) REFERENCES `games`(`id`) ON UPDATE no action ON DELETE cascade,
+	CONSTRAINT "snapshot_resources_json" CHECK(json_valid("snapshot_resources"."value"))
+);
+--> statement-breakpoint
+CREATE INDEX `snapshot_resources_snapshot` ON `snapshot_resources` (`game_id`,`snapshot_id`);--> statement-breakpoint
+CREATE UNIQUE INDEX `snapshot_resources_id_game_id_snapshot_id_unique` ON `snapshot_resources` (`id`,`game_id`,`snapshot_id`);--> statement-breakpoint
+CREATE TABLE `snapshots` (
+	`id` text NOT NULL,
+	`game_id` text NOT NULL,
+	`value` text NOT NULL,
+	PRIMARY KEY(`id`, `game_id`),
+	FOREIGN KEY (`game_id`) REFERENCES `games`(`id`) ON UPDATE no action ON DELETE cascade,
 	CONSTRAINT "snapshots_json" CHECK(json_valid("snapshots"."value"))
 );
 --> statement-breakpoint
-CREATE INDEX `snapshots_owner` ON `snapshots` (`game_id`,`session_id`);--> statement-breakpoint
-CREATE UNIQUE INDEX `snapshots_id_game_id_session_id_unique` ON `snapshots` (`id`,`game_id`,`session_id`);--> statement-breakpoint
+CREATE INDEX `snapshots_owner` ON `snapshots` (`game_id`);--> statement-breakpoint
 CREATE TABLE `transactions` (
 	`id` text PRIMARY KEY NOT NULL,
 	`game_id` text NOT NULL,

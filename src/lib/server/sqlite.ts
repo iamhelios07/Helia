@@ -22,6 +22,17 @@ type PruneRequest = Extract<StorageRequest, { kind: 'prune' }>;
 type ReadRequest = Extract<StorageRequest, { kind: 'read' }>;
 type WriteRequest = Extract<StorageRequest, { kind: 'commit' | 'create' }>;
 
+/** Column and conflict behavior derived from how a table scopes its rows. */
+function tableShape(table: Table) {
+	const shared = ['snapshots', 'blobs', 'snapshot_resources'].includes(table);
+	return {
+		shared,
+		immutable: ['transactions', 'memories'].includes(table),
+		composite: table === 'snapshots',
+		compositeFollows: table === 'snapshot_resources'
+	};
+}
+
 function readFilter(table: Table, gameId?: string, sessionId?: string) {
 	if (gameId === undefined) {
 		return sql``;
@@ -29,7 +40,10 @@ function readFilter(table: Table, gameId?: string, sessionId?: string) {
 	if (table === 'games') {
 		return sql`where id = ${gameId}`;
 	}
-	if (sessionId !== undefined && table !== 'sessions') {
+	if (
+		sessionId !== undefined &&
+		!['sessions', 'snapshots', 'blobs', 'snapshot_resources'].includes(table)
+	) {
 		return sql`where game_id = ${gameId} and session_id = ${sessionId}`;
 	}
 	return sql`where game_id = ${gameId}`;
@@ -75,20 +89,20 @@ class Storage {
 		const table = sql.identifier(row.table);
 		const value = JSON.stringify(row.value);
 		if (row.table === 'games') {
-			if (create) {
-				this.db.run(sql`insert into games (id, value) values (${row.id}, ${value})`);
-			} else if (
-				this.db.run(sql`update games set value = ${value} where id = ${row.id}`).changes !== 1
-			) {
-				throw new Error('게임을 찾을 수 없어요.');
-			}
+			this.writeGamesRow(row, create, value);
 			return;
 		}
-		const fields = ['id', 'game_id', ...(row.table === 'sessions' ? [] : ['session_id']), 'value'];
+		const shape = tableShape(row.table);
+		const fields = [
+			'id',
+			'game_id',
+			...(row.table === 'sessions' || shape.shared ? [] : ['session_id']),
+			'value'
+		];
 		const values: (string | number | null)[] = [
 			row.id,
 			row.gameId,
-			...(row.table === 'sessions' ? [] : [row.sessionId]),
+			...(row.table === 'sessions' || shape.shared ? [] : [row.sessionId]),
 			value
 		];
 		const object = row.value as Record<string, unknown>;
@@ -96,18 +110,18 @@ class Storage {
 			fields.push('sequence');
 			values.push(object.sequence as number);
 		}
-		if (row.table === 'progress') {
+		if (row.table === 'progress' || row.table === 'checkpoints' || shape.compositeFollows) {
 			fields.push('snapshot_id');
 			values.push(object.snapshotId as string);
 		}
-		const immutable = ['snapshots', 'transactions', 'memories'].includes(row.table);
 		const ownership =
-			row.table === 'sessions'
+			row.table === 'sessions' || shape.shared
 				? sql`${table}.game_id = excluded.game_id`
 				: sql`${table}.game_id = excluded.game_id and ${table}.session_id = excluded.session_id`;
+		const conflictTarget = shape.composite ? sql`id, game_id` : sql`id`;
 		const update =
-			immutable || create
-				? sql``
+			shape.immutable || create || shape.shared
+				? sql`on conflict(${conflictTarget}) do nothing`
 				: sql`on conflict(id) do update set ${sql.join(
 						fields
 							.filter((field) => !['id', 'game_id', 'session_id'].includes(field))
@@ -123,8 +137,18 @@ class Storage {
 				sql`, `
 			)}) ${update}`
 		);
-		if (result.changes !== 1) {
+		// Shared rows legitimately no-op on conflict; everything else must land exactly once.
+		if (result.changes !== 1 && !shape.shared) {
 			throw new Error('다른 세션의 저장 항목이에요.');
+		}
+	}
+	private writeGamesRow(row: StoredRecord, create: boolean, value: string) {
+		if (create) {
+			this.db.run(sql`insert into games (id, value) values (${row.id}, ${value})`);
+			return;
+		}
+		if (this.db.run(sql`update games set value = ${value} where id = ${row.id}`).changes !== 1) {
+			throw new Error('게임을 찾을 수 없어요.');
 		}
 	}
 	private prune(command: PruneRequest): StorageReply {
@@ -137,15 +161,18 @@ class Storage {
 		const read = () => [
 			...this.readRows('games', command.gameId),
 			...this.readRows('sessions', command.gameId),
-			...(['messages', 'snapshots', 'progress', 'transactions', 'memories'] as const).flatMap(
-				(table) => this.readRows(table, command.gameId, command.sessionId)
+			...(
+				['messages', 'snapshots', 'progress', 'transactions', 'memories', 'checkpoints'] as const
+			).flatMap((table) => this.readRows(table, command.gameId, command.sessionId)),
+			...(['blobs', 'snapshot_resources'] as const).flatMap((table) =>
+				this.readRows(table, command.gameId)
 			)
 		];
 		const plan = pruneRecords(read(), command);
 		for (const row of plan.deleted) {
 			if (
 				this.db.run(
-					sql`delete from ${sql.identifier(row.table)} where id=${row.id} and game_id=${command.gameId} and session_id=${command.sessionId}`
+					sql`delete from ${sql.identifier(row.table)} where id=${row.id} and game_id=${command.gameId}`
 				).changes !== 1
 			) {
 				throw new Error('삭제할 기록을 찾을 수 없어요.');
@@ -153,13 +180,7 @@ class Storage {
 		}
 		// Deletion shifts surviving sequence numbers down, so update messages forwards.
 		for (const row of plan.updates) {
-			if (row.table === 'snapshots') {
-				this.db.run(
-					sql`update snapshots set value=${JSON.stringify(row.value)} where id=${row.id} and game_id=${command.gameId} and session_id=${command.sessionId}`
-				);
-			} else {
-				this.writeRow(row, false);
-			}
+			this.writeRow(row, false);
 		}
 		this.db.run(sql`update games set version=version+1 where id=${command.gameId}`);
 		const records = read();
@@ -183,9 +204,13 @@ class Storage {
 				'snapshots',
 				'progress',
 				'transactions',
-				'memories'
+				'memories',
+				'checkpoints'
 			] as const) {
 				records.push(...this.readRows(table, command.gameId, command.sessionId));
+			}
+			for (const table of ['blobs', 'snapshot_resources'] as const) {
+				records.push(...this.readRows(table, command.gameId));
 			}
 		}
 		validateStoredHistory(records);
@@ -232,11 +257,14 @@ class Storage {
 		const order = [
 			'games',
 			'sessions',
+			'blobs',
 			'snapshots',
+			'snapshot_resources',
 			'messages',
 			'progress',
 			'transactions',
-			'memories'
+			'memories',
+			'checkpoints'
 		];
 		const records = [...command.records].sort(
 			(a, b) =>
@@ -250,12 +278,23 @@ class Storage {
 		}
 		for (const sessionId of new Set(
 			records
-				.filter((row) => row.table !== 'games' && row.table !== 'sessions')
+				.filter(
+					(row) =>
+						!['games', 'sessions', 'blobs', 'snapshot_resources', 'checkpoints'].includes(row.table)
+				)
 				.map((row) => row.sessionId!)
 		)) {
 			validateStoredHistory(
 				(
-					['sessions', 'messages', 'snapshots', 'progress', 'transactions', 'memories'] as const
+					[
+						'sessions',
+						'messages',
+						'snapshots',
+						'progress',
+						'transactions',
+						'memories',
+						'checkpoints'
+					] as const
 				).flatMap((table) => this.readRows(table, command.gameId, sessionId))
 			);
 		}

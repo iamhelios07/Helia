@@ -20,11 +20,14 @@ import {
 } from '#lib/games/state/engine.js';
 import { historyEvents, type SessionTimeline } from '#lib/games/state/history.js';
 import {
+	contentHash,
 	counter,
 	identifier,
 	parseAction,
 	parseGameSnapshot,
 	parseMemory,
+	parseSnapshotCheckpoint,
+	parseSnapshotResource,
 	parseSessionState,
 	parseTransaction,
 	type SessionHistory
@@ -35,6 +38,7 @@ import { storedRecord, type StorageTransport } from '#lib/storage/protocol.js';
 import { useStorage, type StorageUnit } from '#lib/storage/unit.js';
 
 import type { AgentWorkspaceResult } from './ai/loop.js';
+import type { GameResources } from './resources.js';
 import type { RuleTrigger } from './scripting/protocol.js';
 
 import { isSessionBusy } from './ai/activity.js';
@@ -125,6 +129,76 @@ function messagesIn(unit: StorageUnit, session: Session): Message[] {
 	}
 	return messages;
 }
+
+/**
+ * Returns the shared snapshot for this content, creating the row and its blob
+ * references on first use. The id is the content fingerprint, so sessions that
+ * play identical authored content share one row instead of copying it.
+ */
+function contentSnapshot(unit: StorageUnit, gameId: string, game: Game) {
+	const content = {
+		settings: game.settings,
+		initialState: game.initialState,
+		schema: game.schema,
+		scripts: game.scripts,
+		...(game.ui ? { ui: game.ui } : {}),
+		...(game.ai ? { ai: game.ai } : {}),
+		...(game.code ? { code: game.code } : {})
+	};
+	const id = contentHash(content);
+	const existing = unit.get('snapshots', id);
+	if (existing !== undefined) {
+		return parseGameSnapshot(existing);
+	}
+	const snapshot = parseGameSnapshot({
+		schemaVersion: 1,
+		id,
+		gameId,
+		createdAt: new Date().toISOString(),
+		...content
+	});
+	unit.put('snapshots', snapshot);
+	for (const [assetId, asset] of Object.entries(game.resources ?? {})) {
+		const name = asset.name;
+		const fingerprint = contentHash(asset.data);
+		if (unit.get('blobs', fingerprint) === undefined) {
+			// The blob row is game-owned; snapshots reference it through snapshot_resources.
+			unit.put('blobs', {
+				schemaVersion: 1,
+				id: fingerprint,
+				gameId,
+				mime: asset.mime,
+				data: asset.data
+			});
+		}
+		// The per-path name row keeps creator asset paths; the blob id deduplicates bytes.
+		unit.put('snapshot_resources', {
+			schemaVersion: 1,
+			id: contentHash(assetId + fingerprint),
+			snapshotId: id,
+			gameId,
+			blobId: fingerprint,
+			assetId,
+			name
+		});
+	}
+	return snapshot;
+}
+/** The resources a snapshot exposes, resolved back to portable data URIs. */
+function snapshotResources(unit: StorageUnit, snapshotId: string): GameResources {
+	const result: GameResources = {};
+	for (const reference of unit
+		.all('snapshot_resources')
+		.map(parseSnapshotResource)
+		.filter((row) => row.snapshotId === snapshotId)) {
+		const blob = unit.get('blobs', reference.blobId) as { mime: string; data: string } | undefined;
+		if (!blob) {
+			throw new Error('리소스 데이터를 찾을 수 없어요.');
+		}
+		result[reference.assetId] = { name: reference.name, mime: blob.mime, data: blob.data };
+	}
+	return result;
+}
 function initialize(unit: StorageUnit, gameId: string, sessionId: string) {
 	const { game, session: previous } = owner(unit, gameId, sessionId);
 	let session = previous;
@@ -161,24 +235,20 @@ function sessionHistory(
 		if (messages.some((message) => message.kind !== 'opening')) {
 			throw new Error('세션의 진행 기록이 없어요.');
 		}
-		const snapshot = parseGameSnapshot({
-			schemaVersion: 1,
-			id: crypto.randomUUID(),
-			gameId,
-			createdAt: new Date().toISOString(),
-			settings: game.settings,
-			initialState: game.initialState,
-			schema: game.schema,
-			scripts: game.scripts,
-			...(game.ui ? { ui: game.ui } : {}),
-			...(game.ai ? { ai: game.ai } : {}),
-			...(game.resources ? { resources: game.resources } : {}),
-			...(game.code ? { code: game.code } : {})
-		});
+		// Identical authored content reuses the shared snapshot row instead of copying it.
+		const snapshot = contentSnapshot(unit, gameId, game);
 		const progress = createSessionState(snapshot, session.id);
-		unit.put('snapshots', snapshot, session.id);
 		unit.put('progress', progress);
-		history = { snapshot, progress, transactions: [] };
+		history = {
+			snapshot,
+			progress,
+			transactions: [],
+			checkpoints: unit
+				.all('checkpoints')
+				.map(parseSnapshotCheckpoint)
+				.filter((row) => row.snapshotId === snapshot.id && row.sessionId === session.id),
+			resources: snapshotResources(unit, snapshot.id)
+		};
 		return history;
 	}
 	const progress = parseSessionState(saved);
@@ -187,7 +257,16 @@ function sessionHistory(
 		.all('transactions')
 		.map(parseTransaction)
 		.sort((a, b) => a.createdRevision - b.createdRevision);
-	history = { snapshot, progress, transactions };
+	history = {
+		snapshot,
+		progress,
+		transactions,
+		checkpoints: unit
+			.all('checkpoints')
+			.map(parseSnapshotCheckpoint)
+			.filter((row) => row.snapshotId === snapshot.id && row.sessionId === session.id),
+		resources: snapshotResources(unit, snapshot.id)
+	};
 	if (
 		progress.gameId !== gameId ||
 		progress.sessionId !== session.id ||
@@ -690,27 +769,36 @@ class GameRepository {
 				.all('transactions')
 				.map(parseTransaction)
 				.filter((node) => node.sessionId === session.id);
-			const history = { snapshot, progress, transactions };
+			const history: SessionHistory = {
+				snapshot,
+				progress,
+				transactions,
+				checkpoints: unit
+					.all('checkpoints')
+					.map(parseSnapshotCheckpoint)
+					.filter((row) => row.snapshotId === snapshot.id && row.sessionId === session.id),
+				resources: snapshotResources(unit, snapshot.id)
+			};
 			const transform = (state: import('./state/value.js').GameState) =>
 				migrateState(state, snapshot.schema, game.schema, game.initialState);
-			const nextSnapshot = parseGameSnapshot({
-				...snapshot,
-				id: crypto.randomUUID(),
-				createdAt: new Date().toISOString(),
+			// The migrated content becomes a new shared snapshot row; per-event checkpoints
+			// live in their own table so prune can drop rows instead of rewriting documents.
+			const nextSnapshot = contentSnapshot(unit, gameId, {
+				...game,
 				schema: game.schema,
-				initialState: transform(snapshot.initialState),
-				settings: game.settings,
-				scripts: game.scripts,
-				ui: game.ui,
-				ai: game.ai,
-				resources: game.resources,
-				code: game.code,
-				migrationFrom: snapshot.id,
-				restoredStates: Object.fromEntries(
-					transactions.map((node) => [node.id, transform(stateAt(history, node.id))])
-				)
+				initialState: transform(snapshot.initialState)
 			});
-			unit.put('snapshots', nextSnapshot, session.id);
+			for (const node of transactions) {
+				unit.put('checkpoints', {
+					schemaVersion: 1,
+					id: node.id,
+					transactionId: node.id,
+					snapshotId: nextSnapshot.id,
+					gameId,
+					sessionId: session.id,
+					state: transform(stateAt(history, node.id))
+				});
+			}
 			unit.put('progress', {
 				...progress,
 				snapshotId: nextSnapshot.id,

@@ -3,6 +3,7 @@ import { stateAt } from '#lib/games/state/engine.js';
 import {
 	parseGameSnapshot,
 	parseSessionState,
+	parseSnapshotCheckpoint,
 	parseTransaction,
 	parseMemory,
 	type SessionHistory,
@@ -17,22 +18,32 @@ import type { StoredRecord } from './protocol.js';
 export function validateStoredHistory(records: readonly StoredRecord[]): void {
 	const sessions = new Set(
 		records
-			.filter(
-				(row) =>
-					row.table === 'progress' || row.table === 'transactions' || row.table === 'snapshots'
-			)
+			.filter((row) => row.table === 'progress' || row.table === 'transactions')
 			.map((row) => row.sessionId)
 	);
 	for (const sessionId of sessions) {
-		const owned = records.filter((row) => row.sessionId === sessionId);
+		const owned = records.filter((row) => row.sessionId === sessionId || row.table === 'snapshots');
 		const progress = parseSessionState(owned.find((row) => row.table === 'progress')?.value);
 		const snapshot = parseGameSnapshot(
-			owned.find((row) => row.table === 'snapshots' && row.id === progress.snapshotId)?.value
+			records.find(
+				(row) =>
+					row.table === 'snapshots' &&
+					row.id === progress.snapshotId &&
+					row.gameId === progress.gameId
+			)?.value
 		);
 		const transactions = owned
 			.filter((row) => row.table === 'transactions')
 			.map((row) => parseTransaction(row.value));
-		const history = { snapshot, progress, transactions };
+		const history: SessionHistory = {
+			snapshot,
+			progress,
+			transactions,
+			checkpoints: owned
+				.filter((row) => row.table === 'checkpoints')
+				.map((row) => parseSnapshotCheckpoint(row.value)),
+			resources: {}
+		};
 		validateRestoredStates(history, owned);
 		validateMessages(owned, transactions);
 		validateMemories(owned, transactions);
@@ -40,24 +51,21 @@ export function validateStoredHistory(records: readonly StoredRecord[]): void {
 	}
 }
 
-function validateRestoredStates(
-	{ snapshot, transactions }: SessionHistory,
-	owned: readonly StoredRecord[]
-) {
-	if (!snapshot.restoredStates) {
-		return;
-	}
-	if (
-		snapshot.migrationFrom === snapshot.id ||
-		!owned.some((row) => row.table === 'snapshots' && row.id === snapshot.migrationFrom)
-	) {
-		throw Error('상태 변환의 원본을 찾을 수 없어요.');
-	}
-	for (const [id, state] of Object.entries(snapshot.restoredStates)) {
-		if (!transactions.some((node) => node.id === id)) {
+function validateRestoredStates(history: SessionHistory, owned: readonly StoredRecord[]) {
+	for (const checkpoint of history.checkpoints) {
+		if (
+			checkpoint.snapshotId !== history.snapshot.id ||
+			checkpoint.gameId !== history.progress.gameId
+		) {
+			continue;
+		}
+		if (!history.transactions.some((node) => node.id === checkpoint.transactionId)) {
 			throw Error('상태 변환의 기록을 찾을 수 없어요.');
 		}
-		validateState(snapshot.schema, state, 'load');
+		if (!owned.some((row) => row.table === 'checkpoints' && row.id === checkpoint.transactionId)) {
+			throw Error('상태 변환의 원본을 찾을 수 없어요.');
+		}
+		validateState(history.snapshot.schema, checkpoint.state, 'load');
 	}
 }
 function validateMessages(owned: readonly StoredRecord[], transactions: readonly Transaction[]) {

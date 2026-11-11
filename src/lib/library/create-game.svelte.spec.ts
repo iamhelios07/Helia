@@ -109,7 +109,9 @@ function committedTimeline(messages: Message[], currentSession = session): Sessi
 				revision: 0,
 				state: {}
 			},
-			transactions: []
+			transactions: [],
+			checkpoints: [],
+			resources: {}
 		}
 	};
 }
