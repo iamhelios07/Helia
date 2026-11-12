@@ -15,6 +15,8 @@ export const games = sqliteTable(
 	{
 		id: text('id').primaryKey(),
 		version: integer('version').notNull().default(0),
+		/** Set when the user moves the game to the Trash; null while active. */
+		trashedAt: text('trashed_at'),
 		value: text('value').notNull()
 	},
 	(t) => [check('games_json', sql`json_valid(${t.value})`)]

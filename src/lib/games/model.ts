@@ -35,6 +35,8 @@ export interface Game extends GameMetadata {
 	activeSessionId: string;
 	createdAt: string;
 	updatedAt: string;
+	/** Set while the game sits in the Trash; the timestamp marks when it moved there. */
+	trashedAt?: string;
 	settings: GameSettings;
 	initialState: GameState;
 	schema: ObjectSchema;
@@ -179,6 +181,7 @@ export function parseGame(value: unknown): Game {
 		activeSessionId: value.activeSessionId,
 		createdAt: value.createdAt,
 		updatedAt: value.updatedAt,
+		...(isTrashed(value.trashedAt) ? { trashedAt: value.trashedAt } : {}),
 		...parseStateDocument({ schema: value.schema, initialState: value.initialState }),
 		scripts: parseScripts(value.scripts),
 		...(value.code === undefined ? {} : { code: parseCodeProject(value.code) }),
@@ -187,6 +190,11 @@ export function parseGame(value: unknown): Game {
 		...(value.resources === undefined ? {} : { resources: parseResources(value.resources) }),
 		settings: parseGameSettings(value.settings)
 	};
+}
+
+/** A trashed timestamp is stored as-is; anything else counts as never trashed. */
+function isTrashed(value: unknown): value is string {
+	return typeof value === 'string' && Number.isFinite(Date.parse(value));
 }
 
 /** Scripts saved before TypeScript-only support load as TypeScript instead of being rejected. */

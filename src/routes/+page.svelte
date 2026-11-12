@@ -6,8 +6,15 @@
 	import type { Game } from '#lib/games/model.js';
 
 	import { configureAppSidebar } from '#lib/app/sidebar.svelte.js';
+	import ConfirmDialog from '#lib/components/ConfirmDialog.svelte';
 	import Icon from '#lib/components/Icon.svelte';
-	import { listGames, createGame } from '#lib/games/repository.js';
+	import {
+		listGames,
+		createGame,
+		trashGame,
+		restoreGame,
+		purgeGame
+	} from '#lib/games/repository.js';
 	import GameCard from '#lib/library/GameCard.svelte';
 	import { toLibraryGame, type LibraryGame } from '#lib/library/library-games.js';
 
@@ -23,6 +30,11 @@
 	let savedGames = $state.raw<Game[]>([]);
 	let loading = $state(true);
 	let loadError = $state('');
+	let trashOpen = $state(false);
+	let trashedGames = $state.raw<Game[]>([]);
+	let trashError = $state('');
+	let purgeTarget = $state<Game | null>(null);
+	let trashBusy = $state(false);
 	let ready = $derived(!loading && !loadError);
 	let libraryGames = $derived(savedGames.map(toLibraryGame));
 	configureAppSidebar(() => ({
@@ -112,6 +124,66 @@
 		dialog.showModal();
 		return () => dialog.close();
 	}
+
+	async function openTrash() {
+		trashOpen = true;
+		trashError = '';
+		try {
+			trashedGames = (await listGames(true)).filter((game) => game.trashedAt !== undefined);
+		} catch {
+			trashError = '휴지통을 불러오지 못했어요. 다시 시도해주세요.';
+		}
+	}
+
+	async function moveToTrash(id: string) {
+		if (trashBusy) {
+			return;
+		}
+		trashBusy = true;
+		try {
+			await trashGame(id);
+			await openTrash();
+			await loadLibrary();
+		} catch {
+			trashError = '휴지통으로 이동하지 못했어요. 다시 시도해주세요.';
+		} finally {
+			trashBusy = false;
+		}
+	}
+
+	async function restoreFromTrash(id: string) {
+		if (trashBusy) {
+			return;
+		}
+		trashBusy = true;
+		try {
+			await restoreGame(id);
+			await openTrash();
+			await loadLibrary();
+		} catch {
+			trashError = '휴지통에서 복원하지 못했어요. 다시 시도해주세요.';
+		} finally {
+			trashBusy = false;
+		}
+	}
+
+	async function purgeFromTrash() {
+		const target = purgeTarget;
+		if (!target || trashBusy) {
+			return;
+		}
+		purgeTarget = null;
+		trashBusy = true;
+		try {
+			await purgeGame(target.id);
+			await openTrash();
+			await loadLibrary();
+		} catch {
+			trashError = '게임을 삭제하지 못했어요. 다시 시도해주세요.';
+		} finally {
+			trashBusy = false;
+		}
+	}
 </script>
 
 <svelte:head>
@@ -183,6 +255,9 @@
 					<button class="add-button" type="button" onclick={() => (activeDialog = 'add')}
 						><Icon name="plus" size={17} /><span>게임 추가</span></button
 					>
+					<button class="add-button" type="button" onclick={openTrash}
+						><Icon name="folder" size={16} /><span>휴지통</span></button
+					>
 				</div>
 			</div>
 
@@ -200,7 +275,14 @@
 			{#if visibleGames.length}
 				<ul class={['game-grid', { 'game-list': view === 'list' }]} aria-label="게임 목록">
 					{#each visibleGames as game (game.id)}
-						<li><GameCard {game} {view} onselect={selectGame} /></li>
+						<li>
+							<GameCard
+								{game}
+								{view}
+								onselect={selectGame}
+								ontrash={(target) => void moveToTrash(target.id)}
+							/>
+						</li>
 					{/each}
 					{#if !search.trim()}
 						<li>
@@ -236,6 +318,66 @@
 	</div>
 </main>
 
+{#if trashOpen}
+	<dialog
+		{@attach openModal}
+		aria-label="휴지통"
+		onclose={() => {
+			if (!trashBusy) {
+				trashOpen = false;
+			}
+		}}
+		oncancel={(event) => {
+			if (trashBusy) {
+				event.preventDefault();
+			}
+		}}
+	>
+		<h2 id="trash-title">휴지통</h2>
+		<p class="trash-help">
+			휴지통의 게임은 실행되지 않아요. 복원하거나 영구 삭제할 수 있고, 영구 삭제는 되돌릴 수 없어요.
+		</p>
+		{#if trashError}<p role="alert">{trashError}</p>{/if}
+		{#if trashedGames.length}
+			<ul class="trash-list">
+				{#each trashedGames as game (game.id)}
+					<li>
+						<span class="trash-title">{game.title}</span>
+						<span class="trash-actions">
+							<button
+								type="button"
+								disabled={trashBusy}
+								onclick={() => void restoreFromTrash(game.id)}>복원</button
+							>
+							<button
+								type="button"
+								class="danger"
+								disabled={trashBusy}
+								onclick={() => (purgeTarget = game)}>영구 삭제</button
+							>
+						</span>
+					</li>
+				{/each}
+			</ul>
+		{:else}
+			<p role="status">휴지통이 비어 있어요.</p>
+		{/if}
+		<div class="dialog-actions">
+			<button type="button" onclick={() => (trashOpen = false)}>닫기</button>
+		</div>
+	</dialog>
+{/if}
+
+{#if purgeTarget}
+	<ConfirmDialog
+		title="영구 삭제"
+		message={purgeTarget.title +
+			'을(를) 영구 삭제할까요? 세션·이력·에셋이 모두 삭제되고 되돌릴 수 없어요.'}
+		confirmLabel="영구 삭제"
+		onconfirm={() => void purgeFromTrash()}
+		oncancel={() => (purgeTarget = null)}
+	/>
+{/if}
 {#if activeDialog === 'add'}
 	<dialog
 		{@attach openModal}
@@ -300,6 +442,39 @@
 {/if}
 
 <style>
+	.trash-help {
+		margin: 0 0 14px;
+		color: var(--text-muted);
+		font-size: 12px;
+	}
+	.trash-list {
+		display: flex;
+		flex-direction: column;
+		gap: 6px;
+		margin: 0 0 16px;
+		padding: 0;
+		list-style: none;
+	}
+	.trash-list li {
+		display: flex;
+		align-items: center;
+		gap: 12px;
+		justify-content: space-between;
+	}
+	.trash-title {
+		overflow: hidden;
+		color: var(--text);
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	.trash-actions {
+		display: flex;
+		gap: 6px;
+	}
+	.trash-actions .danger {
+		color: #eab4ae;
+	}
+
 	.library-status {
 		margin: 0 0 24px;
 		color: var(--text-muted);

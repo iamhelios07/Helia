@@ -22,6 +22,7 @@ CREATE UNIQUE INDEX `checkpoints_id_game_id_session_id_unique` ON `checkpoints` 
 CREATE TABLE `games` (
 	`id` text PRIMARY KEY NOT NULL,
 	`version` integer DEFAULT 0 NOT NULL,
+	`trashed_at` text,
 	`value` text NOT NULL,
 	CONSTRAINT "games_json" CHECK(json_valid("games"."value"))
 );

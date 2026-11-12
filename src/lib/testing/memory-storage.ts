@@ -38,10 +38,14 @@ class MemoryStorage {
 			)
 		});
 	}
-	private list() {
+	private list(includeTrashed = false) {
 		return parseReply({
 			version: 0,
-			records: [...this.rows.values()].filter((row) => row.table === 'games')
+			records: [...this.rows.values()].filter(
+				(row) =>
+					row.table === 'games' &&
+					(includeTrashed || (row.value as { trashedAt?: string }).trashedAt === undefined)
+			)
 		});
 	}
 	private read(request: Extract<StorageRequest, { kind: 'read' }>) {
@@ -70,6 +74,40 @@ class MemoryStorage {
 			}
 		}
 	}
+	private trashedAt(gameId: string): string | undefined {
+		return (this.rows.get('games:' + gameId)?.value as { trashedAt?: string } | undefined)
+			?.trashedAt;
+	}
+	private trash(request: Extract<StorageRequest, { kind: 'trash' | 'restore' }>): StorageReply {
+		const row = this.rows.get('games:' + request.gameId);
+		if (!row) {
+			throw new Error('게임을 찾을 수 없어요.');
+		}
+		const value = {
+			...(row.value as Record<string, unknown>),
+			trashedAt: request.kind === 'trash' ? new Date().toISOString() : null
+		};
+		const updated = { ...row, value };
+		this.rows.set('games:' + request.gameId, updated);
+		return { version: this.versions.get(request.gameId) ?? 0, records: [updated] };
+	}
+	private purge(request: Extract<StorageRequest, { kind: 'purge' }>): StorageReply {
+		const row = this.rows.get('games:' + request.gameId);
+		if (!row) {
+			throw new Error('게임을 찾을 수 없어요.');
+		}
+		if (this.trashedAt(request.gameId) === undefined) {
+			throw new Error('휴지통에 있는 게임만 삭제할 수 있어요.');
+		}
+		const next = new Map(this.rows);
+		for (const [key, gameRow] of next) {
+			if (gameRow.gameId === request.gameId) {
+				next.delete(key);
+			}
+		}
+		this.rows = next;
+		return { version: this.versions.get(request.gameId) ?? 0, records: [] };
+	}
 	private write(request: Extract<StorageRequest, { kind: 'commit' | 'create' }>): StorageReply {
 		const version = this.versions.get(request.gameId);
 		if (
@@ -77,6 +115,9 @@ class MemoryStorage {
 			(request.kind === 'commit' && version !== request.version)
 		) {
 			throw new Error(CONFLICT);
+		}
+		if (this.trashedAt(request.gameId) !== undefined) {
+			throw new Error('휴지통에 있는 게임은 변경할 수 없어요.');
 		}
 		const next = new Map(this.rows);
 		if (request.kind === 'commit') {
@@ -106,7 +147,13 @@ class MemoryStorage {
 			return this.prune(request);
 		}
 		if (request.kind === 'list') {
-			return this.list();
+			return this.list(request.includeTrashed === true);
+		}
+		if (request.kind === 'trash' || request.kind === 'restore') {
+			return this.trash(request);
+		}
+		if (request.kind === 'purge') {
+			return this.purge(request);
 		}
 		if (request.kind === 'read') {
 			return this.read(request);

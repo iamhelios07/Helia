@@ -1,7 +1,7 @@
 {
 	"version": "6",
 	"dialect": "sqlite",
-	"id": "287872f4-10dc-4543-8ddb-c3bea12b4d43",
+	"id": "ba99bfe6-5f62-4818-94ab-75e85fa393d6",
 	"prevId": "00000000-0000-0000-0000-000000000000",
 	"tables": {
 		"blobs": {
@@ -144,6 +144,13 @@
 					"notNull": true,
 					"autoincrement": false,
 					"default": 0
+				},
+				"trashed_at": {
+					"name": "trashed_at",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": false,
+					"autoincrement": false
 				},
 				"value": {
 					"name": "value",

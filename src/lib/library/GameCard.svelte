@@ -1,29 +1,73 @@
 <script lang="ts">
+	import Icon from '#lib/components/Icon.svelte';
+
 	import type { LibraryGame } from './library-games.js';
 
 	import GameCover from './GameCover.svelte';
 	let {
 		game,
 		view,
-		onselect
-	}: { game: LibraryGame; view: 'grid' | 'list'; onselect: (game: LibraryGame) => void } = $props();
+		onselect,
+		ontrash
+	}: {
+		game: LibraryGame;
+		view: 'grid' | 'list';
+		onselect: (game: LibraryGame) => void;
+		ontrash?: (game: LibraryGame) => void;
+	} = $props();
 </script>
 
-<button
-	class={['game-card', { 'game-card--list': view === 'list' }]}
-	type="button"
-	aria-label={`${game.title} · 제작 중 상세 보기`}
-	onclick={() => onselect(game)}
->
-	<span class="cover-wrap"><GameCover /></span>
-	<span class="game-copy"
-		>{#if game.genre}<span class="genre">{game.genre}</span>{/if}<strong>{game.title}</strong><span
-			class="metadata">제작 중</span
-		></span
+<div class="card-shell">
+	<button
+		class={['game-card', { 'game-card--list': view === 'list' }]}
+		type="button"
+		aria-label={`${game.title} · 제작 중 상세 보기`}
+		onclick={() => onselect(game)}
 	>
-</button>
+		<span class="cover-wrap"><GameCover /></span>
+		<span class="game-copy"
+			>{#if game.genre}<span class="genre">{game.genre}</span>{/if}<strong>{game.title}</strong
+			><span class="metadata">제작 중</span></span
+		>
+	</button>
+	{#if ontrash}
+		<button
+			class="card-trash"
+			type="button"
+			aria-label={game.title + ` 휴지통으로 이동`}
+			onclick={(event) => {
+				event.stopPropagation();
+				ontrash(game);
+			}}
+		>
+			<Icon name="folder" size={13} />
+		</button>
+	{/if}
+</div>
 
 <style>
+	.card-shell {
+		position: relative;
+	}
+	.card-trash {
+		position: absolute;
+		top: 10px;
+		right: 10px;
+		display: inline-grid;
+		place-items: center;
+		width: 30px;
+		height: 30px;
+		padding: 0;
+		border: 1px solid var(--border);
+		border-radius: 7px;
+		background: color-mix(in srgb, var(--background) 85%, transparent);
+		color: var(--text-muted);
+	}
+	.card-trash:hover {
+		color: var(--text-strong);
+		border-color: var(--text-muted);
+	}
+
 	.game-card {
 		display: flex;
 		width: 100%;

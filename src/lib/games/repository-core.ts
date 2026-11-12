@@ -630,11 +630,24 @@ class GameRepository {
 	subscribeSessionEvents = this.uiEvents.subscribe;
 	getSessionTimeline = this.getTimeline;
 	deleteSessionEvent = this.deleteEvent;
-	listGames = async () => {
-		const result = await this.transport({ kind: 'list' });
+	listGames = async (includeTrashed = false) => {
+		const result = await this.transport({ kind: 'list', includeTrashed });
 		return result.records
 			.map((row) => parseGame(row.value))
 			.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+	};
+	/** Moving to Trash keeps every owned row; the timestamp is the only change. */
+	trashGame = async (gameId: string) => {
+		const result = await this.transport({ kind: 'trash', gameId });
+		return parseGame(result.records.find((row) => row.table === 'games')?.value);
+	};
+	restoreGame = async (gameId: string) => {
+		const result = await this.transport({ kind: 'restore', gameId });
+		return parseGame(result.records.find((row) => row.table === 'games')?.value);
+	};
+	/** Permanent removal from the Trash. Only trashed games can be purged. */
+	purgeGame = async (gameId: string) => {
+		await this.transport({ kind: 'purge', gameId });
 	};
 	createGame = async (input: GameMetadata = { title: '새 게임', genre: '', description: '' }) => {
 		const metadata = validateGameMetadata(input);

@@ -37,10 +37,13 @@ export interface StorageView {
 	records: StoredRecord[];
 }
 export type StorageRequest =
-	| { kind: 'list' }
+	| { kind: 'list'; includeTrashed?: boolean }
 	| { kind: 'read'; gameId: string; sessionId?: string; includeHistory?: boolean }
 	| { kind: 'create'; gameId: string; records: StoredRecord[] }
 	| { kind: 'prune'; gameId: string; sessionId: string; eventId: string; expectedRevision: number }
+	| { kind: 'trash'; gameId: string }
+	| { kind: 'restore'; gameId: string }
+	| { kind: 'purge'; gameId: string }
 	| {
 			kind: 'commit';
 			gameId: string;
@@ -144,12 +147,45 @@ function createRequest(gameId: string, records: StoredRecord[]): StorageRequest 
 	return { kind: 'create', gameId, records };
 }
 
+function parseGameScopedRequest(kind: string, gameId: string): StorageRequest {
+	return { kind: kind as 'trash' | 'restore' | 'purge', gameId };
+}
+
+/** Reads take optional history and session scoping. */
+function parseReadRequest(gameId: string, input: Record<string, unknown>): StorageRequest {
+	return {
+		kind: 'read',
+		gameId,
+		...(input.includeHistory === true ? { includeHistory: true } : {}),
+		...(input.sessionId === undefined ? {} : { sessionId: identifier(input.sessionId) })
+	};
+}
+
+/** Commits carry the version guard, changed records and removed sessions. */
+function parseCommitRequest(
+	gameId: string,
+	input: Record<string, unknown>,
+	records: StoredRecord[]
+): StorageRequest {
+	return {
+		kind: 'commit',
+		gameId,
+		version: counter(input.version),
+		records,
+		deleteSessions: (input.deleteSessions as string[]).map(identifier),
+		...(input.aiLease === undefined ? {} : { aiLease: identifier(input.aiLease) })
+	};
+}
+
 export function parseRequest(value: unknown): StorageRequest {
 	const input = record(value);
 	if (input.kind === 'list') {
-		return { kind: 'list' };
+		return { kind: 'list', ...(input.includeTrashed === true ? { includeTrashed: true } : {}) };
 	}
 	const gameId = identifier(input.gameId);
+	if (['trash', 'restore', 'purge'].includes(String(input.kind))) {
+		return parseGameScopedRequest(String(input.kind), gameId);
+	}
 	if (input.kind === 'prune') {
 		return {
 			kind: 'prune',
@@ -160,26 +196,14 @@ export function parseRequest(value: unknown): StorageRequest {
 		};
 	}
 	if (input.kind === 'read') {
-		return {
-			kind: 'read',
-			gameId,
-			...(input.includeHistory === true ? { includeHistory: true } : {}),
-			...(input.sessionId === undefined ? {} : { sessionId: identifier(input.sessionId) })
-		};
+		return parseReadRequest(gameId, input);
 	}
 	const records = parseRecords(input.records, gameId);
 	if (input.kind === 'create') {
 		return createRequest(gameId, records);
 	}
 	if (input.kind === 'commit' && Array.isArray(input.deleteSessions)) {
-		return {
-			kind: 'commit',
-			gameId,
-			version: counter(input.version),
-			records,
-			deleteSessions: input.deleteSessions.map(identifier),
-			...(input.aiLease === undefined ? {} : { aiLease: identifier(input.aiLease) })
-		};
+		return parseCommitRequest(gameId, input, records);
 	}
 	throw new Error('지원하지 않는 저장 요청이에요.');
 }

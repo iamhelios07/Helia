@@ -152,11 +152,14 @@ class Storage {
 		}
 	}
 	private prune(command: PruneRequest): StorageReply {
-		const game = this.db.get<{ version: number }>(
-			sql`select version from games where id=${command.gameId}`
+		const game = this.db.get<{ version: number; value: string }>(
+			sql`select version, value from games where id=${command.gameId}`
 		);
 		if (!game || game.version >= Number.MAX_SAFE_INTEGER) {
 			throw new Error('게임을 찾을 수 없어요.');
+		}
+		if ((JSON.parse(game.value) as { trashedAt?: string }).trashedAt !== undefined) {
+			throw new Error('휴지통에 있는 게임은 변경할 수 없어요.');
 		}
 		const read = () => [
 			...this.readRows('games', command.gameId),
@@ -240,6 +243,9 @@ class Storage {
 		if (!game) {
 			throw new Error('게임을 찾을 수 없어요.');
 		}
+		if ((JSON.parse(game.value) as { trashedAt?: string }).trashedAt !== undefined) {
+			throw new Error('휴지통에 있는 게임은 변경할 수 없어요.');
+		}
 		const activeId = (JSON.parse(game.value) as { activeSessionId: string }).activeSessionId;
 		if (
 			!this.db.get(
@@ -306,12 +312,60 @@ class Storage {
 			return this.prune(command);
 		}
 		if (command.kind === 'list') {
-			return { version: 0, records: this.readRows('games') };
+			const rows = command.includeTrashed
+				? this.readRows('games')
+				: this.readRows('games').filter(
+						(row) => (row.value as { trashedAt?: string }).trashedAt === undefined
+					);
+			return { version: 0, records: rows };
+		}
+		if (command.kind === 'trash' || command.kind === 'restore') {
+			return this.trash(command);
+		}
+		if (command.kind === 'purge') {
+			return this.purge(command);
 		}
 		if (command.kind === 'read') {
 			return this.read(command);
 		}
 		return this.write(command);
+	}
+	/** Moving to Trash or restoring only flips the timestamp; every owned row stays untouched. */
+	private trash(command: Extract<StorageRequest, { kind: 'trash' | 'restore' }>): StorageReply {
+		const game = this.db.get<{ version: number; value: string }>(
+			sql`select version, value from games where id = ${command.gameId}`
+		);
+		if (!game) {
+			throw new Error('게임을 찾을 수 없어요.');
+		}
+		const trashedAt = command.kind === 'trash' ? new Date().toISOString() : null;
+		const value = { ...JSON.parse(game.value), trashedAt };
+		if (
+			this.db.run(
+				sql`update games set value = ${JSON.stringify(value)} where id = ${command.gameId}`
+			).changes !== 1
+		) {
+			throw new Error('게임을 찾을 수 없어요.');
+		}
+		const records = this.readRows('games', command.gameId);
+		return { version: game.version, records };
+	}
+	/** Permanent removal from the Trash: the game row goes and foreign keys cascade the rest. */
+	private purge(command: Extract<StorageRequest, { kind: 'purge' }>): StorageReply {
+		const game = this.db.get<{ version: number; value: string }>(
+			sql`select version, value from games where id = ${command.gameId}`
+		);
+		if (!game) {
+			throw new Error('게임을 찾을 수 없어요.');
+		}
+		const trashedAt = (JSON.parse(game.value) as { trashedAt?: string }).trashedAt;
+		if (trashedAt === undefined) {
+			throw new Error('휴지통에 있는 게임만 삭제할 수 있어요.');
+		}
+		if (this.db.run(sql`delete from games where id = ${command.gameId}`).changes !== 1) {
+			throw new Error('게임을 찾을 수 없어요.');
+		}
+		return { version: game.version, records: [] };
 	}
 	request = (input: unknown): StorageReply => {
 		const command = parseRequest(input);

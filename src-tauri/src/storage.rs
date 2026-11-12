@@ -119,8 +119,10 @@ struct StoredRecord {
     deny_unknown_fields
 )]
 enum Request {
-    List,
-    ReadDraft {
+    List {
+        #[serde(default)]
+        include_trashed: bool,
+    },    ReadDraft {
         game_id: String,
     },
     WriteDraft {
@@ -150,6 +152,15 @@ enum Request {
         event_id: String,
         expected_revision: u64,
     },
+    Trash {
+        game_id: String,
+    },
+    Restore {
+        game_id: String,
+    },
+    Purge {
+        game_id: String,
+    }
 }
 
 fn open(path: &Path) -> Result<Connection, String> {
@@ -1005,7 +1016,7 @@ pub(crate) fn execute_request(path: &Path, input: Value) -> Result<Value, String
     let mut connection = open(path)?;
     let read = matches!(
         request,
-        Request::Read { .. } | Request::ReadDraft { .. } | Request::List
+        Request::Read { .. } | Request::ReadDraft { .. } | Request::List { .. }
     );
     let transaction = connection
         .transaction_with_behavior(if read {
@@ -1021,8 +1032,14 @@ pub(crate) fn execute_request(path: &Path, input: Value) -> Result<Value, String
             version,
             draft,
         } => write_draft(&transaction, &game_id, version, &draft)?,
-        Request::List => {
-            json!({ "version": 0, "records": read_rows(&transaction, Table::Games, None, None)? })
+        Request::List {
+            include_trashed,
+        } => {
+            let mut records = read_rows(&transaction, Table::Games, None, None)?;
+            if !include_trashed {
+                records.retain(|row| row.value.get("trashedAt").is_none());
+            }
+            json!({ "version": 0, "records": records })
         }
         Request::Read {
             game_id,
@@ -1047,6 +1064,9 @@ pub(crate) fn execute_request(path: &Path, input: Value) -> Result<Value, String
             &event_id,
             expected_revision,
         )?,
+        Request::Trash { game_id } => trash(&transaction, &game_id)?,
+        Request::Restore { game_id } => restore(&transaction, &game_id)?,
+        Request::Purge { game_id } => purge(&transaction, &game_id)?,
         Request::Commit {
             game_id,
             version,
@@ -1424,7 +1444,8 @@ fn prune(
     event_id: &str,
     expected: u64,
 ) -> Result<Value, String> {
-    validate_history(connection, game_id, session_id)?;
+    assert_not_trashed(connection, game_id)?;
+   validate_history(connection, game_id, session_id)?;
     let game = read_rows(connection, Table::Games, Some(game_id), None)?
         .into_iter()
         .next()
@@ -1496,14 +1517,78 @@ fn prune(
     publish_prune(connection, game_id, session_id, [game, session, progress])
 }
 
-fn write(
+/// Moving to Trash or restoring only flips the timestamp; every owned row stays untouched.
+fn set_trashed(connection: &Connection, game_id: &str, kind: &str) -> Result<Value, String> {
+    let existing: Option<(i64, String)> = connection
+        .query_row(
+            "SELECT version,value FROM games WHERE id=?1",
+            [game_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()
+        .map_err(db_error)?;
+    let Some((version, value)) = existing else {
+        return Err("게임을 찾을 수 없어요.".into());
+    };
+    let mut parsed: Value = serde_json::from_str(&value).map_err(|_| "저장된 게임 정보가 올바르지 않아요.")?;
+    parsed["trashedAt"] = if kind == "trash" {
+        json!(connection.query_row("SELECT strftime('%Y-%m-%dT%H:%M:%fZ','now')", [], |row| row.get::<_, String>(0)).map_err(db_error)?)
+    } else {
+        Value::Null
+    };
+    connection
+        .execute(
+            "UPDATE games SET value=?1 WHERE id=?2",
+            params![serde_json::to_string(&parsed).map_err(|_| "잘못된 게임 정보")?, game_id],
+        )
+        .map_err(db_error)?;
+    let records = read_rows(connection, Table::Games, Some(game_id), None)?;
+    Ok(json!({ "version": version, "records": records }))
+}
+fn trash(connection: &Connection, game_id: &str) -> Result<Value, String> {
+    set_trashed(connection, game_id, "trash")
+}
+fn restore(connection: &Connection, game_id: &str) -> Result<Value, String> {
+    set_trashed(connection, game_id, "restore")
+}
+/// Permanent removal from the Trash: the game row goes and foreign keys cascade the rest.
+fn purge(connection: &Connection, game_id: &str) -> Result<Value, String> {
+    let value: Option<String> = connection
+        .query_row("SELECT value FROM games WHERE id=?1", [game_id], |row| row.get(0))
+        .optional()
+        .map_err(db_error)?;
+    let Some(value) = value else {
+        return Err("게임을 찾을 수 없어요.".into());
+    };
+    let parsed: Value = serde_json::from_str(&value).map_err(|_| "저장된 게임 정보가 올바르지 않아요.")?;
+    if parsed.get("trashedAt").map(Value::is_null).unwrap_or(true) {
+        return Err("휴지통에 있는 게임만 삭제할 수 있어요.".into());
+    }
+    connection
+        .execute("DELETE FROM games WHERE id=?1", [game_id])
+        .map_err(db_error)?;
+    Ok(json!({ "version": 0, "records": [] }))
+}
+fn assert_not_trashed(connection: &Connection, game_id: &str) -> Result<(), String> {
+    let value: String = connection
+        .query_row("SELECT value FROM games WHERE id=?1", [game_id], |row| row.get(0))
+        .optional()
+        .map_err(db_error)?
+        .ok_or("게임을 찾을 수 없어요.")?;
+    let parsed: Value = serde_json::from_str(&value).map_err(|_| "저장된 게임 정보가 올바르지 않아요.")?;
+    if parsed.get("trashedAt").map(|v| !v.is_null()).unwrap_or(false) {
+        return Err("휴지통에 있는 게임은 변경할 수 없어요.".into());
+    }
+    Ok(())
+}fn write(
     connection: &Connection,
     game_id: &str,
     mut records: Vec<StoredRecord>,
     version: Option<u64>,
     delete_sessions: &[String],
 ) -> Result<Value, String> {
-    if let Some(version) = version {
+    assert_not_trashed(connection, game_id)?;
+   if let Some(version) = version {
         if version >= 9_007_199_254_740_991
             || connection
                 .execute(
