@@ -256,7 +256,7 @@
 						><Icon name="plus" size={17} /><span>게임 추가</span></button
 					>
 					<button class="add-button" type="button" onclick={openTrash}
-						><Icon name="folder" size={16} /><span>휴지통</span></button
+						><Icon name="trash" size={16} /><span>휴지통</span></button
 					>
 				</div>
 			</div>

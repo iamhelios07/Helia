@@ -40,7 +40,7 @@
 				ontrash(game);
 			}}
 		>
-			<Icon name="folder" size={13} />
+			<Icon name="trash" size={13} />
 		</button>
 	{/if}
 </div>
