@@ -29,6 +29,14 @@ it('reorders entries via drag and drop', async () => {
 	const dragEvent = (type: string) =>
 		new DragEvent(type, { bubbles: true, cancelable: true, dataTransfer: new DataTransfer() });
 	rows()[0].dispatchEvent(dragEvent('dragstart'));
+	rows()[1].dispatchEvent(
+		new DragEvent('dragover', {
+			bubbles: true,
+			cancelable: true,
+			dataTransfer: new DataTransfer(),
+			clientY: 9999
+		})
+	);
 	rows()[1].dispatchEvent(dragEvent('drop'));
 	await expect.poll(() => JSON.parse(source).lorebook[0].name).toBe('둘째');
 	expect(JSON.parse(source).lorebook[0].order).toBeGreaterThan(
@@ -64,8 +72,17 @@ it('moves an entry between folders by dropping on a target in another folder', a
 			dataTransfer: new DataTransfer()
 		})
 	);
-	rows()[1].dispatchEvent(
-		new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: new DataTransfer() })
+	document.querySelector('.folder-row')?.dispatchEvent(
+		new DragEvent('dragover', {
+			bubbles: true,
+			cancelable: true,
+			dataTransfer: new DataTransfer()
+		})
 	);
+	document
+		.querySelector('.folder-row')
+		?.dispatchEvent(
+			new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: new DataTransfer() })
+		);
 	await expect.poll(() => JSON.parse(source).lorebook[0].folder).toBe('폴더');
 }, 30_000);

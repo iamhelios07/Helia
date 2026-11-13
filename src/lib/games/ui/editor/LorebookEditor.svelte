@@ -4,6 +4,15 @@
 	import Icon from '#lib/components/Icon.svelte';
 	import { parseGameAIContent, type LoreEntry } from '#lib/games/ai/prompts.js';
 
+	import {
+		applyDrop,
+		entryKey,
+		zoneForEntry,
+		zoneForFolder,
+		ZONE_END,
+		type DropZone
+	} from './lorebook-dnd.js';
+
 	let {
 		source,
 		disabled = false,
@@ -47,9 +56,6 @@
 	});
 	let selected = $derived(entries?.find((entry) => entryKey(entry) === selectedId) ?? null);
 
-	function entryKey(entry: LoreEntry): string {
-		return entry.id ?? `${entry.name ?? ''}:${entry.keys.join(',')}:${entry.content.slice(0, 32)}`;
-	}
 	function stableEntry(entry: LoreEntry): LoreEntry {
 		return { ...entry };
 	}
@@ -125,27 +131,40 @@
 		);
 	}
 	let draggingKey = $state<string | null>(null);
+	let dropZone = $state<DropZone | null>(null);
 
-	function handleDrop(target: LoreEntry) {
-		if (!draggingKey || entries === null || disabled) {
+	function dragOverEntry(event: DragEvent, entry: LoreEntry) {
+		if (!draggingKey || disabled) {
 			return;
 		}
-		const from = entries.findIndex((entry) => entryKey(entry) === draggingKey);
-		const to = entries.findIndex((entry) => entryKey(entry) === entryKey(target));
-		if (from < 0 || to < 0 || from === to) {
+		event.preventDefault();
+		dropZone = zoneForEntry(event, entry);
+	}
+	function dragOverFolder(event: DragEvent, folder: string) {
+		if (!draggingKey || disabled) {
 			return;
 		}
-		const next = [...entries];
-		const [moved] = next.splice(from, 1);
-		// Crossing a folder boundary moves the entry into the target's folder.
-		const targetFolder = target.folder ?? '';
-		const adjusted = { ...moved, folder: targetFolder || undefined };
-		// The target index shifted after the dragged entry was removed.
-		const insertAt = next.findIndex((entry) => entryKey(entry) === entryKey(target)) + 1;
-		next.splice(insertAt, 0, adjusted);
-		// Recompute orders to match the new visual positions.
-		commit(next.map((entry, index) => ({ ...entry, order: next.length - index })));
+		event.preventDefault();
+		dropZone = zoneForFolder(folder);
+	}
+	function dragOverTreeEnd(event: DragEvent) {
+		if (!draggingKey || disabled) {
+			return;
+		}
+		event.preventDefault();
+		dropZone = ZONE_END;
+	}
+	function clearDrop() {
+		dropZone = null;
+	}
+	function resolveDrop() {
+		const zone = dropZone;
+		if (!draggingKey || content === null || !zone) {
+			return;
+		}
+		commit(applyDrop(content.lorebook, draggingKey, zone));
 		draggingKey = null;
+		dropZone = null;
 	}
 
 	function toggleFolder(folder: string) {
@@ -247,7 +266,16 @@
 							onblur={commitRename}
 						/>
 					{:else}
-						<div class="folder-row">
+						<div
+							role="group"
+							class="folder-row"
+							ondragover={(event) => dragOverFolder(event, group.folder)}
+							ondragleave={clearDrop}
+							ondrop={(event) => {
+								event.preventDefault();
+								resolveDrop();
+							}}
+						>
 							<button
 								type="button"
 								class="folder-open"
@@ -282,16 +310,26 @@
 					{#each group.items as entry (entryKey(entry))}
 						<div
 							role="listitem"
-							class={['entry-row', { selected: entryKey(entry) === selectedId }]}
+							class={[
+								'entry-row',
+								{ selected: entryKey(entry) === selectedId },
+								{ dragging: draggingKey === entryKey(entry) },
+								{
+									'drop-before': dropZone?.kind === 'before' && dropZone.key === entryKey(entry),
+									'drop-after': dropZone?.kind === 'after' && dropZone.key === entryKey(entry)
+								}
+							]}
 							class:indented={!!group.folder}
-							class:dragging={draggingKey === entryKey(entry)}
 							draggable={!disabled}
 							ondragstart={() => (draggingKey = entryKey(entry))}
-							ondragend={() => (draggingKey = null)}
-							ondragover={(event) => event.preventDefault()}
+							ondragend={() => {
+								draggingKey = null;
+								dropZone = null;
+							}}
+							ondragover={(event) => dragOverEntry(event, entry)}
 							ondrop={(event) => {
 								event.preventDefault();
-								handleDrop(entry);
+								resolveDrop();
 							}}
 						>
 							<button
@@ -312,11 +350,37 @@
 							</span>
 						</div>
 					{/each}
+					{#if !group.folder}
+						<div
+							role="group"
+							class={['tree-end', { active: dropZone?.kind === 'end' }]}
+							ondragover={(event) => dragOverTreeEnd(event)}
+							ondragleave={clearDrop}
+							ondrop={(event) => {
+								event.preventDefault();
+								resolveDrop();
+							}}
+						></div>
+					{/if}
 				{/if}
 				{#if group.folder}
-					<button type="button" class="add-into" {disabled} onclick={() => addEntry(group.folder)}
-						>{group.folder}에 로어 추가</button
+					<div
+						role="group"
+						class={[
+							'folder-drop',
+							{ active: dropZone?.kind === 'inside' && dropZone.folder === group.folder }
+						]}
+						ondragover={(event) => dragOverFolder(event, group.folder)}
+						ondragleave={clearDrop}
+						ondrop={(event) => {
+							event.preventDefault();
+							resolveDrop();
+						}}
 					>
+						<button type="button" class="add-into" {disabled} onclick={() => addEntry(group.folder)}
+							>{group.folder}에 로어 추가</button
+						>
+					</div>
 				{/if}
 			{/each}
 		</div>
@@ -396,6 +460,28 @@
 </div>
 
 <style>
+	.entry-row.drop-before {
+		box-shadow: inset 0 2px 0 var(--text-strong);
+	}
+	.entry-row.drop-after {
+		box-shadow: inset 0 -2px 0 var(--text-strong);
+	}
+	.entry-row.dragging {
+		opacity: 0.4;
+	}
+	.folder-drop {
+		min-height: 8px;
+	}
+	.folder-drop.active {
+		box-shadow: inset 0 2px 0 var(--text-strong);
+	}
+	.tree-end {
+		min-height: 14px;
+	}
+	.tree-end.active {
+		box-shadow: inset 0 2px 0 var(--text-strong);
+	}
+
 	.lorebook-editor {
 		display: flex;
 		height: 100%;
