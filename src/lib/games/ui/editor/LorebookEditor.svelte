@@ -376,11 +376,7 @@
 							event.preventDefault();
 							resolveDrop();
 						}}
-					>
-						<button type="button" class="add-into" {disabled} onclick={() => addEntry(group.folder)}
-							>{group.folder}에 로어 추가</button
-						>
-					</div>
+					></div>
 				{/if}
 			{/each}
 		</div>
@@ -602,19 +598,6 @@
 	.icon-action:hover {
 		color: var(--text-strong);
 		background: var(--surface-hover);
-	}
-	.add-into {
-		margin: 2px 0 4px 16px;
-		padding: 4px 6px;
-		border: 0;
-		background: transparent;
-		color: var(--text-muted);
-		font: inherit;
-		font-size: 11px;
-		text-align: left;
-	}
-	.add-into:hover {
-		color: var(--text-strong);
 	}
 	.entry-form {
 		flex: 1;
