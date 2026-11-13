@@ -82,3 +82,28 @@ it('deletes a declared empty folder instead of keeping it', async () => {
 	await page.getByRole('button', { name: '빈 폴더 삭제 (로어는 최상위로 이동)' }).click();
 	await expect.poll(() => source).not.toContain('빈 폴더');
 }, 30_000);
+
+it('keeps a folder when its last entry is deleted', async () => {
+	let source = $state(
+		JSON.stringify({
+			version: 1,
+			lorebook: [{ id: 'only', name: '하나뿐', folder: '유지폴더', keys: ['k'], content: 'c' }]
+		})
+	);
+	render(LorebookEditor, {
+		get source() {
+			return source;
+		},
+		onchange: (value: string) => {
+			source = value;
+		}
+	});
+	await page.getByRole('button', { name: '유지폴더 폴더 펼치기' }).click();
+	await expect.element(page.getByText('하나뿐')).toBeVisible();
+	await userEvent.hover(page.getByRole('button', { name: '하나뿐' }));
+	await page.getByRole('button', { name: '하나뿐 삭제' }).click();
+	await expect.poll(() => JSON.parse(source).lorebook.length).toBe(0);
+	// The folder survives its last entry: it is now an empty declared folder.
+	await expect.poll(() => JSON.parse(source).folders ?? []).toContain('유지폴더');
+	await expect.element(page.getByText('유지폴더')).toBeVisible();
+}, 30_000);

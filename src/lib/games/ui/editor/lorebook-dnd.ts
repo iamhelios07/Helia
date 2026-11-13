@@ -1,4 +1,4 @@
-import type { LoreEntry } from '#lib/games/ai/prompts.js';
+import type { GameAIContent, LoreEntry } from '#lib/games/ai/prompts.js';
 
 export type DropZone =
 	| { kind: 'before'; key: string }
@@ -6,6 +6,16 @@ export type DropZone =
 	| { kind: 'inside'; folder: string }
 	| { kind: 'end' };
 
+/** Every folder that currently exists: declared empty ones plus the ones holding entries. */
+export function knownFolders(current: GameAIContent): string[] {
+	const names: string[] = [...(current.folders ?? [])];
+	for (const entry of current.lorebook) {
+		if (entry.folder && !names.includes(entry.folder)) {
+			names.push(entry.folder);
+		}
+	}
+	return names;
+}
 export function entryKey(entry: LoreEntry): string {
 	return entry.id ?? `${entry.name ?? ''}:${entry.keys.join(',')}:${entry.content.slice(0, 32)}`;
 }
@@ -61,4 +71,31 @@ export function applyDrop(lorebook: LoreEntry[], draggingKey: string, zone: Drop
 	next.splice(insertAt, 0, adjusted);
 	// Order weights follow the new visual positions so prompt assembly matches.
 	return next.map((entry, index) => ({ ...entry, order: next.length - index }));
+}
+
+/** A brand-new entry; ids come from the browser so drag identity stays stable. */
+export function createLoreEntry(folder: string): LoreEntry {
+	return {
+		id: crypto.randomUUID(),
+		name: '새 로어',
+		...(folder ? { folder } : {}),
+		keys: [],
+		content: '',
+		order: 0,
+		always: false,
+		enabled: true
+	};
+}
+
+/** Serializes the document, omitting the folder list when no folder is empty. */
+export function serializeLorebook(lorebook: LoreEntry[], emptyFolders: string[]): string {
+	return JSON.stringify(
+		{
+			version: 1,
+			lorebook,
+			...(emptyFolders.length ? { folders: emptyFolders } : {})
+		},
+		null,
+		2
+	);
 }

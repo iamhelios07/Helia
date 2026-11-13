@@ -6,7 +6,10 @@
 
 	import {
 		applyDrop,
+		createLoreEntry,
 		entryKey,
+		knownFolders,
+		serializeLorebook,
 		zoneForEntry,
 		zoneForFolder,
 		ZONE_END,
@@ -63,29 +66,19 @@
 		if (content === null || disabled) {
 			return;
 		}
-		// A folder survives with zero entries only if it was declared before this change.
-		const filled = new Set(next.map((entry) => entry.folder ?? ''));
-		const emptyFolders = (declaredFolders ?? content.folders ?? []).filter(
-			(name) => !filled.has(name)
-		);
-		onchange(
-			JSON.stringify(
-				{
-					version: 1,
-					lorebook: next,
-					...(emptyFolders.length ? { folders: emptyFolders } : {})
-				},
-				null,
-				2
-			)
-		);
+		// Folders that exist before the change must keep existing after it, even when the
+		// change empties them: a folder only disappears when it is deleted on purpose.
+		const known = declaredFolders ?? knownFolders(content);
+		const filled = next.map((entry) => entry.folder ?? '').filter(Boolean);
+		const emptyFolders = known.filter((name) => !filled.includes(name));
+		onchange(serializeLorebook(next, emptyFolders));
 	}
 	function createFolder(name: string) {
 		if (content === null || disabled) {
 			return;
 		}
-		const declared = new Set(content.folders ?? []);
-		if (declared.has(name)) {
+		const declared = knownFolders(content);
+		if (declared.includes(name)) {
 			return;
 		}
 		commit(entries ?? [], [...declared, name]);
@@ -95,16 +88,7 @@
 		if (entries === null || disabled) {
 			return;
 		}
-		const entry: LoreEntry = {
-			id: crypto.randomUUID(),
-			name: '새 로어',
-			...(folder ? { folder } : {}),
-			keys: [],
-			content: '',
-			order: 0,
-			always: false,
-			enabled: true
-		};
+		const entry = createLoreEntry(folder);
 		commit([...entries, entry]);
 		selectedId = entry.id ?? '';
 		if (folder && !expandedFolders.includes(folder)) {
@@ -180,14 +164,23 @@
 		const next = renamingValue.trim();
 		const previous = renamingFolder;
 		renamingFolder = null;
-		if (!previous || !next || next === previous || entries === null || disabled) {
+		if (
+			!previous ||
+			!next ||
+			next === previous ||
+			entries === null ||
+			content === null ||
+			disabled
+		) {
 			return;
 		}
 		if (folders.some((group) => group.folder === next)) {
 			return;
 		}
+		const declared = knownFolders(content).filter((name) => name !== previous);
 		commit(
-			entries.map((entry) => (entry.folder === previous ? { ...entry, folder: next } : entry))
+			entries.map((entry) => (entry.folder === previous ? { ...entry, folder: next } : entry)),
+			[...declared, next]
 		);
 	}
 	function deleteFolder(folder: string) {
