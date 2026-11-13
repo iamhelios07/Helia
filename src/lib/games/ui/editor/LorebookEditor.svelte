@@ -137,7 +137,12 @@
 		}
 		const next = [...entries];
 		const [moved] = next.splice(from, 1);
-		next.splice(to, 0, moved);
+		// Crossing a folder boundary moves the entry into the target's folder.
+		const targetFolder = target.folder ?? '';
+		const adjusted = { ...moved, folder: targetFolder || undefined };
+		// The target index shifted after the dragged entry was removed.
+		const insertAt = next.findIndex((entry) => entryKey(entry) === entryKey(target)) + 1;
+		next.splice(insertAt, 0, adjusted);
 		// Recompute orders to match the new visual positions.
 		commit(next.map((entry, index) => ({ ...entry, order: next.length - index })));
 		draggingKey = null;

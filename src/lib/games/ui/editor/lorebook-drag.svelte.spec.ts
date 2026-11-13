@@ -35,3 +35,37 @@ it('reorders entries via drag and drop', async () => {
 		JSON.parse(source).lorebook[1].order
 	);
 }, 30_000);
+
+it('moves an entry between folders by dropping on a target in another folder', async () => {
+	let source = $state(
+		JSON.stringify({
+			version: 1,
+			lorebook: [
+				{ id: 'root', name: '바깥', keys: ['r'], content: 'c', always: true },
+				{ id: 'inside', name: '안', folder: '폴더', keys: ['f'], content: 'c', always: true }
+			]
+		})
+	);
+	render(LorebookEditor, {
+		get source() {
+			return source;
+		},
+		onchange: (value: string) => {
+			source = value;
+		}
+	});
+	const rows = () => [...document.querySelectorAll('[role=listitem]')];
+	await expect.element(page.getByText('바깥')).toBeVisible();
+	await page.getByRole('button', { name: '폴더 폴더 펼치기' }).click();
+	rows()[0].dispatchEvent(
+		new DragEvent('dragstart', {
+			bubbles: true,
+			cancelable: true,
+			dataTransfer: new DataTransfer()
+		})
+	);
+	rows()[1].dispatchEvent(
+		new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: new DataTransfer() })
+	);
+	await expect.poll(() => JSON.parse(source).lorebook[0].folder).toBe('폴더');
+}, 30_000);
