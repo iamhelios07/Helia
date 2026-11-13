@@ -105,7 +105,10 @@ it('uses the selected global preset on an existing session and picks up changes 
 		schema: { type: 'object', properties: {}, additionalProperties: false },
 		initialState: {},
 		scripts: {},
-		ai: { version: 1, lorebook: [{ keys: [], content: 'Game lore', always: true }] }
+		ai: {
+			version: 1,
+			lorebook: [{ name: 'Game lore', keys: [], content: 'Game lore', always: true }]
+		}
 	});
 	await getSessionTimeline(game.id, game.activeSessionId);
 	const settings = selectPromptPreset(
@@ -153,7 +156,16 @@ it('uses the selected global preset on an existing session and picks up changes 
 	expect(timeline.history.snapshot.ai).toEqual({
 		version: 1,
 		lorebook: [
-			{ keys: [], content: 'Game lore', always: true, enabled: true, caseSensitive: false }
+			{
+				id: 'lore-1',
+				name: 'Game lore',
+				order: 0,
+				keys: [],
+				content: 'Game lore',
+				always: true,
+				enabled: true,
+				caseSensitive: false
+			}
 		]
 	});
 	expect(JSON.stringify(timeline)).not.toContain('First preset');

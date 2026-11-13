@@ -6,6 +6,7 @@
 
 	import AssetEditor from './AssetEditor.svelte';
 	import EditorTabs from './EditorTabs.svelte';
+	import LorebookEditor from './LorebookEditor.svelte';
 	import SourceEditor from './SourceEditor.svelte';
 	import StateEditor from './StateEditor.svelte';
 	let { editor }: { editor: EditorWorkspace } = $props();
@@ -75,6 +76,11 @@
 						location={editor.codeLocation}
 						onchange={(value) =>
 							editor.activeDocument && editor.updateSource(editor.activeDocument, value)}
+					/>
+				{:else if editor.activeDocument === 'lorebook' && !editor.sourceDocuments.includes('lorebook')}<LorebookEditor
+						source={editor.draft.documents.lorebook}
+						disabled={editor.editingBlocked}
+						onchange={(value) => editor.changeDocument('lorebook', value)}
 					/>
 				{:else if editor.activeDocument === 'info' && !editor.sourceDocuments.includes('info') && editor.info}<div
 						class="form-document"

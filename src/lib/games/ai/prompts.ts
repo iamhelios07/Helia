@@ -37,8 +37,17 @@ export interface PromptBlock {
 	enabled?: boolean;
 }
 export interface LoreEntry {
+	/** Stable identifier used by the editor; generated from position when absent. */
+	id?: string;
+	/** Creator-facing title shown in the lorebook editor; defaults to the entry number. */
+	name?: string;
+	/** Logical folder name; entries without one sit at the top level. */
+	folder?: string;
+	/** Trigger keywords; any hit activates the entry unless it is always-on. */
 	keys: string[];
 	content: string;
+	/** Sort weight inside the assembled prompt; higher numbers come first. */
+	order?: number;
 	always?: boolean;
 	enabled?: boolean;
 	caseSensitive?: boolean;
@@ -209,21 +218,40 @@ export function parseGameAIContent(value: unknown): GameAIContent {
 	}
 	return {
 		version: 1,
-		lorebook: lorebook.map((value) => {
-			const item = credentialRecord(value);
-			if (!Array.isArray(item.keys) || item.keys.length > 128) {
-				throw aiError('protocol');
-			}
-			return {
-				keys: item.keys.map((k) => text(k)),
-				content: text(item.content),
-				always: bool(item.always),
-				enabled: bool(item.enabled, true),
-				caseSensitive: bool(item.caseSensitive)
-			};
-		})
+		lorebook: lorebook.map((value, index) => parseLoreEntry(value, index))
 	};
 }
+/**
+ * Parses one lorebook entry. Legacy entries (keys/content/always only) gain a generated
+ * id, their position as the sort order and an entry-count-based name.
+ */
+export function parseLoreEntry(value: unknown, index: number): LoreEntry {
+	const item = credentialRecord(value);
+	if (!Array.isArray(item.keys) || item.keys.length > 128) {
+		throw aiError('protocol');
+	}
+	const order = item.order === undefined ? index : counter2(item.order);
+	const name =
+		item.name === undefined ? '로어 ' + (index + 1) : text(item.name, '로어 ' + (index + 1));
+	return {
+		id: item.id === undefined ? 'lore-' + (index + 1) : text(item.id),
+		name,
+		...(item.folder === undefined ? {} : { folder: text(item.folder, '') }),
+		keys: item.keys.map((k) => text(k)),
+		content: text(item.content),
+		order,
+		always: bool(item.always),
+		enabled: bool(item.enabled, true),
+		caseSensitive: bool(item.caseSensitive)
+	};
+}
+function counter2(value: unknown): number {
+	if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0 || value > 1e6) {
+		throw aiError('protocol');
+	}
+	return value;
+}
+
 /** Import the JSON prompt portion of a Risu preset without importing credentials or CBS execution. */
 export function importPromptPreset(value: unknown): PromptConfig {
 	const row = credentialRecord(value);
@@ -270,6 +298,13 @@ function normalizedRole(role: PromptBlock['role']): AIMessage['role'] {
 	}
 	return role === 'user' ? 'user' : 'system';
 }
+/** Sorts by the creator's order weight (higher first), falling back to list position. */
+function orderedLore(lorebook: LoreEntry[]): LoreEntry[] {
+	return lorebook
+		.map((entry, index) => ({ entry, index }))
+		.sort((a, b) => (b.entry.order ?? 0) - (a.entry.order ?? 0) || a.index - b.index)
+		.map((row) => row.entry);
+}
 function matchesLore(entry: LoreEntry, haystack: string): boolean {
 	if (entry.enabled === false) {
 		return false;
@@ -306,7 +341,7 @@ class PromptAssembler {
 		const haystack = this.chat.map((m) => m.content).join('\n');
 		this.slots = {
 			description: context.settings.description,
-			lorebook: (context.lorebook ?? [])
+			lorebook: orderedLore(context.lorebook ?? [])
 				.filter((e) => matchesLore(e, haystack))
 				.map((e) => e.content)
 				.join('\n\n'),
