@@ -19,13 +19,14 @@
 	let renamingFolder = $state<string | null>(null);
 	let renamingValue = $state('');
 
-	let entries = $derived.by(() => {
+	let content = $derived.by(() => {
 		try {
-			return parseGameAIContent(JSON.parse(source)).lorebook;
+			return parseGameAIContent(JSON.parse(source));
 		} catch {
 			return null;
 		}
 	});
+	let entries = $derived(content?.lorebook ?? null);
 	let folders = $derived.by(() => {
 		const groups = new SvelteMap<string, LoreEntry[]>();
 		for (const entry of entries ?? []) {
@@ -33,6 +34,12 @@
 			const list = groups.get(key) ?? [];
 			list.push(entry);
 			groups.set(key, list);
+		}
+		// Declared folders stay visible even when empty.
+		for (const name of content?.folders ?? []) {
+			if (!groups.has(name)) {
+				groups.set(name, []);
+			}
 		}
 		return [...groups.entries()]
 			.sort(([a], [b]) => a.localeCompare(b, 'ko-KR'))
@@ -46,11 +53,37 @@
 	function stableEntry(entry: LoreEntry): LoreEntry {
 		return { ...entry };
 	}
-	function commit(next: LoreEntry[]) {
-		if (disabled) {
+	function commit(next: LoreEntry[], declaredFolders?: string[]) {
+		if (content === null || disabled) {
 			return;
 		}
-		onchange(JSON.stringify({ version: 1, lorebook: next }, null, 2));
+		// A folder survives with zero entries only if it was declared before this change.
+		const filled = new Set(next.map((entry) => entry.folder ?? ''));
+		const emptyFolders = (declaredFolders ?? content.folders ?? []).filter(
+			(name) => !filled.has(name)
+		);
+		onchange(
+			JSON.stringify(
+				{
+					version: 1,
+					lorebook: next,
+					...(emptyFolders.length ? { folders: emptyFolders } : {})
+				},
+				null,
+				2
+			)
+		);
+	}
+	function createFolder(name: string) {
+		if (content === null || disabled) {
+			return;
+		}
+		const declared = new Set(content.folders ?? []);
+		if (declared.has(name)) {
+			return;
+		}
+		commit(entries ?? [], [...declared, name]);
+		expandedFolders = [...expandedFolders, name];
 	}
 	function addEntry(folder: string) {
 		if (entries === null || disabled) {
@@ -133,7 +166,7 @@
 		if (entries === null || disabled) {
 			return;
 		}
-		// Entries move to the top level; nothing is destroyed.
+		// Entries move to the top level; a declared empty folder is simply removed.
 		commit(
 			entries.map((entry) => (entry.folder === folder ? { ...entry, folder: undefined } : entry))
 		);
@@ -170,7 +203,7 @@
 							while (folders.some((group) => group.folder === candidate)) {
 								candidate = name + ' ' + ++suffix;
 							}
-							addEntry(candidate);
+							createFolder(candidate);
 							expandedFolders = [...expandedFolders, candidate];
 						}}><Icon name="folder" size={13} /></button
 					>
@@ -206,6 +239,7 @@
 							<button
 								type="button"
 								class="folder-open"
+								aria-label={`${group.folder} 폴더 펼치기`}
 								aria-expanded={expandedFolders.includes(group.folder)}
 								onclick={() => toggleFolder(group.folder)}
 							>

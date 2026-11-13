@@ -70,6 +70,8 @@ export interface PromptConfig {
 export interface GameAIContent {
 	version: 1;
 	lorebook: LoreEntry[];
+	/** Folder names that exist even without entries; empty folders persist here. */
+	folders?: string[];
 }
 function text(value: unknown, fallback = ''): string {
 	if (value === undefined) {
@@ -216,11 +218,26 @@ export function parseGameAIContent(value: unknown): GameAIContent {
 	if (!Array.isArray(lorebook) || lorebook.length > 1024) {
 		throw aiError('protocol');
 	}
+	const foldersRow = row.folders === undefined ? undefined : parseLoreFolders(row.folders);
 	return {
 		version: 1,
-		lorebook: lorebook.map((value, index) => parseLoreEntry(value, index))
+		lorebook: lorebook.map((value, index) => parseLoreEntry(value, index)),
+		...(foldersRow === undefined ? {} : { folders: foldersRow })
 	};
 }
+/** Folder names: 1-80 chars, unique, at most 128. */
+function parseLoreFolders(value: unknown): string[] {
+	if (!Array.isArray(value) || value.length > 128) {
+		throw aiError('protocol');
+	}
+	const names = value.map((name) => text(name).trim());
+	const unique = [...new Set(names)];
+	if (unique.some((name) => !name || name.length > 80)) {
+		throw aiError('protocol');
+	}
+	return unique;
+}
+
 /**
  * Parses one lorebook entry. Legacy entries (keys/content/always only) gain a generated
  * id, their position as the sort order and an entry-count-based name.
