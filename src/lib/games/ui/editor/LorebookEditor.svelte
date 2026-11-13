@@ -16,7 +16,8 @@
 
 	let selectedId = $state<string | null>(null);
 	let expandedFolders = $state.raw<string[]>([]);
-	let newFolder = $state('');
+	let renamingFolder = $state<string | null>(null);
+	let renamingValue = $state('');
 
 	let entries = $derived.by(() => {
 		try {
@@ -110,6 +111,34 @@
 			? expandedFolders.filter((name) => name !== folder)
 			: [...expandedFolders, folder];
 	}
+	function startRename(folder: string) {
+		renamingFolder = folder;
+		renamingValue = folder;
+	}
+	function commitRename() {
+		const next = renamingValue.trim();
+		const previous = renamingFolder;
+		renamingFolder = null;
+		if (!previous || !next || next === previous || entries === null || disabled) {
+			return;
+		}
+		if (folders.some((group) => group.folder === next)) {
+			return;
+		}
+		commit(
+			entries.map((entry) => (entry.folder === previous ? { ...entry, folder: next } : entry))
+		);
+	}
+	function deleteFolder(folder: string) {
+		if (entries === null || disabled) {
+			return;
+		}
+		// Entries move to the top level; nothing is destroyed.
+		commit(
+			entries.map((entry) => (entry.folder === folder ? { ...entry, folder: undefined } : entry))
+		);
+		expandedFolders = expandedFolders.filter((name) => name !== folder);
+	}
 	const keyText = (entry: LoreEntry) => entry.keys.join(', ');
 	function parseKeys(value: string): string[] {
 		return value
@@ -128,26 +157,80 @@
 		<div class="entry-tree">
 			<div class="tree-heading">
 				<span>로어 항목</span>
-				<button
-					type="button"
-					class="icon-action"
-					{disabled}
-					aria-label="최상위 로어 추가"
-					onclick={() => addEntry('')}><Icon name="plus" size={13} /></button
-				>
+				<span class="heading-actions">
+					<button
+						type="button"
+						class="icon-action"
+						{disabled}
+						aria-label="새 폴더 만들기"
+						onclick={() => {
+							const name = '새 폴더';
+							let candidate = name;
+							let suffix = 1;
+							while (folders.some((group) => group.folder === candidate)) {
+								candidate = name + ' ' + ++suffix;
+							}
+							addEntry(candidate);
+							expandedFolders = [...expandedFolders, candidate];
+						}}><Icon name="folder" size={13} /></button
+					>
+					<button
+						type="button"
+						class="icon-action"
+						{disabled}
+						aria-label="최상위 로어 추가"
+						onclick={() => addEntry('')}><Icon name="plus" size={13} /></button
+					>
+				</span>
 			</div>
 			{#each folders as group (group.folder)}
 				{#if group.folder}
-					<button
-						type="button"
-						class="folder-row"
-						aria-expanded={expandedFolders.includes(group.folder)}
-						onclick={() => toggleFolder(group.folder)}
-					>
-						<Icon name="folder" size={13} /><span>{group.folder}</span><span class="folder-count"
-							>{group.items.length}</span
-						>
-					</button>
+					{#if renamingFolder === group.folder}
+						<input
+							class="folder-rename"
+							value={renamingValue}
+							{disabled}
+							aria-label="폴더 이름 변경"
+							oninput={(event) => (renamingValue = event.currentTarget.value)}
+							onkeydown={(event) => {
+								if (event.key === 'Enter') {
+									commitRename();
+								} else if (event.key === 'Escape') {
+									renamingFolder = null;
+								}
+							}}
+							onblur={commitRename}
+						/>
+					{:else}
+						<div class="folder-row">
+							<button
+								type="button"
+								class="folder-open"
+								aria-expanded={expandedFolders.includes(group.folder)}
+								onclick={() => toggleFolder(group.folder)}
+							>
+								<Icon name="folder" size={13} /><span>{group.folder}</span><span
+									class="folder-count">{group.items.length}</span
+								>
+							</button>
+							<span class="folder-tools">
+								<button
+									type="button"
+									class="icon-action"
+									{disabled}
+									aria-label={`${group.folder} 이름 변경`}
+									onclick={() => startRename(group.folder)}><Icon name="pencil" size={12} /></button
+								>
+								<button
+									type="button"
+									class="icon-action"
+									{disabled}
+									aria-label={`${group.folder} 삭제 (로어는 최상위로 이동)`}
+									onclick={() => deleteFolder(group.folder)}><Icon name="close" size={12} /></button
+								>
+							</span>
+						</div>
+					{/if}
 				{/if}
 				{#if !group.folder || expandedFolders.includes(group.folder)}
 					{#each group.items as entry (entryKey(entry))}
@@ -194,25 +277,6 @@
 					>
 				{/if}
 			{/each}
-			<div class="tree-footnote">
-				<label class="folder-add"
-					><span class="sr-only">새 폴더 이름</span><input
-						placeholder="새 폴더 이름"
-						bind:value={newFolder}
-						{disabled}
-					/></label
-				>
-				<button
-					type="button"
-					class="icon-action"
-					disabled={disabled || !newFolder.trim()}
-					aria-label="새 폴더에 로어 추가"
-					onclick={() => {
-						addEntry(newFolder.trim());
-						newFolder = '';
-					}}><Icon name="plus" size={13} /></button
-				>
-			</div>
 		</div>
 		<div class="entry-form" aria-label="선택한 로어 편집">
 			{#if selected}
@@ -319,18 +383,43 @@
 		font-size: 11px;
 	}
 	.folder-row {
-		width: 100%;
+		display: flex;
+		align-items: center;
+		border-radius: 5px;
+	}
+	.folder-row:hover {
+		background: var(--surface-hover);
+	}
+	.folder-open {
+		flex: 1;
+		min-width: 0;
+		display: flex;
+		align-items: center;
+		gap: 6px;
 		padding: 5px 6px;
 		border: 0;
-		border-radius: 5px;
 		background: transparent;
 		color: var(--text-strong);
 		font: inherit;
 		font-size: 12px;
 		text-align: left;
 	}
-	.folder-row:hover {
-		background: var(--surface-hover);
+	.folder-tools {
+		display: none;
+		gap: 2px;
+	}
+	.folder-row:hover .folder-tools {
+		display: flex;
+	}
+	.folder-rename {
+		width: 100%;
+		padding: 4px 6px;
+		border: 1px solid var(--accent, var(--text-muted));
+		border-radius: 5px;
+		background: var(--background);
+		color: var(--text);
+		font: inherit;
+		font-size: 12px;
 	}
 	.folder-count {
 		margin-left: auto;
@@ -398,25 +487,6 @@
 	}
 	.add-into:hover {
 		color: var(--text-strong);
-	}
-	.tree-footnote {
-		display: flex;
-		gap: 4px;
-		margin-top: auto;
-		padding-top: 8px;
-	}
-	.folder-add {
-		flex: 1;
-	}
-	.folder-add input {
-		width: 100%;
-		padding: 5px 7px;
-		border: 1px solid var(--border);
-		border-radius: 5px;
-		background: var(--background);
-		color: var(--text);
-		font: inherit;
-		font-size: 11px;
 	}
 	.entry-form {
 		flex: 1;
