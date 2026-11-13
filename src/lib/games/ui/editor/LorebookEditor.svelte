@@ -124,21 +124,25 @@
 			)
 		);
 	}
-	function moveEntry(target: LoreEntry, direction: -1 | 1) {
-		if (entries === null || disabled) {
+	let draggingKey = $state<string | null>(null);
+
+	function handleDrop(target: LoreEntry) {
+		if (!draggingKey || entries === null || disabled) {
 			return;
 		}
-		const index = entries.findIndex((entry) => entryKey(entry) === entryKey(target));
-		const swapWith = index + direction;
-		if (index < 0 || swapWith < 0 || swapWith >= entries.length) {
+		const from = entries.findIndex((entry) => entryKey(entry) === draggingKey);
+		const to = entries.findIndex((entry) => entryKey(entry) === entryKey(target));
+		if (from < 0 || to < 0 || from === to) {
 			return;
 		}
 		const next = [...entries];
-		const moving = next[index];
-		next[index] = { ...next[swapWith], order: moving.order ?? 0 };
-		next[swapWith] = { ...moving, order: next[swapWith].order ?? 0 };
-		commit(next);
+		const [moved] = next.splice(from, 1);
+		next.splice(to, 0, moved);
+		// Recompute orders to match the new visual positions.
+		commit(next.map((entry, index) => ({ ...entry, order: next.length - index })));
+		draggingKey = null;
 	}
+
 	function toggleFolder(folder: string) {
 		expandedFolders = expandedFolders.includes(folder)
 			? expandedFolders.filter((name) => name !== folder)
@@ -163,12 +167,15 @@
 		);
 	}
 	function deleteFolder(folder: string) {
-		if (entries === null || disabled) {
+		if (content === null || entries === null || disabled) {
 			return;
 		}
-		// Entries move to the top level; a declared empty folder is simply removed.
+		// Entries move to the top level and the folder is removed from the declarations,
+		// so an empty folder actually disappears instead of surviving as declared.
+		const remaining = (content.folders ?? []).filter((name) => name !== folder);
 		commit(
-			entries.map((entry) => (entry.folder === folder ? { ...entry, folder: undefined } : entry))
+			entries.map((entry) => (entry.folder === folder ? { ...entry, folder: undefined } : entry)),
+			remaining
 		);
 		expandedFolders = expandedFolders.filter((name) => name !== folder);
 	}
@@ -269,8 +276,18 @@
 				{#if !group.folder || expandedFolders.includes(group.folder)}
 					{#each group.items as entry (entryKey(entry))}
 						<div
+							role="listitem"
 							class={['entry-row', { selected: entryKey(entry) === selectedId }]}
 							class:indented={!!group.folder}
+							class:dragging={draggingKey === entryKey(entry)}
+							draggable={!disabled}
+							ondragstart={() => (draggingKey = entryKey(entry))}
+							ondragend={() => (draggingKey = null)}
+							ondragover={(event) => event.preventDefault()}
+							ondrop={(event) => {
+								event.preventDefault();
+								handleDrop(entry);
+							}}
 						>
 							<button
 								type="button"
@@ -280,20 +297,6 @@
 								>{entry.name ?? entry.keys[0] ?? '이름 없음'}</button
 							>
 							<span class="entry-tools">
-								<button
-									type="button"
-									class="icon-action"
-									{disabled}
-									aria-label={`${entry.name ?? '로어'} 위로 이동`}
-									onclick={() => moveEntry(entry, -1)}><Icon name="chevron" size={12} /></button
-								>
-								<button
-									type="button"
-									class="icon-action flip"
-									{disabled}
-									aria-label={`${entry.name ?? '로어'} 아래로 이동`}
-									onclick={() => moveEntry(entry, 1)}><Icon name="chevron" size={12} /></button
-								>
 								<button
 									type="button"
 									class="icon-action"
@@ -469,6 +472,9 @@
 	.entry-row.indented {
 		margin-left: 16px;
 	}
+	.entry-row.dragging {
+		opacity: 0.4;
+	}
 	.entry-name {
 		flex: 1;
 		min-width: 0;
@@ -505,9 +511,6 @@
 	.icon-action:hover {
 		color: var(--text-strong);
 		background: var(--surface-hover);
-	}
-	.icon-action.flip {
-		transform: rotate(180deg);
 	}
 	.add-into {
 		margin: 2px 0 4px 16px;

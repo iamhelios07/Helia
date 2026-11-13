@@ -67,3 +67,18 @@ it('keeps declared empty folders visible and persists them', async () => {
 	// Selecting a folder does not remove it; the declared folder persists even with no entries.
 	expect(JSON.parse(source).folders).toContain('빈 폴더');
 }, 30_000);
+
+it('deletes a declared empty folder instead of keeping it', async () => {
+	let source = $state(JSON.stringify({ version: 1, lorebook: [], folders: ['빈 폴더'] }));
+	render(LorebookEditor, {
+		get source() {
+			return source;
+		},
+		onchange: (value: string) => {
+			source = value;
+		}
+	});
+	await userEvent.hover(page.getByRole('button', { name: '빈 폴더 폴더 펼치기' }));
+	await page.getByRole('button', { name: '빈 폴더 삭제 (로어는 최상위로 이동)' }).click();
+	await expect.poll(() => source).not.toContain('빈 폴더');
+}, 30_000);
