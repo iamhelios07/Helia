@@ -9,6 +9,8 @@ import { saveAISettings } from '#lib/app/settings/repository.js';
 import { aiSettingsRequest } from '#lib/app/settings/settings-transport.js';
 import { memoryAISettingsTransport } from '#lib/testing/ai-settings.js';
 
+import type { Game } from '../model.js';
+
 import {
 	createGame,
 	updateGameRules,
@@ -16,7 +18,8 @@ import {
 	getSessionHistory,
 	commitSessionTransaction,
 	saveSessionMemory,
-	getSessionTimeline
+	getSessionTimeline,
+	executeSessionAction
 } from '../repository.js';
 import SessionChat from './SessionChat.svelte';
 
@@ -46,7 +49,7 @@ beforeEach(async () => {
 	await page.viewport(1280, 900);
 });
 
-async function fixture() {
+async function fixture(scripts: Game['scripts'] = {}) {
 	const game = await createGame();
 	const gameId = game.id;
 	const sessionId = game.activeSessionId;
@@ -58,7 +61,7 @@ async function fixture() {
 			additionalProperties: false
 		},
 		initialState: { gold: 100 },
-		scripts: {}
+		scripts
 	});
 	await updateGameSettings(gameId, {
 		title: '상점',
@@ -109,6 +112,49 @@ function conversation() {
 		(node) => node.textContent
 	);
 }
+
+it('displays every message belonging to one Action in chat and in its history details', async () => {
+	const setup = await fixture({
+		main: {
+			language: 'typescript',
+			source: `
+helia.defineAction({name:'order',run({state}){
+  helia.appendMessage({role:'user',content:'검을 주문한다.'});
+  helia.appendMessage({role:'assistant',content:'주문을 접수했다.'});
+  return state;
+}});`
+		}
+	});
+	const screen = setup.mount();
+	await expect.poll(conversation).toHaveLength(3);
+	const before = await getSessionHistory(setup.gameId, setup.sessionId);
+	await executeSessionAction(setup.gameId, setup.sessionId, {
+		expectedRevision: before.progress.revision,
+		action: { name: 'order', args: {} }
+	});
+	await expect
+		.poll(conversation)
+		.toEqual([
+			'상점에 도착했다.',
+			'입장 완료',
+			'돌아가기 완료',
+			'검을 주문한다.',
+			'주문을 접수했다.'
+		]);
+	await page.getByRole('button', { name: '이력과 분기', exact: true }).click();
+	const events = page
+		.getByRole('region', { name: '세션 이력' })
+		.element()
+		.querySelectorAll('.event');
+	const last = events[events.length - 1];
+	const details = last.querySelector('details')!;
+	details.open = true;
+	expect(Array.from(details.querySelectorAll('.dialogue'), (node) => node.textContent)).toEqual([
+		'검을 주문한다.',
+		'주문을 접수했다.'
+	]);
+	await screen.unmount();
+});
 
 it('renders HTML from committed actions and stays at the end as message height arrives', async () => {
 	const setup = await fixture();

@@ -1,6 +1,6 @@
 import type { ToolDefinition } from '#lib/games/ai/protocol.js';
 
-import { parseScripts, type Game } from '#lib/games/model.js';
+import { parseScripts, parseMessageInput, type MessageInput, type Game } from '#lib/games/model.js';
 import { parseAction, identifier, type Action } from '#lib/games/state/model.js';
 import { parseObjectSchema, validateState, type ObjectSchema } from '#lib/games/state/schema.js';
 import { parseGameState, type GameState } from '#lib/games/state/value.js';
@@ -83,6 +83,7 @@ export interface ActionResult {
 	tools?: ToolDefinition[];
 	description?: string;
 	events?: UIEvent[];
+	messages?: MessageInput[];
 	independentHooks?: string[];
 }
 export interface RunOptions {
@@ -161,10 +162,17 @@ export function parseResult(value: unknown, schema: ObjectSchema): ActionResult 
 		...(result.tools === undefined ? {} : { tools: parseTools(result.tools) }),
 		...(result.description === undefined ? {} : { description: identifier(result.description) }),
 		...(result.events === undefined ? {} : { events: parseEvents(result.events) }),
+		...(result.messages === undefined ? {} : { messages: parseMessages(result.messages) }),
 		...(result.independentHooks === undefined
 			? {}
 			: { independentHooks: parseNames(result.independentHooks) })
 	};
+}
+export function parseMessages(value: unknown): MessageInput[] {
+	if (!Array.isArray(value) || value.length > SANDBOX_LIMITS.eventCount) {
+		throw new CreatorRuntimeError('protocol');
+	}
+	return value.map(parseMessageInput);
 }
 function parseTools(value: unknown): ToolDefinition[] {
 	if (!Array.isArray(value) || value.length > SANDBOX_LIMITS.actionCount) {

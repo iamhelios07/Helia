@@ -770,6 +770,7 @@ fn valid_transaction(value: &Value) -> bool {
         && id(&value["action"]["name"])
         && object_state(&value["action"]["args"])
         && (value.get("messageId").is_none() || id(&value["messageId"]))
+        && valid_transaction_messages(value)
         && (value.get("description").is_none() || id(&value["description"]))
         && value["changes"].as_array().is_some_and(|changes| {
             changes.iter().all(|change| {
@@ -789,6 +790,30 @@ fn valid_transaction(value: &Value) -> bool {
                     })
             })
         })
+}
+
+fn valid_transaction_messages(value: &Value) -> bool {
+    let Some(ids) = value.get("messageIds") else {
+        return true;
+    };
+    ids.as_array().is_some_and(|ids| {
+        (2..=256).contains(&ids.len())
+            && ids.first() == value.get("messageId")
+            && ids.iter().all(id)
+            && ids
+                .iter()
+                .filter_map(Value::as_str)
+                .collect::<std::collections::HashSet<_>>()
+                .len()
+                == ids.len()
+    })
+}
+
+fn transaction_message_ids(value: &Value) -> Vec<&str> {
+    match value["messageIds"].as_array() {
+        Some(ids) => ids.iter().filter_map(Value::as_str).collect(),
+        None => value["messageId"].as_str().into_iter().collect(),
+    }
 }
 fn valid_value(table: Table, value: &Value) -> bool {
     match table {
@@ -1209,10 +1234,10 @@ fn validate_message_links(
         messages.iter().map(|row| row.id.as_str()).collect();
     let mut linked = std::collections::HashSet::new();
     for node in nodes.values() {
-        if let Some(id) = node["messageId"].as_str()
-            && (!message_ids.contains(id) || !linked.insert(id))
-        {
-            return Err("Invalid event message link".into());
+        for id in transaction_message_ids(node) {
+            if !message_ids.contains(id) || !linked.insert(id) {
+                return Err("Invalid event message link".into());
+            }
         }
     }
     if messages
@@ -1326,7 +1351,8 @@ fn delete_pruned_records(
     let removed_messages: std::collections::HashSet<_> = transactions
         .iter()
         .filter(|row| removed.contains(&row.id))
-        .filter_map(|row| row.value["messageId"].as_str().map(str::to_string))
+        .flat_map(|row| transaction_message_ids(&row.value))
+        .map(str::to_string)
         .collect();
     let messages = read_rows(connection, Table::Messages, Some(game_id), Some(session_id))?;
     let memories = read_rows(connection, Table::Memories, Some(game_id), Some(session_id))?;
@@ -1587,8 +1613,8 @@ fn assert_not_trashed(connection: &Connection, game_id: &str) -> Result<(), Stri
     version: Option<u64>,
     delete_sessions: &[String],
 ) -> Result<Value, String> {
-    assert_not_trashed(connection, game_id)?;
-   if let Some(version) = version {
+    if let Some(version) = version {
+        assert_not_trashed(connection, game_id)?;
         if version >= 9_007_199_254_740_991
             || connection
                 .execute(
@@ -1890,6 +1916,43 @@ mod tests {
     }
     fn prune_request(event: &str, revision: u64) -> Value {
         json!({"kind":"prune","gameId":"game","sessionId":"session","eventId":event,"expectedRevision":revision})
+    }
+    #[test]
+    fn validates_and_prunes_all_messages_of_one_atomic_event() {
+        let fixture = branched_fixture();
+        let before = fixture.read();
+        let rows = before["records"].as_array().unwrap();
+        let mut current_session = rows.iter().find(|row| row["table"] == "sessions").unwrap()["value"].clone();
+        current_session["messageCount"] = json!(8);
+        let mut progress = rows.iter().find(|row| row["table"] == "progress").unwrap()["value"].clone();
+        progress["headId"] = json!("G");
+        progress["revision"] = json!(7);
+        progress["state"]["gold"] = json!(39);
+        let now = "2026-11-02T00:00:00.000Z";
+        let event = json!({"schemaVersion":2,"id":"G","gameId":"game","sessionId":"session","parentId":"F","createdAt":now,"createdRevision":7,"action":{"name":"craft","args":{}},"changes":[{"path":["gold"],"before":{"exists":true,"value":40},"after":{"exists":true,"value":39}}],"messageId":"user-G","messageIds":["user-G","bot-G"]});
+        let mut updates = vec![
+            row("sessions", "session", Some("session"), &current_session),
+            row("progress", "session", Some("session"), &progress),
+            row("transactions", "G", Some("session"), &event),
+        ];
+        for (index, (id, role)) in [("user-G", "user"), ("bot-G", "assistant")].iter().enumerate() {
+            let message = json!({"schemaVersion":1,"id":id,"gameId":"game","sessionId":"session","sequence":index+7,"role":role,"kind":"dialogue","content":id,"createdAt":now});
+            updates.push(row("messages", id, Some("session"), &message));
+        }
+        for ids in [json!(["bot-G", "user-G"]), json!(["user-G", "user-G"]), json!(["user-G", "missing"])] {
+            let mut invalid = updates.clone();
+            invalid[2]["value"]["messageIds"] = ids;
+            assert!(fixture.request(commit(1, &invalid)).is_err());
+            assert_eq!(fixture.read(), before);
+        }
+        fixture.request(commit(1, &updates)).unwrap();
+        let saved = fixture.read();
+        assert_eq!(saved["records"].as_array().unwrap().iter().filter(|row| row["table"] == "messages").count(), 8);
+        let pruned = fixture.request(prune_request("G", 7)).unwrap();
+        let rows = pruned["records"].as_array().unwrap();
+        assert_eq!(rows.iter().filter(|row| row["table"] == "messages").count(), 6);
+        assert!(!rows.iter().any(|row| row["id"] == "user-G" || row["id"] == "bot-G"));
+        assert_eq!(rows.iter().find(|row| row["table"] == "progress").unwrap()["value"]["state"]["gold"], 40);
     }
     #[test]
     fn applies_migrated_checkpoints_without_rewriting_events_and_prunes_their_owned_data() {

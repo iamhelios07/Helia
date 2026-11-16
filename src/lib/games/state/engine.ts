@@ -108,7 +108,7 @@ function nextRevision(progress: SessionState): number {
 export function prepareTransaction(
 	history: SessionHistory,
 	input: CommitTransaction,
-	metadata: { id: string; createdAt: string; messageId?: string },
+	metadata: { id: string; createdAt: string; messageId?: string; messageIds?: string[] },
 	validate?: TransactionValidator
 ): { progress: SessionState; transaction: Transaction } {
 	assertRevision(history.progress, input.expectedRevision);
@@ -134,7 +134,8 @@ export function prepareTransaction(
 		action: parseAction(input.action),
 		changes,
 		...(input.description === undefined ? {} : { description: input.description }),
-		...(metadata.messageId === undefined ? {} : { messageId: metadata.messageId })
+		...(metadata.messageId === undefined ? {} : { messageId: metadata.messageId }),
+		...(metadata.messageIds === undefined ? {} : { messageIds: metadata.messageIds })
 	});
 	if (history.transactions.some((node) => node.id === transaction.id)) {
 		throw new Error('이미 존재하는 트랜잭션이에요.');

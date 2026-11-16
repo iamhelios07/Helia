@@ -78,6 +78,8 @@ export interface Transaction {
 	action: Action;
 	changes: StateChange[];
 	messageId?: string;
+	/** Ordered message links for an atomic event containing multiple messages. */
+	messageIds?: string[];
 	/** Optional creator-authored display summary. */
 	description?: string;
 }
@@ -193,6 +195,7 @@ function parseSlot(value: unknown): StateSlot {
 export function parseTransaction(value: unknown): Transaction {
 	const input = record(value);
 	version(input, [2]);
+	const messageIds = parseTransactionMessageIds(input);
 	if (!Array.isArray(input.changes)) {
 		throw new Error('상태 변경 기록이 올바르지 않아요.');
 	}
@@ -218,8 +221,33 @@ export function parseTransaction(value: unknown): Transaction {
 		action: parseAction(input.action),
 		changes,
 		...(input.messageId === undefined ? {} : { messageId: identifier(input.messageId) }),
+		...(messageIds === undefined ? {} : { messageIds }),
 		...(input.description === undefined ? {} : { description: identifier(input.description) })
 	};
+}
+
+function parseTransactionMessageIds(input: Record<string, unknown>): string[] | undefined {
+	if (input.messageIds === undefined) {
+		return undefined;
+	}
+	if (
+		!Array.isArray(input.messageIds) ||
+		input.messageIds.length < 2 ||
+		input.messageIds.length > 256
+	) {
+		throw new Error('이력의 메시지 목록이 올바르지 않아요.');
+	}
+	const ids = input.messageIds.map(identifier);
+	if (ids[0] !== input.messageId || new Set(ids).size !== ids.length) {
+		throw new Error('이력의 메시지 연결이 올바르지 않아요.');
+	}
+	return ids;
+}
+
+export function transactionMessageIds(
+	node: Pick<Transaction, 'messageId' | 'messageIds'>
+): string[] {
+	return node.messageIds ?? (node.messageId ? [node.messageId] : []);
 }
 
 export function parseMemory(value: unknown): Memory {

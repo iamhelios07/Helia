@@ -1,8 +1,10 @@
 import { invokeSessionAI } from '#lib/games/ai/browser.js';
+import { parseMessageInput } from '#lib/games/model.js';
 import {
 	getSessionHistory,
 	executeSessionAction,
 	commitSessionTransaction,
+	appendSessionMessage,
 	subscribeSessionChanges,
 	subscribeSessionEvents
 } from '#lib/games/repository.js';
@@ -19,6 +21,7 @@ export interface GameUIRuntime {
 	getSessionHistory: typeof getSessionHistory;
 	executeSessionAction: typeof executeSessionAction;
 	commitSessionTransaction: typeof commitSessionTransaction;
+	appendSessionMessage: typeof appendSessionMessage;
 	subscribeSessionChanges: typeof subscribeSessionChanges;
 	subscribeSessionEvents: typeof subscribeSessionEvents;
 	invokeSessionAI: typeof invokeSessionAI;
@@ -28,6 +31,7 @@ function defaultRuntime(): GameUIRuntime {
 		getSessionHistory,
 		executeSessionAction,
 		commitSessionTransaction,
+		appendSessionMessage,
 		subscribeSessionChanges,
 		subscribeSessionEvents,
 		invokeSessionAI
@@ -215,6 +219,17 @@ class GameUIBridge {
 	private async execute(message: GameState): Promise<SessionHistory> {
 		const { runtime, gameId, sessionId } = this.context;
 		const options = { signal: this.abort.signal };
+		if (message.kind === 'message') {
+			return runtime.appendSessionMessage(
+				gameId,
+				sessionId,
+				{
+					expectedRevision: this.history.progress.revision,
+					message: parseMessageInput(message.message)
+				},
+				options
+			);
+		}
 		if (message.kind === 'ai') {
 			if (typeof message.text !== 'string') {
 				throw Error('Invalid AI request');
@@ -250,7 +265,9 @@ class GameUIBridge {
 			throw Error('Busy');
 		}
 		// Validate action input before exposing a busy transition to the host.
-		if (message.kind !== 'ai') {
+		if (message.kind === 'message') {
+			parseMessageInput(message.message);
+		} else if (message.kind !== 'ai') {
 			parseAction(message.action);
 		}
 		this.busy = true;
@@ -293,7 +310,7 @@ class GameUIBridge {
 				return;
 			}
 			if (
-				!['action', 'transaction', 'ai'].includes(String(message.kind)) ||
+				!['action', 'transaction', 'ai', 'message'].includes(String(message.kind)) ||
 				typeof message.id !== 'string' ||
 				!/^\d{1,12}$/.test(message.id)
 			) {

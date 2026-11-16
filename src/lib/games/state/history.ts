@@ -4,6 +4,7 @@ import { activeTransactions, assertRevision, checkoutHistory } from './engine.js
 import {
 	counter,
 	identifier,
+	transactionMessageIds,
 	type Action,
 	type Memory,
 	type SessionHistory,
@@ -22,6 +23,7 @@ export interface HistoryEvent {
 	action: Action;
 	changes: StateChange[];
 	message?: Message;
+	messages?: Message[];
 }
 export interface SessionTimeline {
 	session: Session;
@@ -40,7 +42,7 @@ export function transactionSummary(node: Transaction): string {
 	const fields = node.changes.slice(0, 3).map((change) => JSON.stringify(change.path));
 	return `${node.action.name} · ${fields.join(', ')}${node.changes.length > 3 ? ` 외 ${node.changes.length - 3}개` : ''}`;
 }
-/** One event is one atomic transaction, including its optional message. Opening content belongs to the initial state. */
+/** One event is one atomic transaction, including all linked messages. Opening content belongs to the initial state. */
 export function historyEvents(
 	history: SessionHistory,
 	messages: readonly Message[]
@@ -65,7 +67,8 @@ export function historyEvents(
 			throw new Error('진행 기록이 순환하고 있어요.');
 		}
 		visited.add(node.id);
-		const message = historyMessage(node, byMessage);
+		const linked = historyMessages(node, byMessage);
+		const message = linked[0];
 		result.push({
 			id: node.id,
 			parentId: node.parentId,
@@ -76,7 +79,8 @@ export function historyEvents(
 			summary: transactionSummary(node),
 			action: node.action,
 			changes: node.changes,
-			...(message ? { message } : {})
+			...(message ? { message } : {}),
+			...(linked.length > 1 ? { messages: linked } : {})
 		});
 		for (const child of [...(children.get(node.id) ?? [])].reverse()) {
 			stack.push({ node: child, depth: depth + 1 });
@@ -131,10 +135,12 @@ export function deleteHistoryEvent(
 	};
 }
 
-function historyMessage(node: Transaction, byMessage: Map<string, Message>): Message | undefined {
-	const message = node.messageId ? byMessage.get(node.messageId) : undefined;
-	if (node.messageId && !message) {
-		throw new Error('이력에 연결된 메시지가 없어요.');
-	}
-	return message;
+function historyMessages(node: Transaction, byMessage: Map<string, Message>): Message[] {
+	return transactionMessageIds(node).map((id) => {
+		const message = byMessage.get(id);
+		if (!message) {
+			throw new Error('이력에 연결된 메시지가 없어요.');
+		}
+		return message;
+	});
 }

@@ -22,6 +22,7 @@ export const {
 	deleteSession,
 	getSessionConversation,
 	appendUserMessage,
+	appendSessionMessage,
 	getSessionHistory,
 	getSessionTimeline,
 	deleteSessionEvent,

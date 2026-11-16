@@ -84,6 +84,7 @@ export const BOOTSTRAP = String.raw`
     defineFilter: definition => define('filter',definition),
     defineHook: definition => define('hook',definition),
     emit,
+    appendMessage: message => emit('$helia.message', message),
     requestAI: (text, options = {}) => emit('$helia.ai', {text, visible: options.visible === true})
   }), writable: false, configurable: false});
   return freeze({

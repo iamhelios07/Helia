@@ -30,6 +30,7 @@ import {
 	parseSnapshotResource,
 	parseSessionState,
 	parseTransaction,
+	transactionMessageIds,
 	type SessionHistory
 } from '#lib/games/state/model.js';
 import { emptyStateDocument, parseStateDocument } from '#lib/games/state/schema.js';
@@ -50,6 +51,7 @@ import {
 	parseGame,
 	parseSession,
 	parseMessage,
+	parseMessageInput,
 	parseScripts,
 	validateGameMetadata,
 	validateGameSettings,
@@ -58,6 +60,7 @@ import {
 	type Game,
 	type Session,
 	type Message,
+	type MessageInput,
 	type GameMetadata,
 	type UpdateGameSettings
 } from './model.js';
@@ -284,8 +287,8 @@ function visibleMessages(context: Context): Message[] {
 	const opening = context.messages.find((message) => message.kind === 'opening');
 	const messages = opening ? [opening] : [];
 	for (const node of activeTransactions(context.history)) {
-		if (node.messageId !== undefined) {
-			const message = byId.get(node.messageId);
+		for (const id of transactionMessageIds(node)) {
+			const message = byId.get(id);
 			if (!message) {
 				throw new Error('진행 기록에 연결된 메시지를 찾을 수 없어요.');
 			}
@@ -419,34 +422,37 @@ class GameRepository {
 		context: Context,
 		input: CommitTransaction & {
 			message?: Pick<Message, 'role' | 'content'>;
+			messages?: MessageInput[];
 		}
 	) => {
-		const message = input.message
-			? makeMessage(context.session, counter((context.session.messageCount ?? 0) + 1), {
-					role: input.message.role,
-					content: validateMessageContent(input.message.content),
+		const messages = [...(input.message ? [input.message] : []), ...(input.messages ?? [])].map(
+			(value, index) =>
+				makeMessage(context.session, counter((context.session.messageCount ?? 0) + index + 1), {
+					...parseMessageInput(value),
 					kind: 'dialogue'
 				})
-			: undefined;
+		);
+		const message = messages[0];
 		const prepared = prepareTransaction(
 			context.history,
 			input,
 			{
 				id: crypto.randomUUID(),
 				createdAt: new Date().toISOString(),
-				...(message ? { messageId: message.id } : {})
+				...(message ? { messageId: message.id } : {}),
+				...(messages.length > 1 ? { messageIds: messages.map((message) => message.id) } : {})
 			},
 			this.options.validateTransaction
 		);
 		unit.put('transactions', prepared.transaction);
 		unit.put('progress', prepared.progress);
-		if (message) {
-			unit.put('messages', message);
+		for (const item of messages) {
+			unit.put('messages', item);
 		}
 		const now = prepared.transaction.createdAt;
 		const session = {
 			...context.session,
-			...(message ? { messageCount: message.sequence } : {}),
+			...(messages.length ? { messageCount: messages.at(-1)!.sequence } : {}),
 			updatedAt: now
 		};
 		unit.put('sessions', session);
@@ -458,7 +464,8 @@ class GameRepository {
 				transactions: [...context.history.transactions, prepared.transaction]
 			},
 			session,
-			message
+			message,
+			messages
 		};
 	};
 	private getTimeline = (gameId: string, sessionId: string): Promise<SessionTimeline> => {
@@ -474,6 +481,7 @@ class GameRepository {
 		context: Context,
 		input: Omit<CommitTransaction, 'nextState'> & {
 			message?: Pick<Message, 'role' | 'content'>;
+			messages?: MessageInput[];
 			operation?: ActionRequest['operation'];
 		},
 		runOptions: RunOptions = {}
@@ -574,13 +582,16 @@ class GameRepository {
 					nextState: input.result.state,
 					action: { name: '$helia.ai', args: { input: input.input } },
 					description: 'AI 응답',
-					message: { role: 'assistant', content: input.result.text }
+					messages: [
+						...(input.result.messages ?? []),
+						{ role: 'assistant', content: input.result.text }
+					]
 				});
 				const completed = {
 					...current,
 					history: assistant.history,
 					session: assistant.session,
-					messages: [...current.messages, assistant.message!]
+					messages: [...current.messages, ...assistant.messages]
 				};
 				return {
 					session: completed.session,
@@ -947,6 +958,32 @@ class GameRepository {
 	getSessionHistory = (gameId: string, sessionId: string) => {
 		return this.withHistory(gameId, sessionId, (_unit, context) => context.history);
 	};
+	appendSessionMessage = async (
+		gameId: string,
+		sessionId: string,
+		input: { expectedRevision: number; message: MessageInput },
+		runOptions: RunOptions = {}
+	) => {
+		const message = parseMessageInput(input.message);
+		const context = await this.withHistory(
+			gameId,
+			sessionId,
+			(_unit, context) => context,
+			runOptions
+		);
+		return this.commitSessionTransaction(
+			gameId,
+			sessionId,
+			{
+				expectedRevision: input.expectedRevision,
+				parentId: context.history.progress.headId,
+				nextState: context.history.progress.state,
+				action: { name: '$helia.appendMessage', args: {} },
+				message
+			},
+			runOptions
+		);
+	};
 	executeSessionAction = async (
 		gameId: string,
 		sessionId: string,
@@ -1042,7 +1079,11 @@ class GameRepository {
 		const timeline = await this.getTimeline(gameId, sessionId);
 		assertRevision(timeline.history.progress, expectedRevision);
 		const event = timeline.events.find((event) => event.id === transactionId);
-		if (event?.message?.role !== 'assistant' || event.message.kind !== 'dialogue') {
+		if (
+			!(event?.messages ?? (event?.message ? [event.message] : [])).some(
+				(message) => message.role === 'assistant' && message.kind === 'dialogue'
+			)
+		) {
 			throw new Error('이 세션의 AI 응답이 아니에요.');
 		}
 		return (await this.deleteEvent(gameId, sessionId, transactionId, expectedRevision)).history;
@@ -1082,7 +1123,7 @@ class GameRepository {
 
 function assertHistoryMessages(transactions: SessionHistory['transactions'], messages: Message[]) {
 	const ids = new Set(messages.map((message) => message.id));
-	if (transactions.some((node) => node.messageId !== undefined && !ids.has(node.messageId))) {
+	if (transactions.some((node) => transactionMessageIds(node).some((id) => !ids.has(id)))) {
 		throw new Error('진행 기록에 연결된 메시지를 찾을 수 없어요.');
 	}
 }

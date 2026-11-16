@@ -6,6 +6,7 @@ import {
 	parseSnapshotCheckpoint,
 	parseTransaction,
 	parseMemory,
+	transactionMessageIds,
 	type SessionHistory
 } from '#lib/games/state/model.js';
 
@@ -41,9 +42,7 @@ export function pruneRecords(
 	};
 	const { history: next, removedIds } = deleteHistoryEvent(history, eventId, revision);
 	const removedMessages = new Set(
-		transactions
-			.filter((node) => removedIds.has(node.id))
-			.flatMap((node) => (node.messageId ? [node.messageId] : []))
+		transactions.filter((node) => removedIds.has(node.id)).flatMap(transactionMessageIds)
 	);
 	const deleted = owned.filter(
 		(row) =>

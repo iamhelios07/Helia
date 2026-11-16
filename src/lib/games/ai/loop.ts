@@ -1,3 +1,4 @@
+import type { MessageInput } from '#lib/games/model.js';
 import type { ActionRunner, RuleTrigger, UIEvent } from '#lib/games/scripting/protocol.js';
 import type { SessionTimeline } from '#lib/games/state/history.js';
 
@@ -17,6 +18,7 @@ export interface AgentWorkspaceResult {
 	state: ReturnType<typeof parseGameState>;
 	text: string;
 	events: UIEvent[];
+	messages?: MessageInput[];
 	hooks: { name: string; trigger: RuleTrigger }[];
 }
 
@@ -42,6 +44,7 @@ class AgentWorkspace {
 	private tools: import('./protocol.js').ToolDefinition[] = [];
 	private transcript: AIMessage[] = [];
 	private events: UIEvent[] = [];
+	private chatMessages: MessageInput[] = [];
 	private hooks: AgentWorkspaceResult['hooks'] = [];
 	private calls = 0;
 	constructor(
@@ -130,6 +133,7 @@ class AgentWorkspace {
 			state: validated.state,
 			text: this.ai.promptSettings.assistantPrefill + text,
 			events: this.events,
+			...(this.chatMessages.length ? { messages: this.chatMessages } : {}),
 			hooks: this.hooks
 		};
 	}
@@ -170,7 +174,13 @@ class AgentWorkspace {
 				role: 'tool',
 				callId: call.id,
 				content: JSON.stringify(
-					tool.kind === 'query' ? (result.value ?? null) : { ok: true, state: this.state }
+					tool.kind === 'query'
+						? (result.value ?? null)
+						: {
+								ok: true,
+								state: this.state,
+								...(result.messages?.length ? { messages: result.messages } : {})
+							}
 				)
 			});
 			emit({ type: 'tool', name: call.name, status: 'completed' });
@@ -182,10 +192,11 @@ class AgentWorkspace {
 	private applyAction(result: Awaited<ReturnType<ActionRunner>>, trigger: RuleTrigger) {
 		this.state = result.state;
 		this.events.push(...(result.events ?? []));
+		this.chatMessages.push(...(result.messages ?? []));
 		for (const name of result.independentHooks ?? []) {
 			this.hooks.push({ name, trigger });
 		}
-		if (this.events.length > 128 || this.hooks.length > 16) {
+		if (this.events.length > 128 || this.chatMessages.length > 128 || this.hooks.length > 16) {
 			throw aiError('limit');
 		}
 	}

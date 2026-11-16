@@ -1,4 +1,4 @@
-import type { Message } from '#lib/games/model.js';
+import type { MessageInput } from '#lib/games/model.js';
 import type { SessionHistory } from '#lib/games/state/model.js';
 
 import { stateAt, type CommitTransaction } from '#lib/games/state/engine.js';
@@ -30,7 +30,7 @@ export interface ExecutionReport {
 	deliveryFailures: number;
 }
 export type SessionExecution = SessionHistory & { execution: ExecutionReport };
-type CommitInput = CommitTransaction & { message?: Pick<Message, 'role' | 'content'> };
+type CommitInput = CommitTransaction & { message?: MessageInput; messages?: MessageInput[] };
 export interface ExecutionPort {
 	read(): Promise<SessionHistory>;
 	commit(input: CommitInput, snapshotId: string): Promise<SessionHistory>;
@@ -65,6 +65,7 @@ export async function executeSessionWork(
 	let current = await port.commit(
 		{
 			...input,
+			messages: [...(input.messages ?? []), ...(result.messages ?? [])],
 			nextState: result.state,
 			...(input.description === undefined && result.description
 				? { description: result.description }
@@ -141,6 +142,7 @@ async function executeHook(context: IndependentContext, job: Job) {
 			expectedRevision: latest.progress.revision,
 			parentId: latest.progress.headId,
 			nextState: next.state,
+			messages: next.messages,
 			action,
 			...(next.description ? { description: next.description } : {})
 		},

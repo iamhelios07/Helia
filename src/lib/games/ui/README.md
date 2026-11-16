@@ -161,6 +161,7 @@ The same interface is available as global `helia` and as named exports from `@he
 | `useGameState()`                                         | Preact subscription with automatic cleanup when its component unmounts.                                                     |
 | `action(name, args)`                                     | Request a registered game Action; the host applies schema, Filter, Hook and revision checks.                                |
 | `ai(text, { visible })`                                  | Explicitly invoke the player's default AI model; defaults to an internal event.                                             |
+| `appendMessage({ role, content })`                       | Persist a player (`user`) or game (`assistant`) message without AI; resolves with the committed revision.                   |
 | `transaction({ name, args }, nextState)`                 | Submit one complete state proposal through the same validated commit path.                                                  |
 | `onEvent(name, listener)` / `useUIEvent(name, listener)` | Observe committed UI event payloads. The first returns an unsubscribe function; the hook cleans up on unmount.              |
 | `useUIState(key, initialValue)`                          | Shared transient JSON state; returns `[value, setter]` and supports functional setters.                                     |
@@ -181,6 +182,23 @@ Manual subscriptions belong in a Preact effect returning their unsubscribe funct
 - Shared UI State and panel scroll positions remain in memory per game/session during this app execution. Returning to the session restores them. A restart resets them. They never enter game state, transactions, branches, memory or package data.
 - Repository observers refresh panels and chat after commits, checkout and deletion. State-only background updates preserve chat scroll and drafts. UI events follow a refresh of committed state; branch restoration does not replay events. Deletion dialogs retain their original expected revision during background refresh.
 - Chat content, sending, history and deletion stay under Helia's control. Creators may set individual validated colors/font values through `chatStyle`; these take precedence over inherited personal styles. That configuration does not accept stylesheets, resource URLs or selectors.
+
+## Adding chat messages
+
+Game UI can add normal conversation messages directly, including HTML content:
+
+```ts
+import { appendMessage } from '@helia/ui';
+
+await appendMessage({ role: 'user', content: '철검을 제작한다.' });
+await appendMessage({ role: 'assistant', content: '<strong>철검 완성!</strong>' });
+```
+
+The same API is available as `helia.appendMessage`. In UI code it returns a Promise resolving to `{ revision }`; await it before another write. Each UI call creates a normal history event, runs Filters and respects revision, cancellation and session-busy checks. The role must be `user` or `assistant`, and content must be a nonblank string. It does not invoke AI or automatically request a reply.
+
+Actions and Hooks call `helia.appendMessage({ role, content })` synchronously. Their messages are buffered until the operation commits. All messages from an Action and its included Hooks are attached to the same atomic event as its state changes, so failed validation or storage discards them together. Independent Hooks commit their own messages with their own event. Queries, Filters and script initialization cannot append messages. Message writes share the scripting event limit of 128 per evaluation and the existing wire-size limits.
+
+AI-invoked Actions also buffer messages until the final answer commits successfully. Their message content is included in the Action tool result for later rounds of that invocation. All committed messages participate in subsequent AI conversation context, branch restoration and deletion. Legacy single-message events retain their existing representation; multi-message events retain an ordered list of message links. These APIs do not provide temporary, display-only messages or edit existing messages.
 
 ## HTML in chat messages
 

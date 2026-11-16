@@ -132,6 +132,32 @@ export default function(){
 	);
 }, 20_000);
 
+it('adds player and bot messages through the UI bridge without AI and rejects invalid roles', async () => {
+	const game = await setup(`
+import { appendMessage, action } from '@helia/ui';
+export default function(){setTimeout(async()=>{
+  await appendMessage({role:'user',content:'철검 주세요.'});
+  await helia.appendMessage({role:'assistant',content:'<b>주문 접수</b>'});
+  try { await appendMessage({role:'system',content:'invalid'}); }
+  catch { await action('check',{label:'invalid-rejected'}); }
+},100);}
+`);
+	await mount(game.id, game.activeSessionId);
+	await expect
+		.poll(
+			async () => (await getSessionHistory(game.id, game.activeSessionId)).progress.state.checks,
+			{ timeout: 15_000 }
+		)
+		.toEqual(['invalid-rejected']);
+	const saved = await getSessionTimeline(game.id, game.activeSessionId);
+	expect(saved.messages.map(({ role, content }) => ({ role, content }))).toEqual([
+		{ role: 'user', content: '철검 주세요.' },
+		{ role: 'assistant', content: '<b>주문 접수</b>' }
+	]);
+	expect(saved.history.progress.state.value).toBe(0);
+	expect(invokeSessionAI).not.toHaveBeenCalled();
+}, 20_000);
+
 it('aborts an explicit custom UI AI request when its runtime is disposed', async () => {
 	const game = await setup(`
 export default function(){setTimeout(()=>{void helia.ai('Wait for a response').catch(()=>{});},100);}

@@ -77,6 +77,8 @@ await ai('Describe what happens after opening the door.', { visible: false });
 
 UI invocation defaults to an internal event; `visible: true` creates a player message. It uses the player's default model. Generic UI actions do not automatically invoke AI.
 
+For messages that do not need generation, use `appendMessage({ role: 'user' | 'assistant', content })` from `@helia/ui`, or `helia.appendMessage` inside Actions/Hooks. These are normal persisted chat messages, included in later conversation context. Script messages are staged with state changes and discarded if their enclosing operation fails. See [Adding chat messages](../ui/README.md#adding-chat-messages).
+
 Synchronous creator Actions and Hooks can schedule a follow-up:
 
 ```javascript

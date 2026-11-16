@@ -382,6 +382,7 @@ This is a validity condition, not a retrieval algorithm. The memory representati
 - Creators MUST be able to customize chat appearance, including message bubbles, fonts and backgrounds.
 - Where creator styling and player styling conflict, creator styling MUST take precedence. Styling MUST NOT bypass runtime permissions.
 - Chat messages MAY contain HTML and message-scoped CSS. Rendering MUST isolate that content from the application and authoritative game state, remove executable markup and retain the original message for storage and AI context. Ordinary text and fenced code examples MUST remain readable as text.
+- Creators MUST be able to append player (`user`) and game (`assistant`) messages without invoking AI. Messages written by Actions or Hooks MUST commit with their enclosing operation, obey the same validation and permissions, and participate in conversation context and atomic history restoration/deletion.
 
 # Authoring Environment
 

@@ -78,6 +78,16 @@ export interface SessionConversation {
 	messages: Message[];
 }
 
+export type MessageInput = Pick<Message, 'role' | 'content'>;
+
+/** Shared validation for creator UI, scripting output and trusted storage operations. */
+export function parseMessageInput(value: unknown): MessageInput {
+	if (!isRecord(value) || (value.role !== 'user' && value.role !== 'assistant')) {
+		throw new Error('메시지 역할은 user 또는 assistant여야 해요.');
+	}
+	return { role: value.role, content: validateMessageContent(value.content) };
+}
+
 export interface GameWorkspace {
 	game: Game;
 	sessions: Session[];

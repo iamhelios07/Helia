@@ -18,6 +18,10 @@ interface ActionContext<TArgs extends object = Record<string, JsonValue>> {
 	state: GameState;
 	args: ReadonlyState<TArgs>;
 }
+interface ChatMessageInput {
+	role: 'user' | 'assistant';
+	content: string;
+}
 interface ReadContext<TArgs extends object = Record<string, JsonValue>> {
 	state: ReadonlyState<GameState>;
 	args: ReadonlyState<TArgs>;
@@ -53,6 +57,8 @@ interface HeliaRuntime {
 	defineFilter(definition: RuleDefinition): void;
 	defineHook(definition: RuleDefinition): void;
 	emit(name: string, payload?: JsonValue): void;
+	/** Scripts buffer messages until their Action/Hook commits. UI calls return a Promise. */
+	appendMessage(message: ChatMessageInput): void | Promise<{ revision: number }>;
 	requestAI(text: string, options?: { visible?: boolean }): void;
 	asset(id: string): string;
 	getState(): ReadonlyState<GameState>;
@@ -78,6 +84,7 @@ declare module '@helia/state' {
 	export type GameState = import('./GameState').GameState;
 }
 declare module '@helia/ui' {
+	export type ChatMessage = ChatMessageInput;
 	export const helia: HeliaRuntime;
 	export function useGameState(): ReadonlyState<GameState>;
 	export function getState(): ReadonlyState<GameState>;
@@ -93,6 +100,8 @@ declare module '@helia/ui' {
 	export const action: typeof helia.action;
 	export const transaction: typeof helia.transaction;
 	export const ai: typeof helia.ai;
+	/** Persist a message without calling AI. Resolves after the message is committed. */
+	export function appendMessage(message: ChatMessageInput): Promise<{ revision: number }>;
 	export const asset: typeof helia.asset;
 	export function Button(props: Record<string, unknown>): JSX.Element;
 	export function Text(props: Record<string, unknown>): JSX.Element;

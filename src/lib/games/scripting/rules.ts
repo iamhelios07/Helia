@@ -1,3 +1,4 @@
+import { parseMessageInput } from '#lib/games/model.js';
 import { diffState } from '#lib/games/state/changes.js';
 import { parseAction, type Action } from '#lib/games/state/model.js';
 import { parseObjectSchema, validateState, type ObjectSchema } from '#lib/games/state/schema.js';
@@ -340,13 +341,20 @@ class RuleEvaluation {
 			return {
 				state: result.state,
 				...(description ? { description } : {}),
-				...(this.events.length ? { events: this.events } : {}),
+				...this.output(),
 				...(independentHooks.length ? { independentHooks } : {})
 			};
 		} catch (error) {
 			this.workspace.abort();
 			throw error;
 		}
+	}
+	private output(): Pick<ActionResult, 'events' | 'messages'> {
+		const messages = this.events
+			.filter((event) => event.name === '$helia.message')
+			.map((event) => parseMessageInput(event.payload));
+		const events = this.events.filter((event) => event.name !== '$helia.message');
+		return { ...(events.length ? { events } : {}), ...(messages.length ? { messages } : {}) };
 	}
 }
 

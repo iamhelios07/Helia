@@ -42,6 +42,9 @@
 	function slot(value: StateSlot): string {
 		return value.exists ? JSON.stringify(value.value) : '(없음)';
 	}
+	function eventMessages(event: HistoryEvent) {
+		return event.messages ?? (event.message ? [event.message] : []);
+	}
 	function branchLabel(active: boolean): string {
 		return active ? '현재 경로' : '다른 분기';
 	}
@@ -99,9 +102,9 @@
 					<details>
 						<summary>변경 내용 · {event.changes.length}개</summary>
 						<time datetime={event.createdAt}>{new Date(event.createdAt).toLocaleString()}</time>
-						{#if event.message}<div class="dialogue">
-								<MessageContent content={event.message.content} {appearance} />
-							</div>{/if}
+						{#each eventMessages(event) as message (message.id)}
+							<div class="dialogue"><MessageContent content={message.content} {appearance} /></div>
+						{/each}
 						{#if event.changes.length}
 							<dl>
 								{#each event.changes as change, index (`${event.id}:${index}`)}

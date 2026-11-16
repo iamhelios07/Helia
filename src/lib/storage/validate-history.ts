@@ -6,6 +6,7 @@ import {
 	parseSnapshotCheckpoint,
 	parseTransaction,
 	parseMemory,
+	transactionMessageIds,
 	type SessionHistory,
 	type Transaction
 } from '#lib/games/state/model.js';
@@ -85,7 +86,7 @@ function validateMessages(owned: readonly StoredRecord[], transactions: readonly
 		throw new Error('저장된 메시지 순서가 올바르지 않아요.');
 	}
 	const messageIds = new Set(messages.map((message) => message.id));
-	const linked = transactions.flatMap((node) => (node.messageId ? [node.messageId] : []));
+	const linked = transactions.flatMap(transactionMessageIds);
 	if (
 		new Set(linked).size !== linked.length ||
 		linked.some((id) => !messageIds.has(id)) ||
