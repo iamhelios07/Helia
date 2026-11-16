@@ -381,6 +381,7 @@ This is a validity condition, not a retrieval algorithm. The memory representati
 - Helia MUST provide the structural behavior of chat, including messages, streaming, branch navigation and thinking/tool presentation.
 - Creators MUST be able to customize chat appearance, including message bubbles, fonts and backgrounds.
 - Where creator styling and player styling conflict, creator styling MUST take precedence. Styling MUST NOT bypass runtime permissions.
+- Chat messages MAY contain HTML and message-scoped CSS. Rendering MUST isolate that content from the application and authoritative game state, remove executable markup and retain the original message for storage and AI context. Ordinary text and fenced code examples MUST remain readable as text.
 
 # Authoring Environment
 

@@ -2,13 +2,18 @@
 	import type { HistoryEvent, SessionTimeline } from '#lib/games/state/history.js';
 	import type { StateSlot } from '#lib/games/state/model.js';
 
+	import type { MessageAppearance } from './message-frame.js';
+
+	import MessageContent from './MessageContent.svelte';
+
 	let {
 		timeline,
 		busy,
 		error,
 		onselect,
 		ondelete,
-		onreload
+		onreload,
+		appearance
 	}: {
 		timeline: SessionTimeline | null;
 		busy: boolean;
@@ -16,6 +21,7 @@
 		onselect: (id: string | null) => Promise<void>;
 		ondelete: (id: string, expectedRevision: number) => Promise<boolean>;
 		onreload: () => Promise<void>;
+		appearance?: MessageAppearance;
 	} = $props();
 	const uid = $props.id();
 	let deleting = $state.raw<HistoryEvent | null>(null);
@@ -93,7 +99,9 @@
 					<details>
 						<summary>변경 내용 · {event.changes.length}개</summary>
 						<time datetime={event.createdAt}>{new Date(event.createdAt).toLocaleString()}</time>
-						{#if event.message}<p class="dialogue">{event.message.content}</p>{/if}
+						{#if event.message}<div class="dialogue">
+								<MessageContent content={event.message.content} {appearance} />
+							</div>{/if}
 						{#if event.changes.length}
 							<dl>
 								{#each event.changes as change, index (`${event.id}:${index}`)}

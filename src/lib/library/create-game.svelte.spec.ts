@@ -3,7 +3,9 @@ import { goto } from '$app/navigation';
 import '../../app.css';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render as renderSvelte } from 'vitest-browser-svelte';
-import { page, userEvent } from 'vitest/browser';
+import { commands, page, userEvent } from 'vitest/browser';
+
+import type {} from '#lib/testing/message-frame-command.js';
 
 import { aiSettingsRequest } from '#lib/app/settings/settings-transport.js';
 import { memoryAISettingsTransport } from '#lib/testing/ai-settings.js';
@@ -323,8 +325,8 @@ describe('session chat', () => {
 		onEvent({ type: 'text', text: '<img src=x> 낡은 문이' });
 		onEvent({ type: 'text', text: ' 열린다.' });
 		await expect
-			.element(page.getByLabelText('저장 전 AI 응답'))
-			.toHaveTextContent('<img src=x> 낡은 문이 열린다.');
+			.poll(async () => (await commands.inspectMessageFrame()).text)
+			.toBe(' 낡은 문이 열린다.');
 		expect(page.getByRole('log').element().querySelectorAll('article')).toHaveLength(0);
 		const progress = page.getByRole('complementary', { name: 'AI 생성 진행' });
 		expect(progress.element().querySelector('img')).toBeNull();
@@ -486,7 +488,7 @@ describe('session chat', () => {
 });
 
 describe('session chat', () => {
-	it('displays the saved opening as text and blocks blank submissions', async () => {
+	it('renders the saved opening as isolated HTML and blocks blank submissions', async () => {
 		const opening = '<img src=x onerror=alert(1)>\n*가게 문이 열렸다.*';
 		vi.mocked(getSessionConversation).mockResolvedValue({
 			session,
@@ -494,9 +496,10 @@ describe('session chat', () => {
 		});
 		render(GameWorkspace, { gameId: game.id });
 		await expect.element(page.getByRole('article', { name: '게임 메시지' })).toBeVisible();
-		expect(page.getByRole('article').element().querySelector('.message-content')?.textContent).toBe(
-			opening
-		);
+		await expect
+			.poll(async () => (await commands.inspectMessageFrame()).text)
+			.toBe('\n*가게 문이 열렸다.*');
+		expect((await commands.inspectMessageFrame()).html).not.toContain('onerror');
 		expect(page.getByRole('article').element().querySelector('img')).toBeNull();
 		await expect.element(page.getByRole('button', { name: '메시지 전송' })).toBeDisabled();
 		await page.getByRole('textbox', { name: '메시지', exact: true }).fill(' \n ');

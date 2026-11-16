@@ -10,6 +10,7 @@
 	} from '#lib/games/editor-playground.js';
 	import { parseGameState } from '#lib/games/state/value.js';
 
+	import MessageContent from '../MessageContent.svelte';
 	import {
 		attachPlaygroundFrame,
 		runPlaygroundAI,
@@ -199,11 +200,11 @@
 		<div class="messages" aria-label="테스트 대화">
 			{#each timeline.messages as message (message.id)}<article>
 					<small>{message.role === 'user' ? '플레이어' : '게임'}</small>
-					<p>{message.content}</p>
+					<MessageContent content={message.content} />
 				</article>{/each}
 			{#if streaming}<article aria-live="polite">
 					<small>게임</small>
-					<p>{streaming}</p>
+					<MessageContent content={streaming} />
 				</article>{/if}
 		</div>
 		<form onsubmit={runAI}>

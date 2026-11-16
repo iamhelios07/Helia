@@ -1,7 +1,9 @@
 import '../../../app.css';
 import { beforeEach, expect, it, vi } from 'vitest';
 import { render } from 'vitest-browser-svelte';
-import { page, userEvent } from 'vitest/browser';
+import { commands, page, userEvent } from 'vitest/browser';
+
+import type {} from '#lib/testing/message-frame-command.js';
 
 import { saveAISettings } from '#lib/app/settings/repository.js';
 import { aiSettingsRequest } from '#lib/app/settings/settings-transport.js';
@@ -107,6 +109,31 @@ function conversation() {
 		(node) => node.textContent
 	);
 }
+
+it('renders HTML from committed actions and stays at the end as message height arrives', async () => {
+	const setup = await fixture();
+	const screen = setup.mount();
+	screen.container.style.height = '300px';
+	screen.container.style.display = 'flex';
+	await expect.poll(conversation).toHaveLength(3);
+	const history = await getSessionHistory(setup.gameId, setup.sessionId);
+	await commitSessionTransaction(setup.gameId, setup.sessionId, {
+		expectedRevision: history.progress.revision,
+		parentId: history.progress.headId,
+		nextState: history.progress.state,
+		action: { name: '주문서 표시', args: {} },
+		message: {
+			role: 'assistant',
+			content: '<div style="height:600px"><strong>새 주문서</strong></div>'
+		}
+	});
+	await expect.poll(async () => (await commands.inspectMessageFrame()).text).toBe('새 주문서');
+	const viewport = screen.container.querySelector<HTMLElement>('.history')!;
+	await expect
+		.poll(() => viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop)
+		.toBeLessThan(2);
+	await screen.unmount();
+});
 
 it('refreshes external commits without remounting or losing the draft and open timeline', async () => {
 	const setup = await fixture();

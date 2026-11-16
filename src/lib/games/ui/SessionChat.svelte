@@ -6,6 +6,7 @@
 	import type { Session } from '../model.js';
 	import type { GameUI } from './runtime/model.js';
 
+	import MessageContent from './MessageContent.svelte';
 	import { SessionChatController } from './sessionchat-controller.svelte.js';
 	import SessionHistoryPanel from './SessionHistoryPanel.svelte';
 	let {
@@ -93,6 +94,7 @@
 			<SessionHistoryPanel
 				timeline={chat.timeline}
 				busy={chat.timelineBusy || chat.locked || chat.blocked}
+				appearance={chat.theme}
 				error={chat.timelineError}
 				onselect={async (id) => {
 					await chat.changeTimeline(id);
@@ -128,7 +130,13 @@
 						</div>
 						<div class="message-body">
 							<h3>{message.role === 'user' ? '플레이어' : chat.gameTitle}</h3>
-							<div class="message-content">{message.content}</div>
+							<div class="message-content">
+								<MessageContent
+									content={message.content}
+									appearance={chat.theme}
+									onresize={chat.messageResized}
+								/>
+							</div>
 						</div>
 					</article>
 				{/each}
@@ -137,7 +145,13 @@
 				<aside class="generation" aria-label="AI 생성 진행">
 					<p class="generation-status" role="status">{chat.attemptLabel}</p>
 					{#if chat.streamedText && chat.attemptStatus !== 'committed'}
-						<div class="message-content" aria-label="저장 전 AI 응답">{chat.streamedText}</div>
+						<div class="message-content" aria-label="저장 전 AI 응답">
+							<MessageContent
+								content={chat.streamedText}
+								appearance={chat.theme}
+								onresize={chat.messageResized}
+							/>
+						</div>
 					{/if}
 					{#if chat.thinking}<details>
 							<summary>Thinking</summary>
@@ -145,7 +159,13 @@
 						</details>{/if}
 					{#if chat.progressText}<details>
 							<summary>중간 응답</summary>
-							<div class="message-content" aria-label="중간 응답 내용">{chat.progressText}</div>
+							<div class="message-content" aria-label="중간 응답 내용">
+								<MessageContent
+									content={chat.progressText}
+									appearance={chat.theme}
+									onresize={chat.messageResized}
+								/>
+							</div>
 						</details>{/if}
 					{#if chat.toolProgress.length}
 						<details>

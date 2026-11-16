@@ -3,6 +3,7 @@ import { playwright } from '@vitest/browser-playwright';
 import node from '@sveltejs/adapter-node';
 import staticAdapter from '@sveltejs/adapter-static';
 import { sveltekit } from '@sveltejs/kit/vite';
+import { inspectMessageFrame } from './src/lib/testing/message-frame-command.js';
 
 export default defineConfig(({ mode }) => ({
 	plugins: [
@@ -89,6 +90,7 @@ export default defineConfig(({ mode }) => ({
 					fileParallelism: false,
 					browser: {
 						enabled: true,
+						commands: { inspectMessageFrame },
 						provider: playwright(),
 						instances: [{ browser: 'chromium', headless: true }]
 					},

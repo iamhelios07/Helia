@@ -180,7 +180,15 @@ Manual subscriptions belong in a Preact effect returning their unsubscribe funct
 - Player layout persists **per game and device** in `localStorage` under `helia:workbench:<encodedGameId>` as `{ version: 2, tree, hidden }`. The tree includes minimized panels; `hidden` controls only visibility. Saved slots for absent registrations may be reused when needed to keep the tree within sixteen creator panels; currently registered minimized panels retain their slots. The former two-key settings are read together for compatibility and written in the unified format on player edits; reset clears both formats. Storage failures do not undo game transactions. Layout is independent of global navigation sidebar preferences.
 - Shared UI State and panel scroll positions remain in memory per game/session during this app execution. Returning to the session restores them. A restart resets them. They never enter game state, transactions, branches, memory or package data.
 - Repository observers refresh panels and chat after commits, checkout and deletion. State-only background updates preserve chat scroll and drafts. UI events follow a refresh of committed state; branch restoration does not replay events. Deletion dialogs retain their original expected revision during background refresh.
-- Chat content, sending, history and deletion stay under Helia's control. Creators may set individual validated colors/font values; these take precedence over inherited personal styles. Stylesheets, resource URLs and selectors are not accepted.
+- Chat content, sending, history and deletion stay under Helia's control. Creators may set individual validated colors/font values through `chatStyle`; these take precedence over inherited personal styles. That configuration does not accept stylesheets, resource URLs or selectors.
+
+## HTML in chat messages
+
+Saved messages, streaming replies, history details and editor test conversations share `MessageContent.svelte`. Ordinary text retains its line breaks. HTML inside fenced code blocks stays literal; markup outside those blocks renders as HTML. This changes presentation only: stored messages, AI context and branch history retain the original content.
+
+HTML messages support inline CSS, `<style>` blocks, tables, cards, data images and native `<details>` disclosures. Each message uses an opaque `sandbox="allow-scripts"` iframe without same-origin permission. DOMPurify removes executable markup and navigation attributes inside the frame. A nonce permits only the bundled sanitizer and Helia's bootstrap; message JavaScript, event handlers, forms, external resources, subframes and navigation links are unavailable. CSS remains inside its message and cannot style the application. HTML buttons do not invoke Actions; the game UI runtime remains the place for privileged interactions.
+
+A private MessageChannel carries only content, appearance and measured height. Streaming updates reuse the frame and are coalesced per animation frame. Resize observation adjusts height after disclosures, images and layout changes, up to 2400 pixels; taller content scrolls inside the frame. Startup failure after five seconds falls back to escaped text. Unmounting closes the channel and observers.
 
 ## Isolation and limits
 

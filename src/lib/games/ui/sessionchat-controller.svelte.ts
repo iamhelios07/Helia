@@ -349,6 +349,16 @@ export class SessionChatController {
 			this.composer = undefined;
 		};
 	};
+	messageResized = (heightChange: number) => {
+		const history = this.history;
+		if (
+			history &&
+			history.scrollHeight - history.clientHeight - history.scrollTop <=
+				Math.max(0, heightChange) + 48
+		) {
+			void this.scrollToEnd();
+		}
+	};
 	scrollToEnd = async () => {
 		await tick();
 		if (!this.disposed && this.history) {
