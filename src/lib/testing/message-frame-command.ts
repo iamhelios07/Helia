@@ -18,6 +18,7 @@ export const inspectMessageFrame = defineBrowserCommand(async ({ iframe }, toggl
 			text: root.textContent,
 			color: getComputedStyle(root.querySelector('[data-card]') ?? root).color,
 			font: getComputedStyle(element).fontFamily,
+			documentColorScheme: getComputedStyle(element.ownerDocument.documentElement).colorScheme,
 			height: root.getBoundingClientRect().height,
 			isolated,
 			policy: element.ownerDocument.querySelector('meta[http-equiv]')?.getAttribute('content')
@@ -32,6 +33,7 @@ declare module 'vitest/browser' {
 			text: string | null;
 			color: string;
 			font: string;
+			documentColorScheme: string;
 			height: number;
 			isolated: boolean;
 			policy: string | null | undefined;

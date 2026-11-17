@@ -24,7 +24,10 @@ function receive(event){
   observer.disconnect();mutations.disconnect();cancelAnimationFrame(frame);port.close();return;
  }
  if(value?.kind!=='content'||typeof value.html!=='string')return;
- for(const key of ['color','fontFamily','fontSize','lineHeight','colorScheme']){
+ // The document root controls the canvas. Setting only body leaves a light canvas
+ // in a dark host, so Chromium paints transparent message backgrounds white.
+ if(typeof value.appearance?.colorScheme==='string')document.documentElement.style.colorScheme=value.appearance.colorScheme;
+ for(const key of ['color','fontFamily','fontSize','lineHeight']){
   if(typeof value.appearance?.[key]==='string')document.body.style[key]=value.appearance[key];
  }
  content.innerHTML=DOMPurify.sanitize(value.html,{

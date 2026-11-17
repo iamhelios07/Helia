@@ -15,6 +15,29 @@ it('keeps ordinary text and fenced examples readable without creating a frame', 
 	await view.unmount();
 });
 
+it('keeps unstyled HTML on the dark chat canvas instead of a light iframe canvas', async () => {
+	const previous = document.documentElement.style.colorScheme;
+	document.documentElement.style.colorScheme = 'dark';
+	const view = render(MessageContent, {
+		content: '손님 반응<br>잘 쓸게요!',
+		appearance: { color: 'rgb(220, 220, 220)' }
+	});
+	try {
+		await expect
+			.poll(async () => (await commands.inspectMessageFrame()).text)
+			.toContain('잘 쓸게요!');
+		expect((await commands.inspectMessageFrame()).documentColorScheme).toBe('dark');
+		document.documentElement.style.colorScheme = 'light';
+		await view.rerender({ content: '손님 반응<br>다음 주문도 맡길게요!' });
+		await expect
+			.poll(async () => (await commands.inspectMessageFrame()).documentColorScheme)
+			.toBe('light');
+	} finally {
+		await view.unmount();
+		document.documentElement.style.colorScheme = previous;
+	}
+});
+
 it('renders scoped HTML/CSS and streams into the same iframe with updated appearance', async () => {
 	const onresize = vi.fn();
 	const view = render(MessageContent, {
