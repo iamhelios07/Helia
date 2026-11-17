@@ -15,6 +15,10 @@ export const AI_LIMITS = Object.freeze({
 	outputBytes: 2 * 1024 * 1024
 });
 export type AgentEvent =
+	| { type: 'model'; name: string }
+	| { type: 'request'; round: number; attempt: number }
+	| { type: 'activity' }
+	| { type: 'received'; kind: 'text' | 'thinking' | 'tool'; characters: number }
 	| { type: 'error'; message: string }
 	| { type: 'reset' }
 	| { type: 'text'; text: string }

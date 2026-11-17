@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 
+import { createRegexRule } from '#lib/games/regex.js';
 import { createGameRepository } from '#lib/games/repository-core.js';
 import { evaluateAction } from '#lib/games/scripting/engine.js';
 import { openStorage } from '#lib/server/sqlite.js';
@@ -22,6 +23,50 @@ const connection = {
 	provider: { id: 'test', kind: 'openai-compatible' as const, baseUrl: 'https://example.com/v1' },
 	model: 'test'
 };
+
+it('restricts regex transformations to chat prose across tool rounds', async () => {
+	const { storage, timeline } = await setup();
+	let round = 0;
+	try {
+		const result = await runAgentWorkspace(timeline, 'Buy gold', {
+			connection,
+			run: evaluateAction,
+			signal: new AbortController().signal,
+			emit: () => {},
+			regex: [
+				{
+					...createRegexRule(),
+					stage: 'request',
+					roles: ['user', 'assistant'],
+					pattern: 'gold|spend|one|Buy',
+					replacement: 'changed'
+				},
+				{ ...createRegexRule(), stage: 'output', pattern: 'gold', replacement: 'narrative' }
+			],
+			generate: async (request) => {
+				expect(request.messages.find((m) => m.role === 'user')?.content).toBe('changed changed');
+				if (round++ === 0) {
+					return {
+						text: 'gold',
+						calls: [{ id: 'one', name: 'spend', arguments: {} }],
+						native: [{ signature: 'one', text: 'gold' }]
+					};
+				}
+				const continuation = request.messages.find((m) => m.calls?.length);
+				expect(continuation?.calls).toEqual([{ id: 'one', name: 'spend', arguments: {} }]);
+				expect(continuation?.native).toEqual([{ signature: 'one', text: 'gold' }]);
+				expect(continuation?.content).toBe('gold');
+				expect(request.messages.find((m) => m.role === 'tool')?.callId).toBe('one');
+				expect(request.messages.at(-1)?.content).toContain('"gold":1');
+				return { text: 'gold', calls: [] };
+			}
+		});
+		expect(result.text).toBe('narrative');
+		expect(result.state.gold).toBe(1);
+	} finally {
+		storage.close();
+	}
+});
 async function setup(source = scripts) {
 	const storage = openStorage(':memory:');
 	const writes: StorageRequest[] = [];
@@ -98,7 +143,10 @@ describe('atomic AI workspace', () => {
 			).toBe(2);
 			expect(notifications).not.toHaveBeenCalled();
 			if (round++ === 0) {
+				emit({ type: 'activity' });
+				emit({ type: 'received', kind: 'tool', characters: 8 });
 				emit({ type: 'text', text: 'Checking' });
+				expect(events).toContainEqual({ type: 'received', kind: 'tool', characters: 8 });
 				expect(events.filter((event) => event.type === 'text')).toEqual([]);
 				return {
 					text: 'Checking',
@@ -139,6 +187,10 @@ describe('atomic AI workspace', () => {
 			expect(writes).toHaveLength(1);
 			expect(notifications).toHaveBeenCalledTimes(1);
 			expect(events).toContainEqual({ type: 'reset' });
+			expect(events.filter((event) => event.type === 'request')).toEqual([
+				{ type: 'request', round: 1, attempt: 1 },
+				{ type: 'request', round: 2, attempt: 1 }
+			]);
 			expect(events.filter((event) => event.type === 'text')).toEqual([
 				{ type: 'text', text: 'Done' }
 			]);

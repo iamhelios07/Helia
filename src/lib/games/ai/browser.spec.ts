@@ -10,6 +10,9 @@ import { createGame, updateGameRules, getSessionTimeline } from '#lib/games/repo
 
 import type { RoundRequest } from './protocol.js';
 
+import { editorContent } from '../editor.js';
+import { createRegexRule } from '../regex.js';
+import { applyGameDraft, getGameWorkspace } from '../repository.js';
 import { isSessionBusy } from './activity.js';
 import { invokeSessionAI } from './browser.js';
 import { parsePromptConfig } from './prompts.js';
@@ -187,6 +190,55 @@ it('returns committed progress even if the post-commit refresh fails', async () 
 	expect(result.messages.map((m) => m.content)).toEqual(['  Input\n', 'Answer']);
 	expect(result.history.progress.revision).toBe(2);
 	expect(isSessionBusy(game.id, game.activeSessionId)).toBe(false);
+});
+
+it('applies input and output once, transforms request copies and leaves hidden instructions intact', async () => {
+	const game = await createGame();
+	await updateGameRules(game.id, {
+		schema: { type: 'object', properties: {}, additionalProperties: false },
+		initialState: {},
+		scripts: {}
+	});
+	const base = editorContent((await getGameWorkspace(game.id))!.game);
+	const rules = [
+		{
+			...createRegexRule(),
+			stage: 'input' as const,
+			roles: ['user' as const],
+			pattern: 'Input',
+			replacement: 'Input!'
+		},
+		{
+			...createRegexRule(),
+			stage: 'request' as const,
+			roles: ['user' as const],
+			pattern: 'Input',
+			replacement: 'Request'
+		},
+		{
+			...createRegexRule(),
+			stage: 'output' as const,
+			pattern: 'Answer',
+			replacement: 'Saved answer'
+		},
+		{ ...createRegexRule(), pattern: 'Saved answer', replacement: '<b>Only display</b>' }
+	];
+	await applyGameDraft(game.id, { baseContent: base, content: { ...base, regex: rules } });
+	const result = await invokeSessionAI(game.id, game.activeSessionId, { text: 'Input' });
+	expect(result.messages.map((m) => m.content)).toEqual(['Input!', 'Saved answer']);
+	expect(
+		faults.requests[0].messages.filter((m) => m.role === 'user').map((m) => m.content)
+	).toContain('Request!');
+	expect(JSON.stringify(result.history.snapshot)).not.toContain('Only display');
+	await invokeSessionAI(game.id, game.activeSessionId, { text: 'Input', visible: false });
+	expect(
+		faults.requests[1].messages.filter((m) => m.role === 'user').map((m) => m.content)
+	).toContain('Request');
+	expect(
+		(await getSessionTimeline(game.id, game.activeSessionId)).messages
+			.filter((m) => m.role === 'user')
+			.map((m) => m.content)
+	).toEqual(['Input!']);
 });
 it('cancellation before commit leaves no message history and releases session activity', async () => {
 	const game = await createGame();

@@ -744,6 +744,7 @@ class GameRepository {
 					...input.baseContent,
 					ui: input.baseContent.ui,
 					ai: input.baseContent.ai,
+					regex: input.baseContent.regex,
 					resources: input.baseContent.resources,
 					code: input.baseContent.code,
 					id: previous.id,
@@ -761,6 +762,7 @@ class GameRepository {
 					...content,
 					ui: content.ui,
 					ai: content.ai,
+					regex: content.regex,
 					resources: content.resources,
 					code: content.code,
 					id: previous.id,
@@ -768,7 +770,15 @@ class GameRepository {
 					createdAt: previous.createdAt,
 					updatedAt: new Date().toISOString()
 				});
-				this.migrateSessions(unit, game);
+				// Chat rules are live creator configuration; changing them alone leaves branches intact.
+				if (
+					!sameValue(
+						parseGameState({ ...editorContent(previous), regex: [] }),
+						parseGameState({ ...editorContent(game), regex: [] })
+					)
+				) {
+					this.migrateSessions(unit, game);
+				}
 				unit.put('games', game);
 				return game;
 			}

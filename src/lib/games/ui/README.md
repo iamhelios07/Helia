@@ -200,9 +200,11 @@ Actions and Hooks call `helia.appendMessage({ role, content })` synchronously. T
 
 AI-invoked Actions also buffer messages until the final answer commits successfully. Their message content is included in the Action tool result for later rounds of that invocation. All committed messages participate in subsequent AI conversation context, branch restoration and deletion. Legacy single-message events retain their existing representation; multi-message events retain an ordered list of message links. These APIs do not provide temporary, display-only messages or edit existing messages.
 
-## HTML in chat messages
+## Markdown and HTML in chat messages
 
-Saved messages, streaming replies, history details and editor test conversations share `MessageContent.svelte`. Ordinary text retains its line breaks. HTML inside fenced code blocks stays literal; markup outside those blocks renders as HTML. This changes presentation only: stored messages, AI context and branch history retain the original content.
+Saved messages, streaming replies, history details, regex previews and editor test conversations share `MessageContent.svelte`. Marked converts Markdown (including GFM tables and strikethrough) and embedded HTML before the existing frame sanitizes the result with DOMPurify. Ordinary text retains its line breaks, and code spans and fenced code blocks escape their contents. This changes presentation only: stored messages, AI context and branch history retain the original content. Setting `html={false}` keeps the complete source literal.
+
+Standard Markdown rules apply: inline HTML can surround inline Markdown, while raw block HTML is passed through. Separate a block HTML card and subsequent Markdown with a blank line; Markdown directly inside a raw HTML block remains literal. HTML cards with a uniform template-literal indent are dedented before parsing so existing cards do not become indented code. Markdown block wrappers use normal flowing whitespace and typography; raw HTML retains the prior whitespace and CSS behavior. Plain text without formatting keeps the lightweight text renderer.
 
 HTML messages support inline CSS, `<style>` blocks, tables, cards, data images and native `<details>` disclosures. Each message uses an opaque `sandbox="allow-scripts"` iframe without same-origin permission. DOMPurify removes executable markup and navigation attributes inside the frame. A nonce permits only the bundled sanitizer and Helia's bootstrap; message JavaScript, event handlers, forms, external resources, subframes and navigation links are unavailable. CSS remains inside its message and cannot style the application. HTML buttons do not invoke Actions; the game UI runtime remains the place for privileged interactions.
 

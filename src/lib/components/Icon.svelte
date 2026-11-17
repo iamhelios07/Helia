@@ -9,6 +9,7 @@
 	import Download from '@lucide/svelte/icons/download';
 	import Folder from '@lucide/svelte/icons/folder';
 	import Gamepad2 from '@lucide/svelte/icons/gamepad-2';
+	import GitBranch from '@lucide/svelte/icons/git-branch';
 	import Image from '@lucide/svelte/icons/image';
 	import Info from '@lucide/svelte/icons/info';
 	import LayoutGrid from '@lucide/svelte/icons/layout-grid';
@@ -43,6 +44,7 @@
 		settings: Settings,
 		info: Info,
 		game: Gamepad2,
+		branch: GitBranch,
 		image: Image,
 		book: BookOpen,
 		activity: Activity,

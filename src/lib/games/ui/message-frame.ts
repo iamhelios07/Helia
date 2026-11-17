@@ -1,5 +1,4 @@
 import { messageFrameDocument } from './message-frame-document.js';
-import { messageHTMLSource } from './message-html.js';
 
 export interface MessageAppearance {
 	color?: string;
@@ -69,13 +68,14 @@ export class MessageFrame {
 		this.dispose();
 		this.onfailure();
 	};
-	update(content: string, appearance?: MessageAppearance) {
+	/** Accepts converted markup; the receiving frame sanitizes it before insertion. */
+	update(html: string, appearance?: MessageAppearance) {
 		if (this.disposed) {
 			return;
 		}
 		const computed = getComputedStyle(this.frame);
 		this.pending = {
-			html: messageHTMLSource(content),
+			html,
 			appearance: {
 				color: appearance?.color ?? computed.color,
 				fontFamily: appearance?.fontFamily ?? computed.fontFamily,

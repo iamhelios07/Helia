@@ -7,8 +7,7 @@
 
 	import type { GameUI } from './runtime/model.js';
 
-	import { SESSION_TITLE_MAX_LENGTH } from '../model.js';
-	import GameSettingsPanel from './GameSettingsPanel.svelte';
+	import GameSessionSidebar from './GameSessionSidebar.svelte';
 	import GameWorkbench from './GameWorkbench.svelte';
 	import { GameWorkspaceController } from './gameworkspace-controller.svelte.js';
 	import SessionChat from './SessionChat.svelte';
@@ -54,152 +53,7 @@
 			bind:clientWidth={workspace.layoutWidth}
 			style:--sidebar-width={`${workspace.displayedWidth}px`}
 		>
-			<aside
-				id="workspace-sidebar"
-				class="sessions-panel"
-				aria-label="게임 세션"
-				hidden={workspace.sidebarCollapsed}
-			>
-				<div class="panel-tabs" role="tablist" aria-label="사이드바 보기">
-					<button
-						id="sessions-tab"
-						onkeydown={workspace.moveTab}
-						data-tab="sessions"
-						class={{ selected: workspace.selectedTab === 'sessions' }}
-						type="button"
-						role="tab"
-						aria-selected={workspace.selectedTab === 'sessions'}
-						aria-controls="sessions-panel"
-						tabindex={workspace.selectedTab === 'sessions' ? 0 : -1}
-						onclick={() => (workspace.selectedTab = 'sessions')}>세션</button
-					>
-					<button
-						id="game-tab"
-						onkeydown={workspace.moveTab}
-						data-tab="game"
-						class={{ selected: workspace.selectedTab === 'game' }}
-						type="button"
-						role="tab"
-						aria-selected={workspace.selectedTab === 'game'}
-						aria-controls="game-panel"
-						tabindex={workspace.selectedTab === 'game' ? 0 : -1}
-						onclick={() => (workspace.selectedTab = 'game')}>게임</button
-					>
-				</div>
-				<div
-					id="sessions-panel"
-					role="tabpanel"
-					aria-labelledby="sessions-tab"
-					tabindex="0"
-					hidden={workspace.selectedTab !== 'sessions'}
-				>
-					<button
-						class="new-session"
-						type="button"
-						disabled={workspace.busy}
-						onclick={workspace.addSession}
-						><Icon name="plus" size={17} /><span>새 세션</span></button
-					>
-					<nav aria-label="세션 목록" aria-busy={workspace.busy}>
-						{#each workspace.sessions as session (session.id)}
-							<div
-								class={['session-row', { active: session.id === workspace.game.activeSessionId }]}
-							>
-								{#if workspace.renamingSessionId === session.id}
-									<form class="session-rename" onsubmit={workspace.saveSessionName}>
-										<span class="session-prefix" aria-hidden="true">#</span>
-										<input
-											{@attach workspace.focusSessionName}
-											aria-label="세션 이름"
-											bind:value={workspace.sessionName}
-											maxlength={SESSION_TITLE_MAX_LENGTH}
-											disabled={workspace.busy}
-											aria-describedby={workspace.renameError ? 'session-rename-error' : undefined}
-											onkeydown={(event) => {
-												if (event.key === 'Escape' && !workspace.busy) {
-													event.preventDefault();
-													workspace.renamingSessionId = null;
-													workspace.renameError = '';
-												}
-											}}
-										/>
-										<button
-											class="session-action"
-											type="submit"
-											aria-label="이름 저장"
-											disabled={workspace.busy}><Icon name="check" size={16} /></button
-										>
-										<button
-											class="session-action"
-											type="button"
-											aria-label="이름 수정 취소"
-											disabled={workspace.busy}
-											onclick={() => {
-												workspace.renamingSessionId = null;
-												workspace.renameError = '';
-											}}><Icon name="close" size={16} /></button
-										>
-									</form>
-								{:else}
-									<button
-										class="session"
-										type="button"
-										aria-current={session.id === workspace.game.activeSessionId
-											? 'true'
-											: undefined}
-										disabled={workspace.busy}
-										aria-label={`${session.title} 열기`}
-										onclick={() => workspace.changeSession(session.id)}
-									>
-										<span class="session-prefix" aria-hidden="true">#</span><strong
-											>{session.title}</strong
-										>
-									</button>
-									<button
-										class="session-action"
-										type="button"
-										aria-label={`${session.title} 이름 수정`}
-										title="이름 수정"
-										disabled={workspace.busy}
-										onclick={() => workspace.startRename(session)}
-										><Icon name="pencil" size={16} /></button
-									>
-									<button
-										class="session-action"
-										type="button"
-										aria-label={`${session.title} 삭제`}
-										title="삭제"
-										disabled={workspace.busy}
-										onclick={() => workspace.requestDelete(session)}
-										><Icon name="trash" size={16} /></button
-									>
-								{/if}
-							</div>
-						{/each}
-					</nav>
-					{#if workspace.renameError}<p
-							class="session-error"
-							id="session-rename-error"
-							role="alert"
-						>
-							{workspace.renameError}
-						</p>{/if}
-				</div>
-				<div
-					class="game-panel"
-					id="game-panel"
-					role="tabpanel"
-					aria-labelledby="game-tab"
-					tabindex="0"
-					hidden={workspace.selectedTab !== 'game'}
-				>
-					<GameSettingsPanel
-						game={workspace.game}
-						onsave={workspace.saveSettings}
-						blocked={workspace.busy}
-					/>
-				</div>
-			</aside>
+			<GameSessionSidebar {workspace} />
 			<div
 				class="resize-handle"
 				role="slider"
@@ -247,6 +101,8 @@
 								gameId={currentGame.id}
 								sessionId={currentSessionId}
 								gameTitle={currentGame.title}
+								regex={currentGame.regex}
+								oncontroller={workspace.attachChat}
 								blocked={workspace.sessionBusy || workspace.uiSaving}
 								chatStyle={theme}
 								bind:draft={
@@ -314,43 +170,6 @@
 {/if}
 
 <style>
-	.session-row {
-		display: flex;
-		min-width: 0;
-		align-items: center;
-		gap: 2px;
-		padding-right: 4px;
-		border: 1px solid transparent;
-		border-radius: 6px;
-	}
-	.session-action {
-		width: 28px;
-		min-height: 28px;
-		flex-shrink: 0;
-		padding: 4px;
-		border: 0;
-		background: transparent;
-		color: var(--text-muted);
-	}
-	.session-rename {
-		display: flex;
-		min-width: 0;
-		flex: 1;
-		align-items: center;
-		gap: 4px;
-		padding: 3px 0 3px 10px;
-	}
-	.session-rename input {
-		width: 100%;
-		min-width: 0;
-		padding: 5px;
-		border: 1px solid var(--border-strong);
-		border-radius: 4px;
-		background: var(--background);
-		color: var(--text-strong);
-		font: inherit;
-		font-size: 12px;
-	}
 	.session-error {
 		color: var(--text-strong);
 		font-size: 12px;
@@ -499,77 +318,11 @@
 	.resizing .resize-handle::after {
 		background: var(--text-muted);
 	}
-	.sessions-panel {
-		min-width: 0;
-		min-height: 0;
-		overflow-y: auto;
-		padding: 16px 14px;
-		border-right: 1px solid var(--border);
-		background: var(--surface);
-	}
-	.panel-tabs {
-		display: grid;
-		grid-template-columns: 1fr 1fr;
-		gap: 3px;
-		margin-bottom: 16px;
-		padding: 3px;
-		border: 1px solid var(--border);
-		border-radius: 8px;
-		background: var(--background);
-	}
-	.panel-tabs button {
-		min-height: 32px;
-		border-color: transparent;
-		background: transparent;
-		color: var(--text-muted);
-	}
-	.panel-tabs button.selected {
-		border-color: var(--border);
-		background: var(--surface-active);
-		color: var(--text-strong);
-	}
 	h2 {
 		margin: 0;
 		color: var(--text-strong);
 		font-size: 13px;
 		font-weight: 550;
-	}
-	.new-session {
-		width: 100%;
-		margin-bottom: 12px;
-	}
-	nav {
-		display: flex;
-		flex-direction: column;
-		gap: 5px;
-	}
-	.session {
-		min-width: 0;
-		flex: 1;
-		justify-content: flex-start;
-		min-height: 36px;
-		gap: 10px;
-		padding: 9px 12px;
-		border-color: transparent;
-		background: transparent;
-		text-align: left;
-	}
-	.session-row.active {
-		border-color: var(--border-strong);
-		background: var(--surface-active);
-		color: var(--text-strong);
-	}
-	.session-prefix {
-		flex-shrink: 0;
-		color: var(--text-muted);
-		font-size: 16px;
-	}
-	.session strong {
-		overflow: hidden;
-		font-size: 12px;
-		font-weight: 500;
-		text-overflow: ellipsis;
-		white-space: nowrap;
 	}
 	.session-workspace {
 		display: flex;
@@ -637,11 +390,6 @@
 		.game-layout.sidebar-collapsed {
 			grid-template-rows: minmax(0, 1fr);
 		}
-		.sessions-panel {
-			max-height: 42dvh;
-			border-right: 0;
-			border-bottom: 1px solid var(--border);
-		}
 		.resize-handle {
 			display: none;
 		}
@@ -654,16 +402,6 @@
 		.sidebar-collapsed .sidebar-toggle {
 			right: auto;
 			left: 0;
-		}
-		.panel-tabs {
-			margin-right: 48px;
-		}
-		.sessions-panel {
-			padding: 22px 10px;
-		}
-		.session {
-			gap: 6px;
-			padding: 10px 5px;
 		}
 		.session-workspace {
 			padding: 20px 12px 12px;

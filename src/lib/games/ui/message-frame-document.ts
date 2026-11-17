@@ -4,6 +4,13 @@ const styles = `
 html,body{margin:0;padding:0;min-width:0;background:transparent;color:inherit}
 *{box-sizing:border-box}body{font:14px/1.85 sans-serif;overflow-wrap:anywhere}
 #helia-message-root{display:flow-root;min-width:0;white-space:pre-wrap}
+[data-helia-markdown]{white-space:normal;margin-block:.65em}
+[data-helia-markdown]:first-child,[data-helia-markdown]>:first-child{margin-top:0}
+[data-helia-markdown]:last-child,[data-helia-markdown]>:last-child{margin-bottom:0}
+[data-helia-markdown] blockquote{margin-inline:0;padding-inline-start:1em;border-inline-start:3px solid currentColor;opacity:.85}
+[data-helia-markdown] pre{padding:.65em;background:rgba(127,127,127,.12);border-radius:4px;white-space:pre-wrap}
+[data-helia-markdown] code{font-family:ui-monospace,monospace;font-size:.92em}
+[data-helia-markdown] :not(pre)>code{padding:.1em .3em;background:rgba(127,127,127,.12);border-radius:3px}
 img,video,canvas{max-width:100%;height:auto}pre{white-space:pre-wrap;overflow-wrap:anywhere}
 table{max-width:100%;border-collapse:collapse;white-space:normal}th,td{padding:4px 8px;border:1px solid currentColor}
 p:first-child{margin-top:0}p:last-child{margin-bottom:0}summary{cursor:pointer}

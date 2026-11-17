@@ -54,6 +54,26 @@ const applyButton = () => page.getByRole('button', { name: '적용', exact: true
 const returnLink = () => page.getByRole('link', { name: '플레이로 돌아가기' });
 const heightHandle = () => page.getByRole('slider', { name: '검사 패널 높이 조절' });
 
+it('opens regex as a dedicated chat document, restores its draft and applies it without changing session state', async () => {
+	const game = await createGame();
+	const screen = render(GameEditor, { gameId: game.id });
+	await page.getByRole('button', { name: '정규식', exact: true }).click();
+	await page.getByRole('button', { name: '규칙 추가' }).click();
+	await page.getByRole('textbox', { name: '규칙 이름' }).fill('주문 표시');
+	await page.getByRole('textbox', { name: '검색식 (IN)' }).fill('주문');
+	await page.getByRole('textbox', { name: '치환문 (OUT)' }).fill('<strong>주문</strong>');
+	await expect.poll(() => loadEditorDraft(game.id)?.documents.regex).toContain('주문 표시');
+	await expect.element(applyButton()).toBeEnabled();
+	await applyButton().click();
+	await expect
+		.poll(async () => (await getGameWorkspace(game.id))?.game.regex?.[0].name)
+		.toBe('주문 표시');
+	await screen.unmount();
+	render(GameEditor, { gameId: game.id });
+	await page.getByRole('button', { name: '정규식', exact: true }).click();
+	await expect.element(page.getByRole('textbox', { name: '규칙 이름' })).toHaveValue('주문 표시');
+});
+
 it('keeps the editor usable while incomplete code produces repeated diagnostic messages', async () => {
 	const game = await createGame();
 	render(GameEditor, { gameId: game.id });

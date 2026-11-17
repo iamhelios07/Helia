@@ -7,10 +7,47 @@ import type {} from '#lib/testing/message-frame-command.js';
 import { MessageFrame } from './message-frame.js';
 import MessageContent from './MessageContent.svelte';
 
-it('keeps ordinary text and fenced examples readable without creating a frame', async () => {
-	const content = '철 < 은\n```html\n<div>예시</div>\n```';
+it('keeps ordinary text lightweight and renders fenced HTML examples as escaped code', async () => {
+	const content = '철 < 은\nArray<T>';
 	const view = render(MessageContent, { content });
-	await expect.element(page.getByText('철 < 은', { exact: false })).toHaveTextContent('예시');
+	await expect.element(page.getByText('철 < 은', { exact: false })).toHaveTextContent('Array<T>');
+	expect(document.querySelector('iframe')).toBeNull();
+	await view.rerender({ content: '철 < 은\n```html\n<div>예시</div>\n```' });
+	await expect
+		.poll(async () => (await commands.inspectMessageFrame()).html)
+		.toContain('&lt;div&gt;예시&lt;/div&gt;');
+	expect((await commands.inspectMessageFrame()).html).toContain('<pre><code');
+	await view.unmount();
+});
+
+it('renders mixed Markdown and HTML and keeps navigation and scripts blocked', async () => {
+	const content =
+		'**손님 주문**\n\n<style>[data-card]{color:rgb(218,108,36)}</style>\n<div data-card>철검</div>\n\n*튼튼하게*\n\n- 철 2개\n- 나무 1개\n\n| 항목 | 금액 |\n| --- | --- |\n| 정가 | 55G |\n\n`<script>예시</script>` [위험 링크](javascript:alert(1))\n\n<img src=x onerror="parent.document.body.dataset.compromised=1"><script>alert(1)</script>';
+	const view = render(MessageContent, { content });
+	await expect
+		.poll(async () => (await commands.inspectMessageFrame()).html)
+		.toContain('<strong>손님 주문</strong>');
+	const rendered = await commands.inspectMessageFrame();
+	for (const expected of [
+		'<em>튼튼하게</em>',
+		'<ul>',
+		'<table>',
+		'&lt;script&gt;예시&lt;/script&gt;'
+	]) {
+		expect(rendered.html).toContain(expected);
+	}
+	expect(rendered.color).toBe('rgb(218, 108, 36)');
+	expect(rendered.html).not.toMatch(/<script|onerror=|href=/);
+	expect(rendered.isolated).toBe(true);
+	expect(document.body.dataset.compromised).toBeUndefined();
+	await view.rerender({ content: '**새 응답**' });
+	await expect
+		.poll(async () => (await commands.inspectMessageFrame()).html)
+		.toContain('<strong>새 응답</strong>');
+	await view.rerender({ content: '**소스 그대로** <b>HTML</b>', html: false });
+	await expect
+		.element(page.getByText('**소스 그대로** <b>HTML</b>', { exact: true }))
+		.toBeVisible();
 	expect(document.querySelector('iframe')).toBeNull();
 	await view.unmount();
 });

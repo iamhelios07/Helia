@@ -85,13 +85,17 @@ it('renews native stream deadlines on provider activity without requiring visibl
 		await vi.advanceTimersByTimeAsync(AI_LIMITS.streamIdleMs - 1);
 		deliver({ activity: true });
 	}
-	expect(events).not.toHaveBeenCalled();
+	expect(events.mock.calls.map(([event]) => event)).toEqual([
+		{ type: 'activity' },
+		{ type: 'activity' },
+		{ type: 'activity' }
+	]);
 	expect(host.mock.calls.filter(([input]) => input.kind === 'release')).toHaveLength(0);
 	await vi.advanceTimersByTimeAsync(AI_LIMITS.streamIdleMs);
 	await rejected;
 	expect(host.mock.calls.filter(([input]) => input.kind === 'release')).toHaveLength(1);
 	deliver({ chunk: 'data: {"choices":[{"delta":{"content":"late"}}]}\n\n' });
 	finish({});
-	expect(events).not.toHaveBeenCalled();
+	expect(events).toHaveBeenCalledTimes(3);
 	expect(vi.getTimerCount()).toBe(0);
 });

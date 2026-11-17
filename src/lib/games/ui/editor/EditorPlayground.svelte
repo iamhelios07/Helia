@@ -10,6 +10,7 @@
 	} from '#lib/games/editor-playground.js';
 	import { parseGameState } from '#lib/games/state/value.js';
 
+	import { RegexDisplay } from '../message-regex.svelte.js';
 	import MessageContent from '../MessageContent.svelte';
 	import {
 		attachPlaygroundFrame,
@@ -48,6 +49,10 @@
 	let current = $derived(mode === 'preview' ? sessions.preview : test);
 	let starting = $derived(sessions.starting[mode]);
 	let timeline = $derived(mode === 'preview' ? sessions.previewTimeline : sessions.testTimeline);
+	const display = new RegexDisplay(() => ({
+		messages: timeline?.messages ?? [],
+		rules: current?.game.regex
+	}));
 	let tools = $derived(
 		(mode === 'preview' ? sessions.previewTools : sessions.testTools).filter(
 			(tool) => tool.kind === 'action'
@@ -198,7 +203,7 @@
 				등록된 게임 화면이 없어요. Action과 AI로 게임 로직을 테스트할 수 있어요.
 			</p>{/if}
 		<div class="messages" aria-label="테스트 대화">
-			{#each timeline.messages as message (message.id)}<article>
+			{#each display.messages as message (message.id)}<article>
 					<small>{message.role === 'user' ? '플레이어' : '게임'}</small>
 					<MessageContent content={message.content} />
 				</article>{/each}

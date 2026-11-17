@@ -8,6 +8,7 @@ import type {} from '#lib/testing/message-frame-command.js';
 import { saveAISettings } from '#lib/app/settings/repository.js';
 import { aiSettingsRequest } from '#lib/app/settings/settings-transport.js';
 import { memoryAISettingsTransport } from '#lib/testing/ai-settings.js';
+import HistoryWorkspaceFixture from '#lib/testing/HistoryWorkspaceFixture.svelte';
 
 import type { Game } from '../model.js';
 
@@ -19,9 +20,9 @@ import {
 	commitSessionTransaction,
 	saveSessionMemory,
 	getSessionTimeline,
-	executeSessionAction
+	executeSessionAction,
+	getGameWorkspace
 } from '../repository.js';
-import SessionChat from './SessionChat.svelte';
 
 vi.mock('#lib/app/settings/settings-transport.js', () => ({ aiSettingsRequest: vi.fn() }));
 vi.mock('../../storage/transport.js', async () => {
@@ -91,8 +92,15 @@ async function fixture(scripts: Game['scripts'] = {}) {
 	const other = await commit('돌아가기', shared, 100);
 	const onsessionupdate = vi.fn();
 	const onsavingchange = vi.fn();
+	const current = (await getGameWorkspace(gameId))!;
+	const currentSession = current.sessions.find((session) => session.id === sessionId)!;
 	const mount = () =>
-		render(SessionChat, { gameId, sessionId, gameTitle: '상점', onsessionupdate, onsavingchange });
+		render(HistoryWorkspaceFixture, {
+			game: current.game,
+			session: currentSession,
+			onsessionupdate,
+			onsavingchange
+		});
 	return {
 		gameId,
 		sessionId,
@@ -111,6 +119,17 @@ function conversation() {
 		page.getByRole('log').element().querySelectorAll('.message-content'),
 		(node) => node.textContent
 	);
+}
+
+async function continueAt(name: string) {
+	const panel = page.getByRole('region', { name: '세션 이력' });
+	await panel.getByRole('button', { name, exact: true }).click();
+}
+
+async function requestEventDelete(summary: string) {
+	const panel = page.getByRole('region', { name: '세션 이력' });
+	await panel.getByRole('button', { name: new RegExp(`^${summary} (현재|다른)`) }).click();
+	await panel.getByRole('button', { name: `${summary} 삭제`, exact: true }).click();
 }
 
 it('displays every message belonging to one Action in chat and in its history details', async () => {
@@ -142,12 +161,14 @@ helia.defineAction({name:'order',run({state}){
 			'주문을 접수했다.'
 		]);
 	await page.getByRole('button', { name: '이력과 분기', exact: true }).click();
-	const events = page
-		.getByRole('region', { name: '세션 이력' })
-		.element()
-		.querySelectorAll('.event');
-	const last = events[events.length - 1];
-	const details = last.querySelector('details')!;
+	const panel = page.getByRole('region', { name: '세션 이력' });
+	await expect.element(panel.getByRole('list', { name: '이력 그래프' })).toBeVisible();
+	if (import.meta.env.VITE_CAPTURE_HISTORY === '1') {
+		await page
+			.getByRole('complementary', { name: '게임 세션' })
+			.screenshot({ path: '../../../../data/verification/sidebar-history/graph.png' });
+	}
+	const details = panel.getByLabelText('선택한 이력').element().querySelector('details')!;
 	details.open = true;
 	expect(Array.from(details.querySelectorAll('.dialogue'), (node) => node.textContent)).toEqual([
 		'검을 주문한다.',
@@ -239,6 +260,14 @@ it('navigates entire atomic events, restores state and memories, keeps drafts an
 		.toBeVisible();
 	await panel.getByRole('button', { name: '추가 구매 다른 분기', exact: true }).click();
 	await expect
+		.poll(
+			async () => (await getSessionTimeline(setup.gameId, setup.sessionId)).history.progress.headId
+		)
+		.toBe(setup.tail);
+	expect(
+		panel.getByRole('button', { name: '이 시점에서 이어하기', exact: true }).query()
+	).toBeNull();
+	await expect
 		.poll(conversation)
 		.toEqual(['상점에 도착했다.', '입장 완료', '구매 완료', '추가 구매 완료']);
 	await expect
@@ -250,7 +279,7 @@ it('navigates entire atomic events, restores state and memories, keeps drafts an
 	await expect
 		.element(panel.getByRole('list', { name: '현재 경로의 기억' }))
 		.toHaveTextContent('물건 두 개를 샀다.');
-	await panel.getByRole('button', { name: '입장 현재 경로', exact: true }).click();
+	await continueAt('입장 현재 경로');
 	await expect.poll(conversation).toEqual(['상점에 도착했다.', '입장 완료']);
 	await page.getByRole('button', { name: '메시지 전송' }).click();
 	await expect.poll(conversation).toEqual(['상점에 도착했다.', '입장 완료', '보존할 초안']);
@@ -267,7 +296,7 @@ it('navigates entire atomic events, restores state and memories, keeps drafts an
 	screen = setup.mount();
 	await expect.poll(conversation).toEqual(['상점에 도착했다.', '입장 완료', '보존할 초안']);
 	await page.getByRole('button', { name: '이력과 분기', exact: true }).click();
-	await panel.getByRole('button', { name: '초기 상태', exact: true }).click();
+	await continueAt('초기 상태');
 	await expect.poll(conversation).toEqual(['상점에 도착했다.']);
 	await screen.unmount();
 });
@@ -277,33 +306,24 @@ it('confirms subtree deletion, preserves sibling branches and removes attached m
 	const screen = setup.mount();
 	await expect.poll(conversation).toHaveLength(3);
 	await page.getByRole('button', { name: '이력과 분기', exact: true }).click();
-	const panel = page.getByRole('region', { name: '세션 이력' });
-	await panel.getByRole('button', { name: '추가 구매 다른 분기', exact: true }).click();
+	await continueAt('추가 구매 다른 분기');
 	await expect.poll(conversation).toHaveLength(4);
-	await panel.getByRole('button', { name: '구매 삭제', exact: true }).click();
+	await requestEventDelete('구매');
 	const modal = page.getByRole('dialog', { name: '이벤트 삭제' });
 	await expect.element(modal).toBeVisible();
 	await expect.element(modal).toHaveTextContent('모든 분기');
 	await userEvent.keyboard('{Escape}');
 	await expect.element(modal).not.toBeInTheDocument();
 	expect((await getSessionTimeline(setup.gameId, setup.sessionId)).events).toHaveLength(4);
-	await panel.getByRole('button', { name: '구매 삭제', exact: true }).click();
+	await requestEventDelete('구매');
 	await modal.getByRole('button', { name: '삭제', exact: true }).click();
-	const afterRows = await getSessionTimeline(setup.gameId, setup.sessionId);
-	console.log(
-		'AFTER-DEL events=' +
-			afterRows.events.length +
-			' head=' +
-			String(afterRows.history.progress.headId).slice(0, 8)
-	);
 	await expect.element(modal).not.toBeInTheDocument();
 	await expect.poll(conversation).toEqual(['상점에 도착했다.', '입장 완료']);
 	const timeline = await getSessionTimeline(setup.gameId, setup.sessionId);
-	console.log('AFTER-DEL', JSON.stringify(timeline.events.map((e) => e.id.slice(0, 8))));
 	expect(timeline.events.map((event) => event.id)).toEqual([setup.shared, setup.other]);
 	expect(timeline.history.progress.headId).toBe(setup.shared);
 	expect(timeline.memories).toEqual([]);
-	await panel.getByRole('button', { name: '돌아가기 다른 분기', exact: true }).click();
+	await continueAt('돌아가기 다른 분기');
 	await expect.poll(conversation).toEqual(['상점에 도착했다.', '입장 완료', '돌아가기 완료']);
 	await screen.unmount();
 });
@@ -314,7 +334,7 @@ it('retains the timeline and deletion dialog on a revision conflict, then reload
 	await expect.poll(conversation).toHaveLength(3);
 	await page.getByRole('button', { name: '이력과 분기', exact: true }).click();
 	const panel = page.getByRole('region', { name: '세션 이력' });
-	await panel.getByRole('button', { name: '구매 삭제', exact: true }).click();
+	await requestEventDelete('구매');
 	const history = await getSessionHistory(setup.gameId, setup.sessionId);
 	await commitSessionTransaction(setup.gameId, setup.sessionId, {
 		expectedRevision: history.progress.revision,
@@ -332,9 +352,9 @@ it('retains the timeline and deletion dialog on a revision conflict, then reload
 	await expect
 		.element(panel.getByRole('button', { name: '외부 작업 현재 위치', exact: true }))
 		.toBeVisible();
-	await panel.getByRole('button', { name: '구매 삭제', exact: true }).click();
+	await requestEventDelete('구매');
 	await modal.getByRole('button', { name: '삭제', exact: true }).click();
 	await expect.element(modal).not.toBeInTheDocument();
-	expect((await getSessionTimeline(setup.gameId, setup.sessionId)).events).toHaveLength(3);
+	expect((await getSessionTimeline(setup.gameId, setup.sessionId)).events).toHaveLength(2);
 	await screen.unmount();
 });

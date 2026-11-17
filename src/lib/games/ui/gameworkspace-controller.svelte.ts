@@ -14,6 +14,8 @@ import { configureAppSidebar } from '#lib/app/sidebar.svelte.js';
 import { isSessionBusy, subscribeSessionActivity } from '#lib/games/ai/activity.js';
 import { toLibraryGame, type LibraryGame } from '#lib/library/library-games.js';
 
+import type { SessionChatController } from './sessionchat-controller.svelte.js';
+
 import { validateSessionTitle, type Game, type Session, type GameMetadata } from '../model.js';
 import {
 	getGameWorkspace,
@@ -58,6 +60,15 @@ export class GameWorkspaceController {
 	sessionBusy = $state(false);
 	chatSaving = $state(false);
 	uiSaving = $state(false);
+	chat = $state.raw<SessionChatController | null>(null);
+	attachChat = (chat: SessionChatController) => {
+		this.chat = chat;
+		return () => {
+			if (this.chat === chat) {
+				this.chat = null;
+			}
+		};
+	};
 	chatDrafts = $state<Record<string, string>>({});
 	sessionActivity = $derived.by(() => {
 		const sessionId = this.game?.activeSessionId;

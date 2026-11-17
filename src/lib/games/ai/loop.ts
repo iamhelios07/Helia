@@ -1,7 +1,9 @@
 import type { MessageInput } from '#lib/games/model.js';
+import type { RegexRule } from '#lib/games/regex.js';
 import type { ActionRunner, RuleTrigger, UIEvent } from '#lib/games/scripting/protocol.js';
 import type { SessionTimeline } from '#lib/games/state/history.js';
 
+import { transformRegexMessages, transformRegexText } from '#lib/games/regex-runtime.js';
 import { parseGameState } from '#lib/games/state/value.js';
 
 import { removeMessageEcho } from './message-echo.js';
@@ -31,6 +33,7 @@ export interface AgentWorkspaceOptions {
 	signal: AbortSignal;
 	emit: (event: AgentEvent) => void;
 	config?: PromptConfig;
+	regex?: RegexRule[];
 }
 export async function runAgentWorkspace(
 	timeline: SessionTimeline,
@@ -64,18 +67,25 @@ class AgentWorkspace {
 			throw aiError('canceled');
 		}
 	}
-	private prompt() {
+	private async prompt() {
 		const { history, messages, events, memories } = this.timeline;
+		const transformed = await transformRegexMessages(
+			[...messages, { role: 'user' as const, content: this.input }],
+			this.options.regex,
+			'request',
+			this.options.signal
+		);
+		const input = transformed.pop()!.content;
 		const prompt = assemblePrompt(this.ai, {
 			settings: history.snapshot.settings,
 			lorebook: history.snapshot.ai?.lorebook,
-			messages,
+			messages: messages.map((m, i) => ({ ...m, content: transformed[i].content })),
 			transactions: events
 				.filter((e) => e.active)
 				.map((e) => history.transactions.find((t) => t.id === e.id)!),
 			memories,
 			state: this.state,
-			input: this.input
+			input
 		});
 		prompt.pop();
 		return prompt;
@@ -96,9 +106,10 @@ class AgentWorkspace {
 		}
 		return messages;
 	}
-	private async generate(messages: AIMessage[]) {
+	private async generate(messages: AIMessage[], round: number) {
 		const { generate, signal, connection } = this.options;
 		for (let retry = 0; retry <= AI_LIMITS.retries; retry++) {
+			this.options.emit({ type: 'request', round, attempt: retry + 1 });
 			let observed = false;
 			let thinking = '';
 			try {
@@ -109,6 +120,8 @@ class AgentWorkspace {
 						observed = true;
 						if (event.type === 'thinking') {
 							thinking += event.text;
+						} else if (['received', 'activity'].includes(event.type)) {
+							this.options.emit(event);
 						}
 					}
 				);
@@ -141,7 +154,11 @@ class AgentWorkspace {
 		this.check();
 		return {
 			state: validated.state,
-			text: removeMessageEcho(this.ai.promptSettings.assistantPrefill + text, this.chatMessages),
+			text: await transformRegexText(
+				removeMessageEcho(this.ai.promptSettings.assistantPrefill + text, this.chatMessages),
+				this.options.regex,
+				{ stage: 'output', role: 'assistant', signal: this.options.signal }
+			),
 			events: this.events,
 			...(this.chatMessages.length ? { messages: this.chatMessages } : {}),
 			hooks: this.hooks
@@ -228,13 +245,13 @@ class AgentWorkspace {
 			{ signal: this.options.signal }
 		);
 		this.tools = catalog.tools ?? [];
-		const prompt = this.prompt();
+		const prompt = await this.prompt();
 		const { emit } = this.options;
 		for (let round = 0; round < AI_LIMITS.rounds; round++) {
 			this.check();
 			const prefix = this.ai.promptSettings.assistantPrefill;
 			const messages = this.messages(prompt, prefix);
-			const output = await this.generate(messages);
+			const output = await this.generate(messages, round + 1);
 			this.check();
 			if (!output.calls.length) {
 				const result = await this.validate(output.text);

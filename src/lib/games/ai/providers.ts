@@ -307,6 +307,7 @@ export class ProviderDecoder {
 	private native: StateValue[] = [];
 	private stop = '';
 	private done = false;
+	private argumentDeltas = new Set<string>();
 	constructor(
 		private kind: RoundRequest['provider']['kind'],
 		private emit: (event: AgentEvent) => void
@@ -353,6 +354,15 @@ export class ProviderDecoder {
 			this.reasoning += value;
 		}
 		this.emit({ type: thinking ? 'thinking' : 'text', text: value });
+		this.emit({
+			type: 'received',
+			kind: thinking ? 'thinking' : 'text',
+			characters: [...value].length
+		});
+	}
+	private toolDelta(value: unknown = '') {
+		const text = typeof value === 'string' ? value : JSON.stringify(value);
+		this.emit({ type: 'received', kind: 'tool', characters: [...text].length });
 	}
 	private accept(data: Row) {
 		if (data.helia_nonstream) {
@@ -393,6 +403,7 @@ export class ProviderDecoder {
 				}
 				const current = this.calls.get(index) ?? { id: '', name: '', arguments: '' };
 				const fn = optionalRow(call.function);
+				this.toolDelta(fn.arguments);
 				current.id = String(current.id) + String(call.id ?? '');
 				current.name = String(current.name) + String(fn.name ?? '');
 				current.arguments = String(current.arguments) + String(fn.arguments ?? '');
@@ -409,6 +420,10 @@ export class ProviderDecoder {
 	}
 	private acceptResponses(data: Row) {
 		const type = String(data.type);
+		if (type === 'response.function_call_arguments.delta') {
+			this.argumentDeltas.add(String(data.item_id ?? data.output_index ?? ''));
+			this.toolDelta(data.delta);
+		}
 		if (type === 'response.output_text.delta') {
 			this.textDelta(data.delta);
 		}
@@ -419,25 +434,31 @@ export class ProviderDecoder {
 			this.textDelta(data.delta, true);
 		}
 		if (type === 'response.completed') {
-			const response = row(data.response);
-			if (response.status !== 'completed') {
-				throw aiError('protocol');
-			}
-			this.native = list(response.output).map((value) => parseStateValue(value));
-			this.complete = true;
-			for (const item of this.native) {
-				const block = optionalRow(item);
-				if (block.type === 'function_call') {
-					this.calls.set(this.calls.size, {
-						id: block.call_id,
-						name: block.name,
-						arguments: block.arguments
-					});
-				}
-			}
+			this.completeResponses(row(data.response));
 		}
 		if (['response.failed', 'response.incomplete', 'response.error'].includes(type)) {
 			throw aiError('protocol');
+		}
+	}
+	private completeResponses(response: Row) {
+		if (response.status !== 'completed') {
+			throw aiError('protocol');
+		}
+		this.native = list(response.output).map((value) => parseStateValue(value));
+		this.complete = true;
+		for (const [index, item] of this.native.entries()) {
+			const block = optionalRow(item);
+			if (block.type !== 'function_call') {
+				continue;
+			}
+			if (!this.argumentDeltas.has(String(block.id ?? index))) {
+				this.toolDelta(block.arguments);
+			}
+			this.calls.set(this.calls.size, {
+				id: block.call_id,
+				name: block.name,
+				arguments: block.arguments
+			});
 		}
 	}
 	private acceptAnthropic(data: Row) {
@@ -446,6 +467,9 @@ export class ProviderDecoder {
 		if (type === 'content_block_start') {
 			const block = row(data.content_block);
 			this.calls.set(index, { ...block, _json: '' });
+			if (block.type === 'tool_use') {
+				this.toolDelta();
+			}
 		}
 		if (type === 'content_block_delta') {
 			this.acceptAnthropicDelta(index, row(data.delta));
@@ -477,6 +501,7 @@ export class ProviderDecoder {
 			block.signature = String(block.signature ?? '') + str(delta.signature);
 		}
 		if (delta.type === 'input_json_delta') {
+			this.toolDelta(delta.partial_json);
 			block._json = String(block._json) + str(delta.partial_json);
 		}
 	}
@@ -497,6 +522,7 @@ export class ProviderDecoder {
 			}
 			if (part.functionCall) {
 				const fn = row(part.functionCall);
+				this.toolDelta(fn.args ?? {});
 				this.calls.set(this.calls.size, {
 					id: fn.id ?? `google_${this.calls.size}`,
 					name: fn.name,
@@ -556,6 +582,7 @@ export class ProviderDecoder {
 			];
 		}
 		if (delta.type === 'arguments_delta') {
+			this.toolDelta(delta.arguments);
 			step._json = String(step._json) + str(delta.arguments);
 		}
 		if (delta.type === 'thought_signature') {
@@ -592,6 +619,7 @@ export class ProviderDecoder {
 		for (const value of list(message.tool_calls ?? [])) {
 			const call = row(value),
 				fn = row(call.function);
+			this.toolDelta(fn.arguments);
 			this.calls.set(this.calls.size, { id: call.id, name: fn.name, arguments: fn.arguments });
 		}
 		this.complete = true;
@@ -625,6 +653,9 @@ export class ProviderDecoder {
 			if (block.type === 'thinking') {
 				this.textDelta(block.thinking, true);
 			}
+			if (block.type === 'tool_use') {
+				this.toolDelta(block.input ?? {});
+			}
 		}
 		this.complete = true;
 	}
@@ -637,21 +668,26 @@ export class ProviderDecoder {
 		}
 		this.native = list(data.steps ?? data.outputs).map((value) => parseStateValue(value));
 		for (const value of this.native) {
-			const item = row(value);
-			if (item.type === 'text') {
-				this.textDelta(item.text);
-			}
-			if (item.type !== 'model_output') {
-				continue;
-			}
-			for (const content of list(item.content ?? [])) {
-				const part = row(content);
-				if (part.type === 'text') {
-					this.textDelta(part.text);
-				}
-			}
+			this.acceptInteractionOutput(row(value));
 		}
 		this.complete = true;
+	}
+	private acceptInteractionOutput(item: Row) {
+		if (item.type === 'function_call') {
+			this.toolDelta(item.arguments ?? {});
+		}
+		if (item.type === 'text') {
+			this.textDelta(item.text);
+		}
+		if (item.type !== 'model_output') {
+			return;
+		}
+		for (const content of list(item.content ?? [])) {
+			const part = row(content);
+			if (part.type === 'text') {
+				this.textDelta(part.text);
+			}
+		}
 	}
 	private toolCalls(): ToolCall[] {
 		let calls: ToolCall[];

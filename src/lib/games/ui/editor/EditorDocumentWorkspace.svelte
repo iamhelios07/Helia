@@ -7,6 +7,7 @@
 	import AssetEditor from './AssetEditor.svelte';
 	import EditorTabs from './EditorTabs.svelte';
 	import LorebookEditor from './LorebookEditor.svelte';
+	import RegexEditor from './RegexEditor.svelte';
 	import SourceEditor from './SourceEditor.svelte';
 	import StateEditor from './StateEditor.svelte';
 	let { editor }: { editor: EditorWorkspace } = $props();
@@ -81,6 +82,12 @@
 						source={editor.draft.documents.lorebook}
 						disabled={editor.editingBlocked}
 						onchange={(value) => editor.changeDocument('lorebook', value)}
+					/>
+				{:else if editor.activeDocument === 'regex' && !editor.sourceDocuments.includes('regex')}
+					<RegexEditor
+						source={editor.draft.documents.regex}
+						disabled={editor.editingBlocked}
+						onchange={(value) => editor.changeDocument('regex', value)}
 					/>
 				{:else if editor.activeDocument === 'info' && !editor.sourceDocuments.includes('info') && editor.info}<div
 						class="form-document"

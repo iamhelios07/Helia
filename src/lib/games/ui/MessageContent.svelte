@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { MessageFrame, type MessageAppearance } from './message-frame.js';
-	import { hasMessageHTML } from './message-html.js';
+	import { renderMessageContent } from './message-html.js';
 
 	let {
 		content,
@@ -14,7 +14,8 @@
 		onresize?: (heightChange: number) => void;
 	} = $props();
 	let failed = $state(false);
-	const rich = $derived(html && !failed && hasMessageHTML(content));
+	const rendered = $derived(html && !failed ? renderMessageContent(content) : null);
+	const rich = $derived(rendered?.rich ?? false);
 
 	function attachFrame(element: HTMLIFrameElement) {
 		const frame = new MessageFrame(
@@ -25,7 +26,7 @@
 			(change) => onresize?.(change)
 		);
 		$effect(() => {
-			frame.update(content, appearance);
+			frame.update(rendered?.html ?? '', appearance);
 		});
 		return frame.dispose;
 	}

@@ -15,6 +15,46 @@ const round = (kind: RoundRequest['provider']['kind']): RoundRequest => ({
 	tools: []
 });
 describe('provider stream adapters', () => {
+	it('reports Unicode text and reasoning character counts separately from buffered content', () => {
+		const events: AgentEvent[] = [];
+		const decoder = new ProviderDecoder('openai-compatible', (event) => events.push(event));
+		decoder.push(event({ choices: [{ delta: { reasoning_content: '생각🔥', content: '완성' } }] }));
+		expect(events.filter((event) => event.type === 'received')).toEqual([
+			{ type: 'received', kind: 'text', characters: 2 },
+			{ type: 'received', kind: 'thinking', characters: 3 }
+		]);
+	});
+	it('counts tool argument fragments once when the Responses completion repeats the full call', () => {
+		const events: AgentEvent[] = [];
+		const decoder = new ProviderDecoder('openai-responses', (event) => events.push(event));
+		for (const delta of ['{"x":', '1}']) {
+			decoder.push(
+				event({ type: 'response.function_call_arguments.delta', item_id: 'item', delta })
+			);
+		}
+		decoder.push(
+			event({
+				type: 'response.completed',
+				response: {
+					status: 'completed',
+					output: [
+						{
+							type: 'function_call',
+							id: 'item',
+							call_id: 'call',
+							name: 'inspect',
+							arguments: '{"x":1}'
+						}
+					]
+				}
+			})
+		);
+		expect(decoder.finish().calls).toEqual([{ id: 'call', name: 'inspect', arguments: { x: 1 } }]);
+		expect(events.filter((event) => event.type === 'received')).toEqual([
+			{ type: 'received', kind: 'tool', characters: 5 },
+			{ type: 'received', kind: 'tool', characters: 2 }
+		]);
+	});
 	it('accepts a complete non-streaming response but still validates its terminal reason', () => {
 		const decoder = new ProviderDecoder('openai-compatible', () => {});
 		decoder.push(

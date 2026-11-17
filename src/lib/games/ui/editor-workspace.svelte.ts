@@ -214,6 +214,11 @@ export class EditorWorkspace {
 			]
 		},
 		{
+			title: '채팅',
+			icon: 'book',
+			documents: [{ id: 'regex', file: '정규식' }]
+		},
+		{
 			title: '게임 데이터',
 			icon: 'book',
 			documents: [

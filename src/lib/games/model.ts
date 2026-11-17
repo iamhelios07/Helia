@@ -3,6 +3,7 @@ import { validateStateKey, type GameState } from '#lib/games/state/value.js';
 
 import { parseGameAIContent, type GameAIContent } from './ai/prompts.js';
 import { parseCodeProject, type CodeProject } from './code-project.js';
+import { parseRegexRules, type RegexRule } from './regex.js';
 import { parseResources, type GameResources } from './resources.js';
 import { parseGameUI, type GameUI } from './ui/runtime/model.js';
 
@@ -44,6 +45,8 @@ export interface Game extends GameMetadata {
 	scripts: Record<string, { language: string; source: string }>;
 	ui?: GameUI;
 	ai?: GameAIContent;
+	/** Current chat-processing rules, independent of session state and branch history. */
+	regex?: RegexRule[];
 	resources?: GameResources;
 	code?: CodeProject;
 }
@@ -197,6 +200,7 @@ export function parseGame(value: unknown): Game {
 		...(value.code === undefined ? {} : { code: parseCodeProject(value.code) }),
 		...(value.ui === undefined ? {} : { ui: parseGameUI(value.ui) }),
 		...(value.ai === undefined ? {} : { ai: parseGameAIContent(value.ai) }),
+		...(value.regex === undefined ? {} : { regex: parseRegexRules(value.regex) }),
 		...(value.resources === undefined ? {} : { resources: parseResources(value.resources) }),
 		settings: parseGameSettings(value.settings)
 	};

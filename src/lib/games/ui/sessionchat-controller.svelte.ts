@@ -23,9 +23,9 @@ import {
 	subscribeSessionChanges
 } from '../repository.js';
 import { safeChatStyle } from './chat-style.js';
+import { GenerationMonitor } from './generation-monitor.svelte.js';
 
 interface SessionChatControllerOptions {
-	uid: string;
 	gameId: string;
 	sessionId: string;
 	gameTitle: string;
@@ -84,6 +84,8 @@ export class SessionChatController {
 	modelRequestId = 0;
 	externalBusy = $state(false);
 	streamedText = $state('');
+	readonly monitor = new GenerationMonitor();
+	private retryDraft = $state('');
 	thinking = $state('');
 	progressText = $state('');
 	toolProgress = $state<
@@ -110,13 +112,17 @@ export class SessionChatController {
 	attemptLabel = $derived(
 		this.attemptLabels[this.attemptStatus] ?? '생성 실패 · 저장되지 않은 응답'
 	);
+	canRetry = $derived(
+		!!this.retryDraft &&
+			this.retryDraft === this.draft &&
+			!this.locked &&
+			!this.blocked &&
+			['failed', 'cancelled'].includes(this.attemptStatus)
+	);
 	showTimeline = $state(false);
 	timeline = $state.raw<SessionTimeline | null>(null);
 	timelineBusy = $state(false);
 	timelineError = $state('');
-	get uid() {
-		return this.options().uid;
-	}
 	history: HTMLDivElement | undefined;
 	composer: HTMLTextAreaElement | undefined;
 	disposed = false;
@@ -289,10 +295,15 @@ export class SessionChatController {
 		}
 	};
 	receiveAgentEvent = (event: AgentEvent) => {
+		this.monitor.receive(event);
+		if (['model', 'request', 'activity', 'received'].includes(event.type)) {
+			return;
+		}
 		if (event.type === 'error') {
 			this.saveError = event.message;
 			this.attemptStatus = 'incomplete';
 			this.finishInterruptedTools();
+			this.monitor.finish();
 		} else if (event.type === 'reset') {
 			this.streamedText = '';
 		} else if (event.type === 'text') {
@@ -302,30 +313,39 @@ export class SessionChatController {
 		} else if (event.type === 'progress') {
 			this.progressText += `${this.progressText ? '\n\n' : ''}${event.text}`;
 		} else if (event.type === 'tool') {
-			const running = this.toolProgress.findLast(
-				(tool) => tool.name === event.name && tool.status === 'running'
-			);
-			if (event.status === 'running' || !running) {
-				this.toolProgress.push({
-					id: this.toolProgress.length,
-					name: event.name,
-					status: event.status
-				});
-			} else {
-				running.status = event.status;
-			}
-		} else {
+			this.receiveTool(event);
+		} else if (event.type === 'status') {
 			this.attemptStatus = event.status;
+			if (event.status === 'committed') {
+				this.monitor.finish();
+			}
 		}
-		void this.scrollToEnd();
 	};
-	resetAttempt = () => {
+	private receiveTool(event: Extract<AgentEvent, { type: 'tool' }>) {
+		const running = this.toolProgress.findLast(
+			(tool) => tool.name === event.name && tool.status === 'running'
+		);
+		if (event.status === 'running' || !running) {
+			this.toolProgress.push({
+				id: this.toolProgress.length,
+				name: event.name,
+				status: event.status
+			});
+		} else {
+			running.status = event.status;
+		}
+	}
+	resetAttempt = (retryDraft = '') => {
 		this.saveError = '';
 		this.streamedText = '';
 		this.thinking = '';
 		this.progressText = '';
 		this.toolProgress = [];
 		this.attemptStatus = 'generating';
+		this.retryDraft = retryDraft;
+		this.monitor.start(
+			this.modelSettings.models.find((model) => model.id === this.selectedModelId)?.name ?? 'AI'
+		);
 	};
 	finishInterruptedTools = () => {
 		for (const tool of this.toolProgress) {
@@ -403,6 +423,7 @@ export class SessionChatController {
 			return;
 		}
 		this.saving = false;
+		this.monitor.finish();
 		this.onsavingchange(false);
 		this.scheduleRefresh();
 	};
@@ -439,7 +460,7 @@ export class SessionChatController {
 		}
 		this.requestId += 1;
 		this.saving = true;
-		this.resetAttempt();
+		this.resetAttempt(this.draft);
 		const controller = new AbortController();
 		this.generation = controller;
 		this.onsavingchange(true);
@@ -492,6 +513,7 @@ export class SessionChatController {
 		const unsubscribeActivity = subscribeSessionActivity(this.gameId, this.sessionId, () => {
 			this.externalBusy = isSessionBusy(this.gameId, this.sessionId);
 			if (!this.externalBusy && this.externalAttempt) {
+				this.monitor.finish();
 				if (this.attemptStatus !== 'committed') {
 					this.attemptStatus = 'incomplete';
 					this.finishInterruptedTools();
@@ -518,6 +540,7 @@ export class SessionChatController {
 			this.disposed = true;
 			this.modelRequestId++;
 			this.generation?.abort();
+			this.monitor.dispose();
 			unsubscribeActivity();
 			unsubscribeAIEvents();
 			unsubscribe();

@@ -1,6 +1,7 @@
 import { parseGameAIContent } from './ai/prompts.js';
 import { createCodeProject, parseCodeProject } from './code-project.js';
 import { parseGame, parseGameSettings, validateGameMetadata, type Game } from './model.js';
+import { parseRegexRules } from './regex.js';
 import { parseResources } from './resources.js';
 import { parseStateDocument } from './state/schema.js';
 
@@ -12,6 +13,7 @@ export const EDITOR_DOCUMENTS = [
 	{ id: 'state', label: '상태' },
 	{ id: 'code', label: '코드' },
 	{ id: 'lorebook', label: '로어북' },
+	{ id: 'regex', label: '정규식' },
 	{ id: 'assets', label: '에셋' }
 ] as const;
 export type EditorDocumentId = (typeof EDITOR_DOCUMENTS)[number]['id'];
@@ -28,6 +30,7 @@ export type GameEditorContent = Pick<
 	| 'ai'
 	| 'resources'
 	| 'code'
+	| 'regex'
 >;
 export interface EditorDraft {
 	version: 3;
@@ -56,6 +59,7 @@ export function editorContent(game: Game): GameEditorContent {
 		scripts: game.scripts,
 		...(game.ui ? { ui: game.ui } : {}),
 		...(game.ai ? { ai: game.ai } : {}),
+		...(game.regex ? { regex: game.regex } : {}),
 		...(game.resources ? { resources: game.resources } : {}),
 		...(game.code ? { code: game.code } : {})
 	});
@@ -68,6 +72,7 @@ function documents(content: GameEditorContent): EditorDraft['documents'] {
 		state: format({ schema: content.schema, initialState: content.initialState }),
 		code: format(createCodeProject(content)),
 		lorebook: format(content.ai ?? { version: 1, lorebook: [] }),
+		regex: format(content.regex ?? []),
 		assets: format(content.resources ?? {})
 	};
 }
@@ -174,6 +179,7 @@ export function validateEditorDraft(game: Game, draft: EditorDraft): EditorValid
 	const stateDocument = check('state', parseStateDocument);
 	const code = check('code', parseCodeProject);
 	const ai = check('lorebook', parseGameAIContent);
+	const regex = check('regex', parseRegexRules);
 	const resources = check('assets', parseResources);
 	if (problems.length || !info || !settings || !stateDocument || !code || !ai || !resources) {
 		return { game: null, problems };
@@ -186,6 +192,7 @@ export function validateEditorDraft(game: Game, draft: EditorDraft): EditorValid
 			...stateDocument,
 			code,
 			ai,
+			regex,
 			resources
 		}),
 		problems
@@ -193,6 +200,9 @@ export function validateEditorDraft(game: Game, draft: EditorDraft): EditorValid
 }
 
 function migrateDraftDocuments(source: Record<string, unknown>, version: number) {
+	if (source.regex === undefined) {
+		source.regex = '[]';
+	}
 	if (version === 1) {
 		if (typeof source.schema !== 'string' || typeof source.state !== 'string') {
 			throw new Error('잘못된 초안');

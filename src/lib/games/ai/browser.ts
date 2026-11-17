@@ -2,8 +2,10 @@ import { providerAddress } from '#lib/app/settings/credential-protocol.js';
 import { loadSelectedPromptConfig } from '#lib/app/settings/prompt-repository.js';
 import { loadAISettings } from '#lib/app/settings/repository.js';
 import { validateMessageContent } from '#lib/games/model.js';
+import { transformRegexText } from '#lib/games/regex-runtime.js';
 import {
 	getSessionTimeline,
+	getGameWorkspace,
 	commitSessionAgent,
 	executeSessionAgentHook
 } from '#lib/games/repository.js';
@@ -16,6 +18,7 @@ import { beginGeneration } from './transport.js';
 
 /** A separate repository lets authoring playthroughs use the same BYOK loop without live writes. */
 export interface SessionAIRuntime {
+	getGameWorkspace: typeof getGameWorkspace;
 	getSessionTimeline: typeof getSessionTimeline;
 	commitSessionAgent: typeof commitSessionAgent;
 	executeSessionAgentHook: typeof executeSessionAgentHook;
@@ -23,6 +26,7 @@ export interface SessionAIRuntime {
 }
 function defaultRuntime(): SessionAIRuntime {
 	return {
+		getGameWorkspace,
 		getSessionTimeline,
 		commitSessionAgent,
 		executeSessionAgentHook,
@@ -37,13 +41,13 @@ export async function invokeSessionAI(
 	options: AgentOptions & { runtime?: SessionAIRuntime } = {}
 ) {
 	const runtime = options.runtime ?? defaultRuntime();
-	const text = validateMessageContent(input.text),
-		settings = await loadAISettings(),
+	const settings = await loadAISettings(),
 		prompt = loadSelectedPromptConfig();
 	const { model, provider } = selectedModelConnection(settings, input.modelId);
 	if (options.signal?.aborted) {
 		throw aiError('canceled');
 	}
+	const { text, rules } = await prepareInput(runtime, gameId, input, options.signal);
 	const timeline = await runtime.getSessionTimeline(gameId, sessionId),
 		idle = beginSessionActivity(gameId, sessionId);
 	const signal = options.signal ?? new AbortController().signal;
@@ -52,6 +56,7 @@ export async function invokeSessionAI(
 	try {
 		scope = await beginGeneration(gameId, sessionId);
 		emit({ type: 'status', status: 'generating' });
+		emit({ type: 'model', name: model.name });
 		const cancel = () => {
 			void scope?.release().catch(() => {});
 		};
@@ -63,7 +68,8 @@ export async function invokeSessionAI(
 				run: runtime.runAction,
 				signal: signal,
 				emit: emit,
-				config: prompt
+				config: prompt,
+				regex: rules
 			});
 			if (signal.aborted) {
 				throw aiError('canceled');
@@ -105,6 +111,28 @@ export async function invokeSessionAI(
 		await scope?.release().catch(() => {});
 		idle();
 	}
+}
+
+async function prepareInput(
+	runtime: SessionAIRuntime,
+	gameId: string,
+	input: { text: string; visible?: boolean },
+	signal?: AbortSignal
+) {
+	const rawText = validateMessageContent(input.text);
+	const workspace = await runtime.getGameWorkspace(gameId);
+	if (!workspace) {
+		throw new Error('게임을 찾을 수 없어요.');
+	}
+	const rules = workspace.game.regex;
+	// Hidden Action prompts are instructions, not player messages.
+	const text =
+		input.visible === false
+			? rawText
+			: validateMessageContent(
+					await transformRegexText(rawText, rules, { stage: 'input', role: 'user', signal })
+				);
+	return { text, rules };
 }
 
 async function runFollowUpHooks({

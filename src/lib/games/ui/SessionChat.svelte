@@ -4,11 +4,13 @@
 	import Icon from '#lib/components/Icon.svelte';
 
 	import type { Session } from '../model.js';
+	import type { RegexRule } from '../regex.js';
 	import type { GameUI } from './runtime/model.js';
 
+	import GenerationStatus from './GenerationStatus.svelte';
+	import { RegexDisplay } from './message-regex.svelte.js';
 	import MessageContent from './MessageContent.svelte';
 	import { SessionChatController } from './sessionchat-controller.svelte.js';
-	import SessionHistoryPanel from './SessionHistoryPanel.svelte';
 	let {
 		gameId,
 		sessionId,
@@ -17,19 +19,21 @@
 		onsessionupdate,
 		onsavingchange,
 		blocked = false,
-		chatStyle
+		chatStyle,
+		oncontroller,
+		regex
 	}: {
 		gameId: string;
 		sessionId: string;
 		gameTitle: string;
+		regex?: RegexRule[];
 		draft?: string;
 		onsessionupdate: (session: Session) => void;
 		onsavingchange: (saving: boolean) => void;
 		blocked?: boolean;
 		chatStyle?: GameUI['chatStyle'];
+		oncontroller?: (controller: SessionChatController) => () => void;
 	} = $props();
-	const uid = $props.id();
-	const toolLabels = { running: '실행 중', completed: '완료', failed: '실패' };
 	const chat = new SessionChatController(() => ({
 		gameId,
 		sessionId,
@@ -39,12 +43,19 @@
 		onsavingchange,
 		blocked,
 		chatStyle,
-		uid,
 		setDraft: (value) => {
 			draft = value;
 		}
 	}));
-	onMount(chat.mount);
+	const display = new RegexDisplay(() => ({ messages: chat.messages, rules: regex }));
+	onMount(() => {
+		const dispose = chat.mount();
+		const detach = oncontroller?.(chat);
+		return () => {
+			detach?.();
+			dispose();
+		};
+	});
 </script>
 
 <svelte:window onfocus={chat.loadModels} onstorage={chat.loadModels} />
@@ -58,52 +69,6 @@
 	style:--chat-user-background={chat.theme?.userBackground}
 	style:--chat-assistant-background={chat.theme?.assistantBackground}
 >
-	<div class="history-toolbar">
-		<label class="model-select" for={`${chat.uid}-model`}
-			>모델
-			<select
-				id={`${chat.uid}-model`}
-				bind:value={chat.selectedModelId}
-				disabled={chat.locked}
-				onfocus={chat.loadModels}
-			>
-				{#if !chat.modelSettings.models.length}<option value="">등록된 모델 없음</option>{/if}
-				{#each chat.modelSettings.models as model (model.id)}
-					<option value={model.id}
-						>{model.name} · {chat.modelSettings.providers.find(
-							(provider) => provider.id === model.providerId
-						)?.name ?? ''}</option
-					>
-				{/each}
-			</select>
-		</label>
-		<button
-			type="button"
-			disabled={chat.loading ||
-				chat.locked ||
-				chat.timelineBusy ||
-				chat.blocked ||
-				!!chat.loadError}
-			aria-controls={`${chat.uid}-timeline`}
-			aria-expanded={chat.showTimeline}
-			onclick={chat.toggleTimeline}>이력과 분기</button
-		>
-	</div>
-	{#if chat.showTimeline}
-		<div class="timeline-container" id={`${chat.uid}-timeline`}>
-			<SessionHistoryPanel
-				timeline={chat.timeline}
-				busy={chat.timelineBusy || chat.locked || chat.blocked}
-				appearance={chat.theme}
-				error={chat.timelineError}
-				onselect={async (id) => {
-					await chat.changeTimeline(id);
-				}}
-				ondelete={(id, revision) => chat.changeTimeline(id, true, revision)}
-				onreload={chat.reloadTimeline}
-			/>
-		</div>
-	{/if}
 	<div class="history" {@attach chat.attachHistory}>
 		{#if chat.loading}
 			<p class="status" role="status">채팅 기록을 불러오는 중…</p>
@@ -120,7 +85,7 @@
 				aria-live="polite"
 				aria-relevant="additions"
 			>
-				{#each chat.messages as message (message.id)}
+				{#each display.messages as message (message.id)}
 					<article
 						class={['message', { player: message.role === 'user' }]}
 						aria-label={message.role === 'user' ? '플레이어 메시지' : '게임 메시지'}
@@ -141,48 +106,25 @@
 					</article>
 				{/each}
 			</div>
-			{#if chat.attemptStatus !== 'idle'}
-				<aside class="generation" aria-label="AI 생성 진행">
-					<p class="generation-status" role="status">{chat.attemptLabel}</p>
-					{#if chat.streamedText && chat.attemptStatus !== 'committed'}
-						<div class="message-content" aria-label="저장 전 AI 응답">
-							<MessageContent
-								content={chat.streamedText}
-								appearance={chat.theme}
-								onresize={chat.messageResized}
-							/>
-						</div>
-					{/if}
-					{#if chat.thinking}<details>
-							<summary>Thinking</summary>
-							<div class="message-content">{chat.thinking}</div>
-						</details>{/if}
-					{#if chat.progressText}<details>
-							<summary>중간 응답</summary>
-							<div class="message-content" aria-label="중간 응답 내용">
-								<MessageContent
-									content={chat.progressText}
-									appearance={chat.theme}
-									onresize={chat.messageResized}
-								/>
-							</div>
-						</details>{/if}
-					{#if chat.toolProgress.length}
-						<details>
-							<summary>도구 진행 · {chat.toolProgress.length}개</summary>
-							<ul aria-label="도구 진행">
-								{#each chat.toolProgress as tool (tool.id)}
-									<li>
-										{tool.name} · {toolLabels[tool.status]}
-									</li>
-								{/each}
-							</ul>
-						</details>
-					{/if}
-				</aside>
-			{/if}
 		{/if}
 	</div>
+	{#if chat.attemptStatus !== 'idle'}
+		<GenerationStatus
+			monitor={chat.monitor}
+			status={chat.attemptStatus}
+			label={chat.attemptLabel}
+			tools={chat.toolProgress}
+			thinking={chat.thinking}
+			progressText={chat.progressText}
+			appearance={chat.theme}
+			onstop={chat.saving ? chat.stopGeneration : undefined}
+			onretry={chat.canRetry
+				? () => {
+						void chat.sendMessage();
+					}
+				: undefined}
+		/>
+	{/if}
 	<form class="composer" onsubmit={chat.sendMessage} aria-label="메시지 작성">
 		{#if chat.modelError}<p class="save-error" role="alert">{chat.modelError}</p>
 		{:else if !chat.selectedModelId}<p class="save-error">
@@ -214,73 +156,11 @@
 			>
 				<Icon name="send" size={20} />
 			</button>
-			{#if chat.saving}<button
-					type="button"
-					onclick={chat.stopGeneration}
-					disabled={chat.attemptStatus === 'committing' || chat.attemptStatus === 'committed'}
-					>생성 중지</button
-				>{/if}
 		</div>
 	</form>
 </section>
 
 <style>
-	.history-toolbar {
-		display: flex;
-		gap: 10px;
-		align-items: center;
-		flex-wrap: wrap;
-		justify-content: flex-end;
-		padding: 0 0 8px;
-	}
-	.model-select {
-		display: flex;
-		gap: 8px;
-		align-items: center;
-		margin-right: auto;
-		font-size: 12px;
-		min-width: 0;
-	}
-	.model-select select {
-		min-width: 0;
-		max-width: 260px;
-		border: 1px solid var(--border);
-		border-radius: 8px;
-		padding: 8px;
-		background: var(--surface);
-		color: var(--text);
-		font: inherit;
-	}
-	.generation {
-		width: min(100%, 860px);
-		box-sizing: border-box;
-		margin: 0 auto 16px;
-		padding: 16px 20px;
-		border: 1px solid var(--border);
-		border-radius: 10px;
-	}
-	.generation-status,
-	.generation details {
-		color: var(--text-muted);
-		font-size: 12px;
-		line-height: 1.7;
-	}
-	.generation-status {
-		margin: 0 0 8px;
-	}
-	.generation details {
-		margin-top: 8px;
-	}
-	.generation summary {
-		cursor: pointer;
-	}
-	.timeline-container {
-		min-height: 0;
-		max-height: 45%;
-		overflow-y: auto;
-		flex-shrink: 0;
-		margin-bottom: 8px;
-	}
 	.chat {
 		background: var(--chat-background, transparent);
 		color: var(--chat-color, var(--text));

@@ -12,7 +12,43 @@ import {
 	storeEditorDraft,
 	validateEditorDraft
 } from './editor.js';
+import { createRegexRule } from './regex.js';
 import { createGameRepository } from './repository-core.js';
+
+it('stores regex as current creator configuration without changing branch state or old messages', async () => {
+	const repo = repository();
+	const game = await repo.createGame();
+	const before = await repo.getSessionTimeline(game.id, game.activeSessionId);
+	const base = editorContent(game);
+	const rule = { ...createRegexRule(), pattern: 'old', replacement: 'new' };
+	const updated = await repo.applyGameDraft(game.id, {
+		baseContent: base,
+		content: { ...base, regex: [rule] }
+	});
+	expect(updated.regex).toEqual([rule]);
+	const after = await repo.getSessionTimeline(game.id, game.activeSessionId);
+	expect(after.history.progress).toEqual(before.history.progress);
+	expect(after.history.snapshot).not.toHaveProperty('regex');
+	expect(after.messages).toEqual(before.messages);
+	const draft = createEditorDraft(updated);
+	draft.documents.regex = JSON.stringify([{ ...rule, pattern: '[' }]);
+	expect(validateEditorDraft(updated, draft).problems).toEqual([
+		expect.objectContaining({ documentId: 'regex' })
+	]);
+	storeEditorDraft(draft);
+	expect(loadEditorDraft(game.id)?.documents.regex).toBe(draft.documents.regex);
+});
+
+it('migrates pre-regex authoring drafts without losing unfinished edits', async () => {
+	const game = await repository().createGame();
+	const draft = createEditorDraft(game);
+	const legacy = JSON.parse(JSON.stringify(draft));
+	delete legacy.documents.regex;
+	legacy.documents.state = '{unfinished';
+	const loaded = readEditorDraft(JSON.stringify(legacy), game.id);
+	expect(loaded.documents.regex).toBe('[]');
+	expect(loaded.documents.state).toBe('{unfinished');
+});
 
 const repository = () => createGameRepository(memoryStorage());
 let stored: Map<string, string>;

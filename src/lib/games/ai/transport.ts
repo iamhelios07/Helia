@@ -90,10 +90,12 @@ async function generateRound(
 			}
 			if (item.chunk.length) {
 				idle.touch();
+				emit({ type: 'activity' });
 			}
 			decoder.push(item.chunk);
 		} else if (item.activity === true) {
 			idle.touch();
+			emit({ type: 'activity' });
 		} else {
 			throw aiError('protocol');
 		}

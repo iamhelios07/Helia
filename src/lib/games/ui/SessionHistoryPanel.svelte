@@ -1,11 +1,13 @@
 <script lang="ts">
+	import { tick, untrack } from 'svelte';
+
 	import type { HistoryEvent, SessionTimeline } from '#lib/games/state/history.js';
 	import type { StateSlot } from '#lib/games/state/model.js';
 
 	import type { MessageAppearance } from './message-frame.js';
 
+	import { historyGraph, HISTORY_ROW_HEIGHT } from './history-graph.js';
 	import MessageContent from './MessageContent.svelte';
-
 	let {
 		timeline,
 		busy,
@@ -19,14 +21,17 @@
 		busy: boolean;
 		error: string;
 		onselect: (id: string | null) => Promise<void>;
-		ondelete: (id: string, expectedRevision: number) => Promise<boolean>;
+		ondelete: (id: string, revision: number) => Promise<boolean>;
 		onreload: () => Promise<void>;
 		appearance?: MessageAppearance;
 	} = $props();
 	const uid = $props.id();
 	let deleting = $state.raw<HistoryEvent | null>(null);
 	let deletingRevision = 0;
-
+	let graph = $derived(historyGraph(timeline?.events ?? []));
+	let previewId = $derived(timeline?.history.progress.headId ?? null);
+	let preview = $derived(timeline?.events.find((event) => event.id === previewId));
+	let previewMessages = $derived(preview?.messages ?? (preview?.message ? [preview.message] : []));
 	function requestDelete(event: HistoryEvent) {
 		if (!timeline) {
 			return;
@@ -34,19 +39,35 @@
 		deletingRevision = timeline.history.progress.revision;
 		deleting = event;
 	}
-
 	function openDialog(dialog: HTMLDialogElement) {
 		dialog.showModal();
 		return () => dialog.close();
 	}
+	function attachGraph(viewport: HTMLDivElement) {
+		const index = untrack(() =>
+			graph.nodes.findIndex((node) => node.id === timeline?.history.progress.headId)
+		);
+		let alive = true;
+		void tick().then(() => {
+			if (alive) {
+				viewport.scrollTop = Math.max(0, index * HISTORY_ROW_HEIGHT - viewport.clientHeight / 2);
+			}
+		});
+		return () => {
+			alive = false;
+		};
+	}
 	function slot(value: StateSlot): string {
 		return value.exists ? JSON.stringify(value.value) : '(없음)';
 	}
-	function eventMessages(event: HistoryEvent) {
-		return event.messages ?? (event.message ? [event.message] : []);
-	}
-	function branchLabel(active: boolean): string {
-		return active ? '현재 경로' : '다른 분기';
+	function branchLabel(event?: HistoryEvent): string {
+		if (!event) {
+			return timeline?.history.progress.headId === null ? '현재 위치' : '';
+		}
+		if (event.selected) {
+			return '현재 위치';
+		}
+		return event.active ? '현재 경로' : '다른 분기';
 	}
 	async function confirmDelete() {
 		if (!deleting || busy) {
@@ -59,82 +80,127 @@
 </script>
 
 <section class="timeline" aria-label="세션 이력" aria-busy={busy}>
-	<header>
-		<h3>이력과 분기</h3>
-		<button type="button" disabled={busy} onclick={onreload}>새로고침</button>
-	</header>
-	<p class="hint">과거로 이동한 후 행동하면 새로운 분기가 만들어집니다.</p>
-	{#if error}<p role="alert">{error}</p>{/if}
+	<div class="toolbar">
+		<span>{timeline?.events.length ?? 0}개 기록</span><button
+			type="button"
+			disabled={busy}
+			onclick={onreload}>새로고침</button
+		>
+	</div>
+	{#if error}<p class="error" role="alert">{error}</p>{/if}
 	{#if !timeline}
 		<p role="status">{busy ? '이력을 불러오는 중…' : '이력을 불러오지 못했어요.'}</p>
 	{:else}
-		<button
-			type="button"
-			disabled={busy}
-			aria-current={timeline.history.progress.headId === null ? 'step' : undefined}
-			onclick={() => onselect(null)}
-			>초기 상태{timeline.history.progress.headId === null ? ' · 현재 위치' : ''}</button
-		>
-		<ol>
-			{#each timeline.events as event (event.id)}
-				<li
-					class={['event', { active: event.active, selected: event.selected }]}
-					style:--depth={Math.min(event.depth, 8)}
-				>
-					<div class="event-heading">
-						<button
-							type="button"
-							class="select-event"
-							disabled={busy}
-							aria-current={event.selected ? 'step' : undefined}
-							onclick={() => onselect(event.id)}
+		<div class="graph-scroll" {@attach attachGraph}>
+			<div
+				class="graph"
+				style:--gutter={`${graph.width}px`}
+				style:--row-height={`${HISTORY_ROW_HEIGHT}px`}
+				style:height={`${graph.height}px`}
+			>
+				<svg width={graph.width} height={graph.height} aria-hidden="true">
+					{#each graph.edges as edge (edge.id)}<path
+							d={edge.path}
+							class={{ active: edge.active }}
+						/>{/each}
+					{#each graph.nodes as node (node.id)}
+						<circle
+							cx={node.cx}
+							cy={node.cy}
+							r="4"
+							class={['node', { active: !node.event || node.event.active }]}
+						/>
+						{#if node.id === timeline.history.progress.headId}<circle
+								class="head"
+								cx={node.cx}
+								cy={node.cy}
+								r="8"
+							/>{/if}
+					{/each}
+				</svg>
+				<ol aria-label="이력 그래프">
+					{#each graph.nodes as node (node.id)}
+						<li
+							class={[
+								'event',
+								{
+									current: node.id === timeline.history.progress.headId
+								}
+							]}
 						>
-							<span>{event.summary}</span>
-							<small>{event.selected ? '현재 위치' : branchLabel(event.active)}</small>
-						</button>
-						<button
-							type="button"
-							disabled={busy}
-							aria-label={`${event.summary} 삭제`}
-							onclick={() => requestDelete(event)}>삭제</button
-						>
-					</div>
+							<button
+								class="inspect"
+								type="button"
+								disabled={busy}
+								aria-current={node.id === timeline.history.progress.headId ? 'step' : undefined}
+								aria-label={`${node.event?.summary ?? '초기 상태'} ${branchLabel(node.event)}`.trim()}
+								onclick={() => onselect(node.id)}
+							>
+								<span class="summary">{node.event?.summary ?? '초기 상태'}</span>
+								<small
+									>{branchLabel(node.event)}{#if node.event}<time datetime={node.event.createdAt}
+											>{new Date(node.event.createdAt).toLocaleTimeString([], {
+												hour: '2-digit',
+												minute: '2-digit'
+											})}</time
+										>{/if}</small
+								>
+							</button>
+						</li>
+					{/each}
+				</ol>
+			</div>
+		</div>
+		<div class="preview" aria-label="선택한 이력">
+			<div class="preview-heading">
+				<strong>{preview?.summary ?? '초기 상태'}</strong
+				>{#if previewId === timeline.history.progress.headId}<span>현재 위치</span>{/if}
+			</div>
+			{#if preview}
+				<details>
+					<summary>변경 내용 · {preview.changes.length}개</summary>
+					<time datetime={preview.createdAt}>{new Date(preview.createdAt).toLocaleString()}</time>
+					{#each previewMessages as message (message.id)}
+						<div class="dialogue"><MessageContent content={message.content} {appearance} /></div>
+					{/each}
+					{#if preview.changes.length}<dl>
+							{#each preview.changes as change, index (`${preview.id}:${index}`)}
+								<dt>{change.path.join('.') || '(전체 상태)'}</dt>
+								<dd><code>{slot(change.before)}</code> → <code>{slot(change.after)}</code></dd>
+							{/each}
+						</dl>{:else}<p>상태 변경 없음</p>{/if}
 					<details>
-						<summary>변경 내용 · {event.changes.length}개</summary>
-						<time datetime={event.createdAt}>{new Date(event.createdAt).toLocaleString()}</time>
-						{#each eventMessages(event) as message (message.id)}
-							<div class="dialogue"><MessageContent content={message.content} {appearance} /></div>
-						{/each}
-						{#if event.changes.length}
-							<dl>
-								{#each event.changes as change, index (`${event.id}:${index}`)}
-									<dt>{change.path.length ? change.path.join('.') : '(전체 상태)'}</dt>
-									<dd><code>{slot(change.before)}</code> → <code>{slot(change.after)}</code></dd>
-								{/each}
-							</dl>
-						{:else}<p>상태 변경 없음</p>{/if}
-						<details>
-							<summary>작업 데이터</summary>
-							<pre>{JSON.stringify({ action: event.action, changes: event.changes }, null, 2)}</pre>
-						</details>
+						<summary>작업 데이터</summary>
+						<pre>{JSON.stringify(
+								{ action: preview.action, changes: preview.changes },
+								null,
+								2
+							)}</pre>
 					</details>
-				</li>
-			{/each}
-		</ol>
-		<details>
-			<summary>현재 게임 상태</summary>
-			<pre aria-label="현재 게임 상태">{JSON.stringify(
-					timeline.history.progress.state,
-					null,
-					2
-				)}</pre>
-		</details>
-		<details>
-			<summary>현재 경로의 기억 · {timeline.memories.length}개</summary>
-			<ul aria-label="현재 경로의 기억">
-				{#each timeline.memories as memory (memory.id)}<li>{memory.content}</li>{/each}
-			</ul>
-		</details>
+				</details>
+				<button
+					class="delete"
+					type="button"
+					disabled={busy}
+					onclick={() => requestDelete(preview!)}
+					aria-label={`${preview.summary} 삭제`}>이벤트 삭제</button
+				>
+			{:else}<p class="hint">게임을 시작한 지점입니다.</p>{/if}
+			<details>
+				<summary>현재 게임 상태</summary>
+				<pre aria-label="현재 게임 상태">{JSON.stringify(
+						timeline.history.progress.state,
+						null,
+						2
+					)}</pre>
+			</details>
+			<details>
+				<summary>현재 경로의 기억 · {timeline.memories.length}개</summary>
+				<ul aria-label="현재 경로의 기억">
+					{#each timeline.memories as memory (memory.id)}<li>{memory.content}</li>{/each}
+				</ul>
+			</details>
+		</div>
 	{/if}
 </section>
 
@@ -162,9 +228,10 @@
 		</p>
 		{#if error}<p role="alert">{error}</p>{/if}
 		<div class="dialog-actions">
-			<button type="button" disabled={busy} onclick={() => (deleting = null)}>취소</button>
-			<button type="button" disabled={busy} onclick={confirmDelete}
-				>{busy ? '삭제 중…' : '삭제'}</button
+			<button type="button" disabled={busy} onclick={() => (deleting = null)}>취소</button><button
+				type="button"
+				disabled={busy}
+				onclick={confirmDelete}>{busy ? '삭제 중…' : '삭제'}</button
 			>
 		</div>
 	</dialog>
@@ -172,36 +239,26 @@
 
 <style>
 	.timeline {
-		padding: 16px;
-		border: 1px solid var(--border);
-		border-radius: 10px;
-		background: var(--surface);
+		display: flex;
+		flex-direction: column;
+		min-height: 0;
+		flex: 1;
 		font-size: 12px;
 	}
-	header,
-	.event-heading,
-	.dialog-actions {
+	.toolbar {
 		display: flex;
+		justify-content: space-between;
 		align-items: center;
 		gap: 8px;
-	}
-	header {
-		justify-content: space-between;
-	}
-	h3 {
-		margin: 0;
-		color: var(--text-strong);
-		font-size: 14px;
-	}
-	.hint,
-	small,
-	time {
+		flex-shrink: 0;
+		padding-bottom: 8px;
 		color: var(--text-muted);
+		font-size: 11px;
 	}
 	button {
-		padding: 7px 10px;
-		border: 1px solid var(--border-strong);
-		border-radius: 7px;
+		border: 1px solid var(--border);
+		border-radius: 6px;
+		padding: 6px 8px;
 		background: var(--surface);
 		color: var(--text);
 		font: inherit;
@@ -209,45 +266,132 @@
 	}
 	button:hover:not(:disabled) {
 		background: var(--surface-hover);
+		color: var(--text-strong);
+	}
+	button:focus-visible {
+		outline: 2px solid var(--accent);
+		outline-offset: -2px;
 	}
 	button:disabled {
 		opacity: 0.45;
 		cursor: default;
 	}
-	button[aria-current] {
-		border-color: var(--text-muted);
-		color: var(--text-strong);
+	.graph-scroll {
+		min-height: 90px;
+		flex: 1;
+		overflow: auto;
+		scrollbar-width: thin;
+	}
+	.graph {
+		position: relative;
+		min-width: calc(var(--gutter) + 140px);
+	}
+	svg {
+		position: absolute;
+		inset: 0 auto auto 0;
+		pointer-events: none;
+		overflow: visible;
+		z-index: 1;
+	}
+	path {
+		fill: none;
+		stroke: light-dark(#9384b4, #76658e);
+		stroke-width: 1.5px;
+	}
+	path.active {
+		stroke: light-dark(#467653, #86b693);
+	}
+	.node {
+		fill: var(--background);
+		stroke: light-dark(#9384b4, #9684ae);
+		stroke-width: 2px;
+	}
+	.node.active {
+		fill: light-dark(#467653, #86b693);
+		stroke: light-dark(#467653, #86b693);
+	}
+	.head {
+		fill: none;
+		stroke: var(--text-strong);
+		stroke-width: 1.5px;
 	}
 	ol {
-		padding: 0;
 		list-style: none;
+		padding: 0;
+		margin: 0;
 	}
 	.event {
-		margin: 10px 0 10px calc(var(--depth) * 12px);
-		padding-left: 8px;
-		border-left: 2px solid var(--border);
+		height: var(--row-height);
+		border-radius: 6px;
 	}
-	.event.active {
-		border-color: var(--text-muted);
+	.event.current {
+		background: var(--surface-active);
 	}
-	.event.selected {
-		border-color: var(--text-strong);
-	}
-	.select-event {
+	.inspect {
 		display: flex;
-		min-width: 0;
-		flex: 1;
-		align-items: center;
-		justify-content: space-between;
-		gap: 8px;
+		flex-direction: column;
+		justify-content: center;
+		gap: 5px;
+		width: 100%;
+		height: 100%;
+		padding: 7px 8px 7px calc(var(--gutter) + 4px);
+		border: 0;
 		text-align: left;
+		background: transparent;
 	}
-	.select-event span {
+	.summary {
+		display: -webkit-box;
+		-webkit-box-orient: vertical;
+		-webkit-line-clamp: 2;
+		line-clamp: 2;
+		overflow: hidden;
 		overflow-wrap: anywhere;
+		line-height: 1.5;
 	}
 	small {
-		flex-shrink: 0;
+		display: flex;
+		flex-wrap: wrap;
+		gap: 6px;
+		width: 100%;
+		color: var(--text-muted);
 		font-size: 10px;
+	}
+	time {
+		color: var(--text-muted);
+		font-size: 10px;
+	}
+	small time {
+		margin-left: auto;
+	}
+	.current .summary {
+		color: var(--text-strong);
+	}
+	.preview {
+		flex-shrink: 0;
+		max-height: 46%;
+		overflow: auto;
+		border-top: 1px solid var(--border-strong);
+		margin-top: 10px;
+		padding-top: 12px;
+		scrollbar-width: thin;
+		line-height: 1.7;
+	}
+	.preview-heading {
+		display: flex;
+		align-items: baseline;
+		gap: 8px;
+		margin-bottom: 8px;
+	}
+	.preview-heading strong {
+		flex: 1;
+		overflow-wrap: anywhere;
+		color: var(--text-strong);
+		font-weight: 550;
+	}
+	.preview-heading span {
+		font-size: 10px;
+		color: var(--text-muted);
+		flex-shrink: 0;
 	}
 	details {
 		margin-top: 10px;
@@ -256,36 +400,54 @@
 		cursor: pointer;
 		color: var(--text-muted);
 	}
+	.dialogue {
+		margin-top: 8px;
+		white-space: pre-wrap;
+	}
+	.delete {
+		margin-top: 10px;
+		color: var(--text-muted);
+	}
+	.hint {
+		color: var(--text-muted);
+		font-size: 11px;
+	}
+	.error {
+		color: var(--text-strong);
+	}
 	dd {
 		margin: 4px 0 10px;
 	}
 	pre,
 	code {
-		overflow-wrap: anywhere;
 		white-space: pre-wrap;
+		overflow-wrap: anywhere;
 	}
 	pre {
-		max-height: 260px;
+		max-height: 220px;
 		overflow: auto;
 	}
-	.dialogue {
-		white-space: pre-wrap;
-	}
 	dialog {
-		max-width: min(460px, calc(100vw - 32px));
+		width: min(440px, calc(100vw - 32px));
 		padding: 24px;
 		border: 1px solid var(--border-strong);
-		border-radius: 12px;
-		background: var(--surface);
+		border-radius: 10px;
+		background: var(--background);
 		color: var(--text);
 		font-size: 13px;
 		line-height: 1.7;
 	}
 	dialog::backdrop {
-		background: rgb(0 0 0 / 0.6);
+		background: #0009;
+	}
+	h3 {
+		margin: 0;
+		font-size: 15px;
 	}
 	.dialog-actions {
+		display: flex;
 		justify-content: flex-end;
+		gap: 8px;
 		margin-top: 20px;
 	}
 </style>
