@@ -43,6 +43,7 @@ import type { GameResources } from './resources.js';
 import type { RuleTrigger } from './scripting/protocol.js';
 
 import { isSessionBusy } from './ai/activity.js';
+import { agentMessages } from './ai/message-echo.js';
 import { parseGameAIContent } from './ai/prompts.js';
 import { aiError } from './ai/protocol.js';
 import { compileCodeProject } from './code-project.js';
@@ -582,10 +583,7 @@ class GameRepository {
 					nextState: input.result.state,
 					action: { name: '$helia.ai', args: { input: input.input } },
 					description: 'AI 응답',
-					messages: [
-						...(input.result.messages ?? []),
-						{ role: 'assistant', content: input.result.text }
-					]
+					messages: agentMessages(input.result.text, input.result.messages)
 				});
 				const completed = {
 					...current,

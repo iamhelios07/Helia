@@ -4,6 +4,7 @@ import type { SessionTimeline } from '#lib/games/state/history.js';
 
 import { parseGameState } from '#lib/games/state/value.js';
 
+import { MessageEchoFilter, removeMessageEcho } from './message-echo.js';
 import { parsePromptConfig, assemblePrompt, type PromptConfig } from './prompts.js';
 import {
 	aiError,
@@ -94,8 +95,20 @@ class AgentWorkspace {
 		}
 		return messages;
 	}
-	private async generate(messages: AIMessage[]) {
-		const { generate, signal, emit, connection } = this.options;
+	private stream(event: AgentEvent, filter: MessageEchoFilter) {
+		if (event.type !== 'text') {
+			this.options.emit(event);
+			return;
+		}
+		this.emitText(filter.push(event.text));
+	}
+	private emitText(text: string) {
+		if (text) {
+			this.options.emit({ type: 'text', text });
+		}
+	}
+	private async generate(messages: AIMessage[], filter: MessageEchoFilter) {
+		const { generate, signal, connection } = this.options;
 		for (let retry = 0; retry <= AI_LIMITS.retries; retry++) {
 			let observed = false;
 			try {
@@ -104,7 +117,7 @@ class AgentWorkspace {
 					signal,
 					(event) => {
 						observed = true;
-						emit(event);
+						this.stream(event, filter);
 					}
 				);
 			} catch (error) {
@@ -131,7 +144,7 @@ class AgentWorkspace {
 		this.check();
 		return {
 			state: validated.state,
-			text: this.ai.promptSettings.assistantPrefill + text,
+			text: removeMessageEcho(this.ai.promptSettings.assistantPrefill + text, this.chatMessages),
 			events: this.events,
 			...(this.chatMessages.length ? { messages: this.chatMessages } : {}),
 			hooks: this.hooks
@@ -179,7 +192,13 @@ class AgentWorkspace {
 						: {
 								ok: true,
 								state: this.state,
-								...(result.messages?.length ? { messages: result.messages } : {})
+								...(result.messages?.length
+									? {
+											messages: result.messages,
+											messageDelivery:
+												'These messages are already displayed in chat. Do not copy or repeat them in your answer; continue with the reaction or narrative.'
+										}
+									: {})
 							}
 				)
 			});
@@ -218,11 +237,13 @@ class AgentWorkspace {
 			this.check();
 			const prefix = this.ai.promptSettings.assistantPrefill;
 			const messages = this.messages(prompt, prefix);
+			const filter = new MessageEchoFilter(this.chatMessages);
 			if (prefix) {
-				emit({ type: 'text', text: prefix });
+				this.stream({ type: 'text', text: prefix }, filter);
 			}
-			const output = await this.generate(messages);
+			const output = await this.generate(messages, filter);
 			this.check();
+			this.emitText(filter.finish());
 			if (!output.calls.length) {
 				return this.validate(output.text);
 			}

@@ -255,3 +255,54 @@ it('commits messages emitted by AI-invoked Actions only after the final answer s
 		}
 	});
 });
+
+it.each(['잘 쓸게요!', ''])(
+	'records an authored HTML receipt once with final reaction %j',
+	async (reaction) => {
+		const f = await fixture();
+		const timeline = await f.read();
+		let round = 0;
+		const streamed: string[] = [];
+		const result = await runAgentWorkspace(timeline, '만들어줘', {
+			connection: {
+				provider: { id: 'test', kind: 'openai-compatible', baseUrl: 'https://example.com/v1' },
+				model: 'test'
+			},
+			run: evaluateAction,
+			signal: new AbortController().signal,
+			emit: (event) => {
+				if (event.type === 'text') {
+					streamed.push(event.text);
+				}
+			},
+			generate: async (request, _signal, emit) => {
+				if (round++ === 0) {
+					return { text: '', calls: [{ id: 'craft-call', name: 'craft', arguments: {} }] };
+				}
+				const tool = JSON.parse(
+					request.messages.find((message) => message.role === 'tool')!.content
+				);
+				const receipt = tool.messages.find(
+					(message: { role: string }) => message.role === 'assistant'
+				).content;
+				const text = receipt + reaction;
+				emit({ type: 'text', text });
+				return { text, calls: [] };
+			}
+		});
+		await f.repo.commitSessionAgent(f.gameId, f.sessionId, {
+			expectedRevision: 0,
+			snapshotId: timeline.history.snapshot.id,
+			input: '만들어줘',
+			visible: true,
+			result
+		});
+		const saved = await f.read();
+		expect(
+			saved.messages.filter((message) => message.content.includes('<b>철검 완성</b>'))
+		).toHaveLength(1);
+		expect(saved.messages.at(-1)?.content).toBe(reaction || '<b>철검 완성</b>');
+		expect(streamed.join('')).toBe(reaction);
+		expect(saved.history.progress.state.gold).toBe(9);
+	}
+);
