@@ -7,6 +7,9 @@ import {
 	type RoundRequest
 } from '#lib/games/ai/protocol.js';
 import { encodeProviderRequest } from '#lib/games/ai/providers.js';
+import { streamTimeout } from '#lib/games/ai/stream-timeout.js';
+
+import { generationFetch } from './generation-fetch.js';
 
 /** Keep a suffix so credentials split across network chunks cannot escape redaction. */
 export class SecretRedactor {
@@ -31,6 +34,7 @@ export class SecretRedactor {
 interface GenerationOptions {
 	signal: AbortSignal;
 	emit: (chunk: string) => void;
+	onActivity?: () => void;
 	accessToken?: (signal: AbortSignal) => Promise<string>;
 	send?: typeof fetch;
 }
@@ -100,8 +104,13 @@ async function streamGeneration(response: Response, key: string, options: Genera
 	const { signal, emit } = options;
 	const { reader, sse } = await responseStream(response);
 	const output = new GenerationOutput(key, sse, emit);
+	const cancel = () => {
+		void reader.cancel().catch(() => {});
+	};
+	signal.addEventListener('abort', cancel, { once: true });
 	let bytes = 0;
 	try {
+		signal.throwIfAborted();
 		while (true) {
 			const next = await reader.read();
 			if (signal.aborted) {
@@ -109,6 +118,9 @@ async function streamGeneration(response: Response, key: string, options: Genera
 			}
 			if (next.done) {
 				break;
+			}
+			if (next.value.byteLength) {
+				options.onActivity?.();
 			}
 			bytes += next.value.byteLength;
 			if (bytes > AI_LIMITS.outputBytes) {
@@ -121,6 +133,7 @@ async function streamGeneration(response: Response, key: string, options: Genera
 		await reader.cancel().catch(() => {});
 		throw aiError(signal.aborted ? 'canceled' : 'protocol');
 	} finally {
+		signal.removeEventListener('abort', cancel);
 		reader.releaseLock();
 	}
 }
@@ -130,7 +143,36 @@ export async function generateProvider(
 	input: RoundRequest,
 	options: GenerationOptions
 ): Promise<void> {
-	const { signal, accessToken, send = fetch } = options;
+	const idle = streamTimeout(options.signal);
+	try {
+		await generateAuthenticated(credential, input, {
+			...options,
+			signal: idle.signal,
+			onActivity: () => {
+				idle.touch();
+				options.onActivity?.();
+			}
+		});
+	} catch (error) {
+		if (options.signal.aborted) {
+			throw aiError('canceled');
+		}
+		if (idle.signal.aborted) {
+			throw idle.signal.reason;
+		}
+		throw error;
+	} finally {
+		idle.dispose();
+	}
+}
+
+async function generateAuthenticated(
+	credential: CredentialValue,
+	input: RoundRequest,
+	options: GenerationOptions
+) {
+	const { signal, accessToken, send = generationFetch } = options;
+	signal.throwIfAborted();
 	const { path, body } = encodeProviderRequest(parseRoundRequest(input));
 	const key = credential.serviceAccount ? await accessToken?.(signal) : credential.apiKey;
 	if (!key) {
@@ -148,5 +190,10 @@ export async function generateProvider(
 	} catch {
 		throw aiError(signal.aborted ? 'canceled' : 'provider');
 	}
+	if (signal.aborted) {
+		await response.body?.cancel().catch(() => {});
+		signal.throwIfAborted();
+	}
+	options.onActivity?.();
 	await streamGeneration(response, key, options);
 }

@@ -11,7 +11,7 @@ import { runCreatorAction } from '#lib/games/scripting/browser.js';
 
 import { beginSessionActivity, publishSessionAIEvent } from './activity.js';
 import { runAgentWorkspace } from './loop.js';
-import { aiError, AI_LIMITS, type AgentOptions } from './protocol.js';
+import { aiError, type AgentOptions } from './protocol.js';
 import { beginGeneration } from './transport.js';
 
 /** A separate repository lets authoring playthroughs use the same BYOK loop without live writes. */
@@ -46,10 +46,7 @@ export async function invokeSessionAI(
 	}
 	const timeline = await runtime.getSessionTimeline(gameId, sessionId),
 		idle = beginSessionActivity(gameId, sessionId);
-	const signal = AbortSignal.any([
-		AbortSignal.timeout(AI_LIMITS.timeoutMs),
-		...(options.signal ? [options.signal] : [])
-	]);
+	const signal = options.signal ?? new AbortController().signal;
 	const emit = createEmitter(gameId, sessionId, options.onEvent);
 	let scope: Awaited<ReturnType<typeof beginGeneration>> | undefined;
 	try {
@@ -101,7 +98,7 @@ export async function invokeSessionAI(
 		}
 	} catch (error) {
 		if (signal.aborted) {
-			throw aiError(options.signal?.aborted ? 'canceled' : 'timeout');
+			throw aiError('canceled');
 		}
 		throw error;
 	} finally {

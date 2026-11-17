@@ -9,6 +9,7 @@ import type { ModelGenerator, AgentEvent } from './protocol.js';
 
 import { hostAILeases, SessionLeases } from './leases.js';
 import { runAgentWorkspace } from './loop.js';
+import { aiError } from './protocol.js';
 
 const args = "{type:'object',properties:{},additionalProperties:false}";
 const scripts = `
@@ -97,6 +98,8 @@ describe('atomic AI workspace', () => {
 			).toBe(2);
 			expect(notifications).not.toHaveBeenCalled();
 			if (round++ === 0) {
+				emit({ type: 'text', text: 'Checking' });
+				expect(events.filter((event) => event.type === 'text')).toEqual([]);
 				return {
 					text: 'Checking',
 					calls: [
@@ -109,7 +112,9 @@ describe('atomic AI workspace', () => {
 				gold: 1
 			});
 			expect(request.messages.at(-1)?.content).toContain('"gold":1');
-			emit({ type: 'text', text: 'Done' });
+			emit({ type: 'text', text: 'Do' });
+			emit({ type: 'text', text: 'ne' });
+			expect(events.filter((event) => event.type === 'text')).toEqual([]);
 			return { text: 'Done', calls: [] };
 		};
 		try {
@@ -134,11 +139,48 @@ describe('atomic AI workspace', () => {
 			expect(writes).toHaveLength(1);
 			expect(notifications).toHaveBeenCalledTimes(1);
 			expect(events).toContainEqual({ type: 'reset' });
+			expect(events.filter((event) => event.type === 'text')).toEqual([
+				{ type: 'text', text: 'Done' }
+			]);
 		} finally {
 			storage.close();
 		}
 	});
 });
+
+it.each([false, true])(
+	'does not retry an idle timeout or commit tool changes (partial text: %s)',
+	async (partial) => {
+		const { storage, timeline, writes } = await setup();
+		const events: AgentEvent[] = [];
+		let round = 0;
+		const generate = vi.fn<ModelGenerator>(async (_request, _signal, emit) => {
+			if (round++ === 0) {
+				return { text: '', calls: [{ id: 'spend', name: 'spend', arguments: {} }] };
+			}
+			if (partial) {
+				emit({ type: 'text', text: 'Incomplete' });
+			}
+			throw aiError('timeout');
+		});
+		try {
+			await expect(
+				runAgentWorkspace(timeline, 'Buy', {
+					connection,
+					generate,
+					run: evaluateAction,
+					signal: new AbortController().signal,
+					emit: (event) => events.push(event)
+				})
+			).rejects.toMatchObject({ name: 'TimeoutError' });
+			expect(generate).toHaveBeenCalledTimes(2);
+			expect(writes).toEqual([]);
+			expect(events.filter((event) => event.type === 'text')).toEqual([]);
+		} finally {
+			storage.close();
+		}
+	}
+);
 
 describe('atomic AI workspace', () => {
 	it.each(['cancel', 'stream', 'filter', 'unexposed'] as const)(

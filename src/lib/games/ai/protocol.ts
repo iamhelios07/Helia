@@ -10,7 +10,7 @@ export const AI_LIMITS = Object.freeze({
 	rounds: 12,
 	calls: 32,
 	retries: 2,
-	timeoutMs: 120_000,
+	streamIdleMs: 600_000,
 	wireBytes: 4 * 1024 * 1024,
 	outputBytes: 2 * 1024 * 1024
 });
@@ -74,7 +74,11 @@ export function aiError(
 		busy: 'AI 응답 생성 중에는 게임 상태를 변경할 수 없어요.',
 		timeout: 'AI 응답 대기 시간을 초과했어요.'
 	};
-	return new Error(messages[code]);
+	const error = new Error(messages[code]);
+	if (code === 'timeout') {
+		error.name = 'TimeoutError';
+	}
+	return error;
 }
 export function parseRoundRequest(value: unknown): RoundRequest {
 	const row = credentialRecord(value);

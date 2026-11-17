@@ -260,7 +260,12 @@ class CredentialStore {
 		return discoverModels(secret, signal);
 	};
 
-	generate = async (input: RoundRequest, signal: AbortSignal, emit: (chunk: string) => void) => {
+	generate = async (
+		input: RoundRequest,
+		signal: AbortSignal,
+		emit: (chunk: string) => void,
+		onActivity?: () => void
+	) => {
 		const secret = this.read(input.provider.id);
 		if (!secret || !sameCredentialAddress(secret, input.provider)) {
 			throw new Error('이 연결의 주소와 형식에 사용할 인증 정보를 먼저 저장해주세요.');
@@ -268,6 +273,7 @@ class CredentialStore {
 		return generateProvider(secret, input, {
 			signal,
 			emit,
+			onActivity,
 			accessToken: secret.serviceAccount
 				? (signal) => this.vertexAuth.accessToken(secret.serviceAccount!, signal)
 				: undefined

@@ -3,8 +3,15 @@ import { Channel } from '@tauri-apps/api/core';
 import { credentialRecord } from '#lib/app/settings/credential-protocol.js';
 import { isDesktopBuild, isTauri } from '#lib/platform/index.js';
 
-import { AI_LIMITS, aiError, type ModelGenerator } from './protocol.js';
+import {
+	AI_LIMITS,
+	aiError,
+	type ModelGenerator,
+	type RoundRequest,
+	type AgentEvent
+} from './protocol.js';
 import { encodeProviderRequest, ProviderDecoder } from './providers.js';
+import { streamTimeout } from './stream-timeout.js';
 
 type Scope = { gameId: string; sessionId: string; lease?: string };
 async function nativeRequest(input: unknown, onChunk?: (value: unknown) => void): Promise<unknown> {
@@ -54,53 +61,83 @@ export async function beginGeneration(
 		release: async () => {
 			await control(scope, 'release');
 		},
-		generate: async (request, signal, emit) => {
-			if (signal.aborted) {
-				throw aiError('canceled');
-			}
-			const decoder = new ProviderDecoder(request.provider.kind, emit);
-			let done = false,
-				total = 0;
-			const accept = (value: unknown) => {
-				const item = credentialRecord(value);
-				if (item.error) {
-					throw aiError();
-				}
-				if (item.done === true) {
-					done = true;
-				} else if (typeof item.chunk === 'string') {
-					total += item.chunk.length;
-					if (total > AI_LIMITS.outputBytes) {
-						throw aiError('limit');
-					}
-					decoder.push(item.chunk);
-				} else {
-					throw aiError('protocol');
-				}
-			};
-			if (isDesktopBuild) {
-				await nativeRound(scope, request, signal, accept);
-			} else {
-				await webRound(scope, request, signal, accept);
-			}
-			if (signal.aborted) {
-				throw aiError('canceled');
-			}
-			if (!done) {
-				throw aiError('protocol');
-			}
-			return decoder.finish();
-		}
+		generate: (request, signal, emit) => generateRound(scope, request, signal, emit)
 	};
 }
 
+async function generateRound(
+	scope: Scope,
+	request: RoundRequest,
+	parent: AbortSignal,
+	emit: (event: AgentEvent) => void
+) {
+	const idle = streamTimeout(parent),
+		{ signal } = idle;
+	const decoder = new ProviderDecoder(request.provider.kind, emit);
+	let done = false,
+		total = 0;
+	const accept = (value: unknown) => {
+		const item = credentialRecord(value);
+		if (item.error) {
+			throw aiError(item.code === 'timeout' ? 'timeout' : 'provider');
+		}
+		if (item.done === true) {
+			done = true;
+		} else if (typeof item.chunk === 'string') {
+			total += item.chunk.length;
+			if (total > AI_LIMITS.outputBytes) {
+				throw aiError('limit');
+			}
+			if (item.chunk.length) {
+				idle.touch();
+			}
+			decoder.push(item.chunk);
+		} else if (item.activity === true) {
+			idle.touch();
+		} else {
+			throw aiError('protocol');
+		}
+	};
+	try {
+		if (signal.aborted) {
+			throw aiError('canceled');
+		}
+		const receiver = { accept, touch: idle.touch };
+		if (isDesktopBuild) {
+			await nativeRound(scope, request, signal, receiver);
+		} else {
+			await webRound(scope, request, signal, receiver);
+		}
+		signal.throwIfAborted();
+		if (!done) {
+			throw aiError('protocol');
+		}
+		return decoder.finish();
+	} catch (error) {
+		if (parent.aborted) {
+			throw aiError('canceled');
+		}
+		if (signal.aborted) {
+			throw signal.reason;
+		}
+		if (error === aiError('timeout').message) {
+			throw aiError('timeout');
+		}
+		throw error;
+	} finally {
+		idle.dispose();
+	}
+}
+
+type RoundReceiver = { accept: (value: unknown) => void; touch: () => void };
 async function nativeRound(
 	scope: Scope,
 	request: import('./protocol.js').RoundRequest,
 	signal: AbortSignal,
-	accept: (value: unknown) => void
+	{ accept }: RoundReceiver
 ) {
 	let failure: unknown;
+	let active = true;
 	let rejectCanceled: (reason: Error) => void = () => {};
 	const canceled = new Promise<never>((_resolve, reject) => {
 		rejectCanceled = reject;
@@ -115,7 +152,7 @@ async function nativeRound(
 			nativeRequest(
 				{ ...scope, kind: 'round', request, wire: encodeProviderRequest(request) },
 				(value) => {
-					if (signal.aborted || failure) {
+					if (!active || signal.aborted || failure) {
 						return;
 					}
 					try {
@@ -129,6 +166,7 @@ async function nativeRound(
 			canceled
 		]);
 	} finally {
+		active = false;
 		signal.removeEventListener('abort', stop);
 	}
 	if (failure) {
@@ -139,7 +177,7 @@ async function webRound(
 	scope: Scope,
 	request: import('./protocol.js').RoundRequest,
 	signal: AbortSignal,
-	accept: (value: unknown) => void
+	{ accept, touch }: RoundReceiver
 ) {
 	const response = await fetch('/api/ai', {
 		method: 'POST',
@@ -150,6 +188,7 @@ async function webRound(
 	if (!response.ok || !response.body) {
 		throw aiError();
 	}
+	touch();
 	const reader = response.body.getReader(),
 		utf8 = new TextDecoder('utf-8', { fatal: true });
 	let pending = '';
@@ -158,6 +197,9 @@ async function webRound(
 			const chunk = await reader.read();
 			if (chunk.done) {
 				break;
+			}
+			if (chunk.value.byteLength) {
+				touch();
 			}
 			pending += utf8.decode(chunk.value, { stream: true });
 			if (pending.length > AI_LIMITS.outputBytes) {

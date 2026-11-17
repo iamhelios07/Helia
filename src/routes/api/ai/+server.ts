@@ -3,6 +3,7 @@ import { json } from '@sveltejs/kit';
 import { credentialRecord, credentialId } from '#lib/app/settings/credential-protocol.js';
 import { hostAILeases } from '#lib/games/ai/leases.js';
 import { aiError, AI_LIMITS, parseRoundRequest } from '#lib/games/ai/protocol.js';
+import { isStreamTimeout } from '#lib/games/ai/stream-timeout.js';
 import { serverCredentials } from '#lib/server/credentials.js';
 
 import type { RequestHandler } from './$types';
@@ -61,28 +62,37 @@ function roundResponse(
 ): Response {
 	const leaseSignal = hostAILeases.round(lease, gameId, sessionId);
 	const abort = new AbortController(),
-		signal = AbortSignal.any([
-			requestSignal,
-			leaseSignal,
-			abort.signal,
-			AbortSignal.timeout(AI_LIMITS.timeoutMs)
-		]);
+		signal = AbortSignal.any([requestSignal, leaseSignal, abort.signal]);
 	const encoder = new TextEncoder();
 	const stream = new ReadableStream<Uint8Array>({
 		start(controller) {
 			void serverCredentials()
-				.generate(round, signal, (chunk) =>
-					controller.enqueue(encoder.encode(JSON.stringify({ chunk }) + '\n'))
+				.generate(
+					round,
+					signal,
+					(chunk) => controller.enqueue(encoder.encode(JSON.stringify({ chunk }) + '\n')),
+					() => {
+						hostAILeases.touch(lease, gameId, sessionId);
+						controller.enqueue(encoder.encode(JSON.stringify({ activity: true }) + '\n'));
+					}
 				)
 				.then(
 					() => {
 						controller.enqueue(encoder.encode(JSON.stringify({ done: true }) + '\n'));
 						controller.close();
 					},
-					() => {
+					(error: unknown) => {
+						if (isStreamTimeout(error) || signal.aborted) {
+							hostAILeases.release(lease, gameId, sessionId);
+						}
 						try {
 							controller.enqueue(
-								encoder.encode(JSON.stringify({ error: 'AI 응답을 완료하지 못했어요.' }) + '\n')
+								encoder.encode(
+									JSON.stringify({
+										error: 'AI 응답을 완료하지 못했어요.',
+										...(isStreamTimeout(error) ? { code: 'timeout' } : {})
+									}) + '\n'
+								)
 							);
 							controller.close();
 						} catch {

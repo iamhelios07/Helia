@@ -15,7 +15,7 @@ export class SessionLeases {
 		this.leases.set(id, {
 			gameId,
 			sessionId,
-			expires: Date.now() + AI_LIMITS.timeoutMs,
+			expires: Date.now() + AI_LIMITS.streamIdleMs,
 			abort: new AbortController(),
 			rounds: 0
 		});
@@ -29,11 +29,15 @@ export class SessionLeases {
 		}
 		return lease;
 	}
+	touch(id: string, gameId: string, sessionId: string) {
+		this.require(id, gameId, sessionId).expires = Date.now() + AI_LIMITS.streamIdleMs;
+	}
 	round(id: string, gameId: string, sessionId: string): AbortSignal {
 		const lease = this.require(id, gameId, sessionId);
 		if (++lease.rounds > AI_LIMITS.rounds * (AI_LIMITS.retries + 1)) {
 			throw aiError('limit');
 		}
+		this.touch(id, gameId, sessionId);
 		return lease.abort.signal;
 	}
 	release(id: string, gameId: string, sessionId: string) {

@@ -11,6 +11,8 @@ use tauri::ipc::Channel;
 const ERROR: &str = "AI 요청을 완료하지 못했어요. 연결과 모델 권한을 확인해주세요.";
 const BUSY: &str = "AI 응답 생성 중에는 게임 상태를 변경할 수 없어요.";
 const CANCELED: &str = "AI 요청을 중단했어요.";
+const TIMEOUT: &str = "AI 응답 대기 시간을 초과했어요.";
+const STREAM_IDLE: Duration = Duration::from_secs(600);
 struct Lease {
     game: String,
     session: String,
@@ -40,6 +42,15 @@ fn valid(id: &str, game: &str, session: &str) -> Result<(), String> {
     {
         return Err(CANCELED.into());
     }
+    Ok(())
+}
+fn touch(id: &str, game: &str, session: &str) -> Result<(), String> {
+    let mut leases = leases()?;
+    let lease = leases.get_mut(id).ok_or(CANCELED)?;
+    if lease.game != game || lease.session != session {
+        return Err(CANCELED.into());
+    }
+    lease.expires = Instant::now() + STREAM_IDLE;
     Ok(())
 }
 
@@ -103,7 +114,7 @@ fn begin_lease(game: &str, session: &str) -> Result<Value, String> {
         Lease {
             game: game.into(),
             session: session.into(),
-            expires: Instant::now() + Duration::from_secs(120),
+            expires: Instant::now() + STREAM_IDLE,
             rounds: 0,
         },
     );
@@ -148,12 +159,7 @@ fn send_round(
     key: &str,
     path: &str,
 ) -> Result<reqwest::blocking::Response, String> {
-    let client = reqwest::blocking::Client::builder()
-        .redirect(reqwest::redirect::Policy::none())
-        .connect_timeout(Duration::from_secs(8))
-        .timeout(Duration::from_secs(120))
-        .build()
-        .map_err(|_| ERROR)?;
+    let client = generation_client(STREAM_IDLE)?;
     let mut request = client
         .post(format!("{base}{path}"))
         .header("content-type", "application/json")
@@ -168,11 +174,22 @@ fn send_round(
     } else {
         request = request.bearer_auth(key);
     }
-    let response = request.send().map_err(|_| ERROR)?;
+    let response = request
+        .send()
+        .map_err(|error| if error.is_timeout() { TIMEOUT } else { ERROR })?;
     if !response.status().is_success() {
         return Err(ERROR.into());
     }
     Ok(response)
+}
+fn generation_client(idle: Duration) -> Result<reqwest::blocking::Client, String> {
+    reqwest::blocking::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .connect_timeout(idle)
+        // Blocking reqwest applies this to each read, not the full stream.
+        .timeout(idle)
+        .build()
+        .map_err(|_| ERROR.into())
 }
 struct RoundOutput<'a> {
     id: &'a str,
@@ -183,17 +200,42 @@ struct RoundOutput<'a> {
     keep: usize,
     channel: &'a Channel<Value>,
 }
+fn activity(output: &RoundOutput<'_>) -> Result<(), String> {
+    touch(output.id, output.game, output.session)?;
+    output
+        .channel
+        .send(json!({"activity":true}))
+        .map_err(|_| CANCELED.into())
+}
+fn read_error(error: std::io::Error) -> String {
+    let timed_out = error.kind() == std::io::ErrorKind::TimedOut
+        || error
+            .get_ref()
+            .and_then(|error| error.downcast_ref::<reqwest::Error>())
+            .is_some_and(reqwest::Error::is_timeout);
+    if timed_out {
+        TIMEOUT.into()
+    } else {
+        ERROR.into()
+    }
+}
 fn read_json(
-    response: reqwest::blocking::Response,
+    mut response: reqwest::blocking::Response,
     output: &RoundOutput<'_>,
 ) -> Result<Value, String> {
     let mut bytes = Vec::new();
-    response
-        .take(2 * 1024 * 1024 + 1)
-        .read_to_end(&mut bytes)
-        .map_err(|_| ERROR)?;
-    if bytes.len() > 2 * 1024 * 1024 {
-        return Err(ERROR.into());
+    let mut buffer = [0u8; 4096];
+    loop {
+        valid(output.id, output.game, output.session)?;
+        let length = response.read(&mut buffer).map_err(read_error)?;
+        if length == 0 {
+            break;
+        }
+        activity(output)?;
+        bytes.extend_from_slice(&buffer[..length]);
+        if bytes.len() > 2 * 1024 * 1024 {
+            return Err(ERROR.into());
+        }
     }
     let text = std::str::from_utf8(&bytes)
         .map_err(|_| ERROR)?
@@ -220,7 +262,10 @@ fn read_stream(
     let mut total = 0;
     loop {
         valid(output.id, output.game, output.session)?;
-        let length = response.read(&mut buffer).map_err(|_| ERROR)?;
+        let length = response.read(&mut buffer).map_err(read_error)?;
+        if length > 0 {
+            activity(output)?;
+        }
         pending.extend_from_slice(&buffer[..length]);
         total += length;
         if total > 2 * 1024 * 1024 {
@@ -300,11 +345,16 @@ fn execute_with_auth(
         if lease.rounds > 36 {
             return Err(ERROR.into());
         }
+        lease.expires = Instant::now() + STREAM_IDLE;
     }
     let (base, format, key) = authenticate(input["request"]["provider"].clone())?;
     let path = input["wire"]["path"].as_str().ok_or(ERROR)?;
     validate_wire(input, &format, path)?;
     let response = send_round(input, &base, &format, &key, path)?;
+    touch(id, game, session)?;
+    channel
+        .send(json!({"activity":true}))
+        .map_err(|_| CANCELED)?;
     let content_type = response
         .headers()
         .get("content-type")
@@ -344,6 +394,59 @@ mod tests {
         let mut bytes = [0; 8];
         getrandom::fill(&mut bytes).unwrap();
         format!("test-{:x}", u64::from_le_bytes(bytes))
+    }
+    #[test]
+    fn stream_activity_renews_the_lease_without_allowing_expired_tokens() {
+        let game = test_game();
+        let begun = begin_lease(&game, "one").unwrap();
+        let id = begun["lease"].as_str().unwrap();
+        let original = Instant::now() + Duration::from_millis(1);
+        leases().unwrap().get_mut(id).unwrap().expires = original;
+        touch(id, &game, "one").unwrap();
+        assert!(leases().unwrap()[id].expires > original + Duration::from_secs(590));
+        assert!(touch(id, &game, "other").is_err());
+        leases().unwrap().get_mut(id).unwrap().expires = Instant::now();
+        assert!(touch(id, &game, "one").is_err());
+    }
+    #[test]
+    fn native_http_timeout_measures_each_read_instead_of_the_whole_stream() {
+        for (gap, chunks, succeeds) in [(200, 4, true), (700, 1, false)] {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let address = listener.local_addr().unwrap();
+            let server = thread::spawn(move || {
+                let (mut socket, _) = listener.accept().unwrap();
+                socket
+                    .set_read_timeout(Some(Duration::from_secs(5)))
+                    .unwrap();
+                let mut buffer = [0; 4096];
+                socket.read(&mut buffer).unwrap();
+                write!(
+                    socket,
+                    "HTTP/1.1 200 OK\r\nContent-Length: {chunks}\r\nConnection: close\r\n\r\n"
+                )
+                .unwrap();
+                socket.flush().unwrap();
+                for _ in 0..chunks {
+                    thread::sleep(Duration::from_millis(gap));
+                    if socket.write_all(b"x").is_err() {
+                        break;
+                    }
+                    let _ = socket.flush();
+                }
+            });
+            let mut response = generation_client(Duration::from_millis(500))
+                .unwrap()
+                .get(format!("http://{address}"))
+                .send()
+                .unwrap();
+            let mut bytes = Vec::new();
+            let result = response.read_to_end(&mut bytes);
+            assert_eq!(result.is_ok(), succeeds);
+            if let Err(error) = result {
+                assert_eq!(read_error(error), TIMEOUT);
+            }
+            server.join().unwrap();
+        }
     }
     #[test]
     fn leases_reject_other_writes_and_expired_commit_tokens() {

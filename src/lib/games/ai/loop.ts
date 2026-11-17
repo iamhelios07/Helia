@@ -4,7 +4,7 @@ import type { SessionTimeline } from '#lib/games/state/history.js';
 
 import { parseGameState } from '#lib/games/state/value.js';
 
-import { MessageEchoFilter, removeMessageEcho } from './message-echo.js';
+import { removeMessageEcho } from './message-echo.js';
 import { parsePromptConfig, assemblePrompt, type PromptConfig } from './prompts.js';
 import {
 	aiError,
@@ -14,6 +14,7 @@ import {
 	type RoundRequest,
 	type AIMessage
 } from './protocol.js';
+import { isStreamTimeout } from './stream-timeout.js';
 
 export interface AgentWorkspaceResult {
 	state: ReturnType<typeof parseGameState>;
@@ -95,33 +96,29 @@ class AgentWorkspace {
 		}
 		return messages;
 	}
-	private stream(event: AgentEvent, filter: MessageEchoFilter) {
-		if (event.type !== 'text') {
-			this.options.emit(event);
-			return;
-		}
-		this.emitText(filter.push(event.text));
-	}
-	private emitText(text: string) {
-		if (text) {
-			this.options.emit({ type: 'text', text });
-		}
-	}
-	private async generate(messages: AIMessage[], filter: MessageEchoFilter) {
+	private async generate(messages: AIMessage[]) {
 		const { generate, signal, connection } = this.options;
 		for (let retry = 0; retry <= AI_LIMITS.retries; retry++) {
 			let observed = false;
+			let thinking = '';
 			try {
-				return await generate(
+				const output = await generate(
 					{ ...connection, tools: this.tools, maxTokens: this.ai.maxTokens, messages },
 					signal,
 					(event) => {
 						observed = true;
-						this.stream(event, filter);
+						if (event.type === 'thinking') {
+							thinking += event.text;
+						}
 					}
 				);
+				this.check();
+				if (thinking) {
+					this.options.emit({ type: 'thinking', text: thinking });
+				}
+				return output;
 			} catch (error) {
-				if (observed || retry === AI_LIMITS.retries || signal.aborted) {
+				if (observed || retry === AI_LIMITS.retries || signal.aborted || isStreamTimeout(error)) {
 					throw error;
 				}
 			}
@@ -237,15 +234,14 @@ class AgentWorkspace {
 			this.check();
 			const prefix = this.ai.promptSettings.assistantPrefill;
 			const messages = this.messages(prompt, prefix);
-			const filter = new MessageEchoFilter(this.chatMessages);
-			if (prefix) {
-				this.stream({ type: 'text', text: prefix }, filter);
-			}
-			const output = await this.generate(messages, filter);
+			const output = await this.generate(messages);
 			this.check();
-			this.emitText(filter.finish());
 			if (!output.calls.length) {
-				return this.validate(output.text);
+				const result = await this.validate(output.text);
+				if (result.text) {
+					emit({ type: 'text', text: result.text });
+				}
+				return result;
 			}
 			emit({ type: 'reset' });
 			if (prefix || output.text) {
