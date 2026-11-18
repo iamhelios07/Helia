@@ -216,7 +216,7 @@ export class EditorWorkspace {
 		{
 			title: '채팅',
 			icon: 'book',
-			documents: [{ id: 'regex', file: '정규식' }]
+			documents: [{ id: 'regex', file: 'regex.json' }]
 		},
 		{
 			title: '게임 데이터',

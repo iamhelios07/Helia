@@ -57,7 +57,7 @@ const heightHandle = () => page.getByRole('slider', { name: '검사 패널 높�
 it('opens regex as a dedicated chat document, restores its draft and applies it without changing session state', async () => {
 	const game = await createGame();
 	const screen = render(GameEditor, { gameId: game.id });
-	await page.getByRole('button', { name: '정규식', exact: true }).click();
+	await page.getByRole('button', { name: 'regex.json', exact: true }).click();
 	await page.getByRole('button', { name: '규칙 추가' }).click();
 	await page.getByRole('textbox', { name: '규칙 이름' }).fill('주문 표시');
 	await page.getByRole('textbox', { name: '검색식 (IN)' }).fill('주문');
@@ -70,7 +70,7 @@ it('opens regex as a dedicated chat document, restores its draft and applies it 
 		.toBe('주문 표시');
 	await screen.unmount();
 	render(GameEditor, { gameId: game.id });
-	await page.getByRole('button', { name: '정규식', exact: true }).click();
+	await page.getByRole('button', { name: 'regex.json', exact: true }).click();
 	await expect.element(page.getByRole('textbox', { name: '규칙 이름' })).toHaveValue('주문 표시');
 });
 

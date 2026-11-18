@@ -115,11 +115,10 @@
 		flex-shrink: 0;
 		width: min(100%, 860px);
 		box-sizing: border-box;
-		margin: 10px auto 0;
+		margin: 0 auto;
 		padding: 9px 12px;
-		border: 1px solid var(--border);
 		border-radius: 10px;
-		background: var(--surface);
+		background: color-mix(in srgb, var(--surface) 65%, transparent);
 		color: var(--text);
 		font-size: 11px;
 	}

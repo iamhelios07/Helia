@@ -108,56 +108,58 @@
 			</div>
 		{/if}
 	</div>
-	{#if chat.attemptStatus !== 'idle'}
-		<GenerationStatus
-			monitor={chat.monitor}
-			status={chat.attemptStatus}
-			label={chat.attemptLabel}
-			tools={chat.toolProgress}
-			thinking={chat.thinking}
-			progressText={chat.progressText}
-			appearance={chat.theme}
-			onstop={chat.saving ? chat.stopGeneration : undefined}
-			onretry={chat.canRetry
-				? () => {
-						void chat.sendMessage();
-					}
-				: undefined}
-		/>
-	{/if}
-	<form class="composer" onsubmit={chat.sendMessage} aria-label="메시지 작성">
-		{#if chat.modelError}<p class="save-error" role="alert">{chat.modelError}</p>
-		{:else if !chat.selectedModelId}<p class="save-error">
-				앱 설정에서 API 연결과 모델을 등록해주세요.
-			</p>{/if}
-		{#if chat.saveError}<p class="save-error" role="alert">{chat.saveError}</p>{/if}
-		<div class="input-row">
-			<textarea
-				{@attach chat.attachComposer}
-				bind:value={chat.draft}
-				aria-label="메시지"
-				placeholder="메시지 입력"
-				rows="1"
-				readonly={chat.locked || chat.timelineBusy || chat.blocked}
-				onkeydown={chat.handleKeydown}></textarea>
-			<button
-				class="send"
-				type="submit"
-				aria-label="메시지 전송"
-				title="전송"
-				disabled={chat.loading ||
-					chat.locked ||
-					chat.timelineBusy ||
-					chat.blocked ||
-					!!chat.loadError ||
-					!!chat.modelError ||
-					!chat.selectedModelId ||
-					!chat.draft.trim()}
-			>
-				<Icon name="send" size={20} />
-			</button>
-		</div>
-	</form>
+	<div class="chat-controls">
+		{#if chat.attemptStatus !== 'idle'}
+			<GenerationStatus
+				monitor={chat.monitor}
+				status={chat.attemptStatus}
+				label={chat.attemptLabel}
+				tools={chat.toolProgress}
+				thinking={chat.thinking}
+				progressText={chat.progressText}
+				appearance={chat.theme}
+				onstop={chat.saving ? chat.stopGeneration : undefined}
+				onretry={chat.canRetry
+					? () => {
+							void chat.sendMessage();
+						}
+					: undefined}
+			/>
+		{/if}
+		<form class="composer" onsubmit={chat.sendMessage} aria-label="메시지 작성">
+			{#if chat.modelError}<p class="save-error" role="alert">{chat.modelError}</p>
+			{:else if !chat.selectedModelId}<p class="save-error">
+					앱 설정에서 API 연결과 모델을 등록해주세요.
+				</p>{/if}
+			{#if chat.saveError}<p class="save-error" role="alert">{chat.saveError}</p>{/if}
+			<div class="input-row">
+				<textarea
+					{@attach chat.attachComposer}
+					bind:value={chat.draft}
+					aria-label="메시지"
+					placeholder="메시지 입력"
+					rows="1"
+					readonly={chat.locked || chat.timelineBusy || chat.blocked}
+					onkeydown={chat.handleKeydown}></textarea>
+				<button
+					class="send"
+					type="submit"
+					aria-label="메시지 전송"
+					title="전송"
+					disabled={chat.loading ||
+						chat.locked ||
+						chat.timelineBusy ||
+						chat.blocked ||
+						!!chat.loadError ||
+						!!chat.modelError ||
+						!chat.selectedModelId ||
+						!chat.draft.trim()}
+				>
+					<Icon name="send" size={20} />
+				</button>
+			</div>
+		</form>
+	</div>
 </section>
 
 <style>
@@ -223,11 +225,19 @@
 		white-space: pre-wrap;
 		overflow-wrap: anywhere;
 	}
-	.composer {
-		width: min(100%, 860px);
+	.chat-controls {
+		display: flex;
+		flex-shrink: 0;
+		flex-direction: column;
+		gap: 10px;
+		box-sizing: border-box;
+		width: min(100%, 892px);
 		margin-inline: auto;
-		padding-top: 16px;
-		padding-bottom: env(safe-area-inset-bottom);
+		padding: 12px 16px;
+		padding-bottom: max(12px, env(safe-area-inset-bottom, 0px));
+	}
+	.composer {
+		width: 100%;
 	}
 	.input-row {
 		display: flex;
@@ -303,6 +313,9 @@
 		color: var(--text-strong);
 	}
 	@media (max-width: 640px) {
+		.chat-controls {
+			padding-inline: 12px;
+		}
 		.message {
 			gap: 10px;
 			padding: 18px 8px;
