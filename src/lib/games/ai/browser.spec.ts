@@ -1,5 +1,12 @@
 import { it, expect, vi, afterEach, beforeEach } from 'vitest';
 
+import { savePersonaSettings } from '#lib/app/settings/persona-repository.js';
+import {
+	bindPersona,
+	emptyPersonaSettings,
+	personaSessionKey,
+	upsertPersona
+} from '#lib/app/settings/personas.js';
 import { savePromptSettings } from '#lib/app/settings/prompt-repository.js';
 import {
 	emptyPromptSettings,
@@ -250,4 +257,34 @@ it('cancellation before commit leaves no message history and releases session ac
 	).rejects.toThrow('중단');
 	expect((await getSessionTimeline(game.id, game.activeSessionId)).messages).toEqual([]);
 	expect(isSessionBusy(game.id, game.activeSessionId)).toBe(false);
+});
+
+it('captures the bound persona for an invocation and does not put the profile in game content', async () => {
+	const game = await createGame();
+	const persona = { id: 'bound', name: 'Bound player', description: 'Original identity' };
+	const other = { id: 'other', name: 'Global player', description: 'Other identity' };
+	const settings = bindPersona(
+		{
+			...upsertPersona(upsertPersona(emptyPersonaSettings(), persona), other),
+			selectedPersonaId: other.id
+		},
+		personaSessionKey(game.id, game.activeSessionId),
+		persona.id
+	);
+	savePersonaSettings(settings);
+	faults.onGenerate = () => {
+		savePersonaSettings(upsertPersona(settings, { ...persona, description: 'Edited identity' }));
+	};
+	const result = await invokeSessionAI(game.id, game.activeSessionId, { text: 'First' });
+	const first = faults.requests[0].messages.map((message) => message.content).join('\n');
+	expect(first).toContain('Player persona: Bound player');
+	expect(first).toContain('Original identity');
+	expect(first).not.toContain('Other identity');
+	expect(first).not.toContain('Edited identity');
+	expect(JSON.stringify(result.history)).not.toContain('Original identity');
+	faults.onGenerate = undefined;
+	await invokeSessionAI(game.id, game.activeSessionId, { text: 'Next' });
+	expect(faults.requests[1].messages.map((message) => message.content).join('\n')).toContain(
+		'Edited identity'
+	);
 });

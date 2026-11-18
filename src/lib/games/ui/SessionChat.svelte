@@ -94,7 +94,11 @@
 							<Icon name={message.role === 'user' ? 'user' : 'game'} size={20} />
 						</div>
 						<div class="message-body">
-							<h3>{message.role === 'user' ? '플레이어' : chat.gameTitle}</h3>
+							<h3>
+								{message.role === 'user'
+									? (chat.persona.persona?.name ?? '플레이어')
+									: chat.gameTitle}
+							</h3>
 							<div class="message-content">
 								<MessageContent
 									content={message.content}

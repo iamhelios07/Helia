@@ -43,6 +43,33 @@ const context: PromptContext = {
 	state: { gold: 2 }
 };
 describe('Risu-style prompt configuration', () => {
+	it('inserts a selected persona in the authored block and retains its body, role and format', () => {
+		const ai = parsePromptConfig({
+			version: 2,
+			promptTemplate: [
+				{ type: 'plain', text: 'Before' },
+				{ type: 'persona', role: 'user', text: 'Additional guidance', innerFormat: '[{{slot}}]' },
+				{ type: 'plain', text: 'After' }
+			]
+		});
+		const persona = { name: 'Traveler', description: 'Looks for lost cities' };
+		expect(assemblePrompt(ai, { ...context, persona }).slice(0, 3)).toEqual([
+			{ role: 'system', content: 'Before' },
+			{
+				role: 'user',
+				content: '[Player persona: Traveler\n\nLooks for lost cities\n\nAdditional guidance]'
+			},
+			{ role: 'system', content: 'After' }
+		]);
+		expect(assemblePrompt(ai, context)[1].content).toBe('[Additional guidance]');
+		const disabled = parsePromptConfig({
+			version: 2,
+			promptTemplate: [{ type: 'persona', enabled: false }]
+		});
+		expect(
+			assemblePrompt(disabled, { ...context, persona }).some((m) => m.content.includes('Traveler'))
+		).toBe(false);
+	});
 	it('assembles all prompt types in authored order, preserving roles and special types without evaluating CBS', () => {
 		const ai = parsePromptConfig({
 			version: 2,

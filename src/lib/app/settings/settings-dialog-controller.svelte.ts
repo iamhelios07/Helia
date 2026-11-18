@@ -20,9 +20,13 @@ import {
 import { loadAISettings, saveAISettings } from './repository.js';
 import { SERVICE_PRESETS, getServicePreset, type ServiceId } from './services.js';
 import { parseServiceAccountJson, vertexBaseUrl } from './vertex.js';
-type Section = 'connections' | 'models' | 'prompts';
+type Section = 'connections' | 'models' | 'prompts' | 'personas';
 type Confirmation = { heading: string; message: string; label: string; action: () => void };
 const SECTION_HEADINGS = {
+	personas: {
+		title: '페르소나',
+		description: '플레이할 인물과 현재 사용할 페르소나를 관리하세요.'
+	},
 	connections: { title: 'API 연결', description: 'AI 서비스를 연결하고 사용할 모델을 추가하세요.' },
 	prompts: { title: '프롬프트', description: '프롬프트 프리셋과 전송 순서를 관리하세요.' },
 	models: { title: '모델', description: '추가한 모델을 관리하고 기본 모델을 선택하세요.' }
@@ -97,6 +101,11 @@ export class SettingsDialogController {
 		discardDraft: () => void;
 		isBusy: () => boolean;
 	}>();
+	personaPanel = $state<{
+		hasUnsavedChanges: () => boolean;
+		discardDraft: () => void;
+		flushPending: () => boolean;
+	}>();
 	section = $state<Section>('connections');
 	sectionHeading = $derived(SECTION_HEADINGS[this.section]);
 	settings = $state.raw<AISettings>(emptyAISettings());
@@ -140,7 +149,8 @@ export class SettingsDialogController {
 			this.serviceAccountJson.length > 0 ||
 			this.serviceAccountFileName.length > 0 ||
 			(this.modelDraft !== null && JSON.stringify(this.modelDraft) !== this.initialModel) ||
-			(this.promptPanel?.hasUnsavedChanges() ?? false)
+			(this.promptPanel?.hasUnsavedChanges() ?? false) ||
+			(this.personaPanel?.hasUnsavedChanges() ?? false)
 	);
 	selectedProvider = $derived(
 		this.settings.providers.find((provider) => provider.id === this.providerDraft?.id)
@@ -406,6 +416,7 @@ export class SettingsDialogController {
 	};
 	discardDrafts = () => {
 		this.promptPanel?.discardDraft();
+		this.personaPanel?.discardDraft();
 		const saved = this.selectedProvider;
 		this.apiKey = '';
 		this.clearServiceAccount();
@@ -422,6 +433,7 @@ export class SettingsDialogController {
 		if (this.busy || this.promptPanel?.isBusy()) {
 			return;
 		}
+		this.personaPanel?.flushPending();
 		if (dirtyOverride ?? this.dirty) {
 			this.confirmation = {
 				heading: '변경 사항을 버릴까요?',

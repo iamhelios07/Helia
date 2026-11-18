@@ -1,4 +1,5 @@
 import { providerAddress } from '#lib/app/settings/credential-protocol.js';
+import { loadSessionPersona } from '#lib/app/settings/persona-repository.js';
 import { loadSelectedPromptConfig } from '#lib/app/settings/prompt-repository.js';
 import { loadAISettings } from '#lib/app/settings/repository.js';
 import { validateMessageContent } from '#lib/games/model.js';
@@ -41,8 +42,9 @@ export async function invokeSessionAI(
 	options: AgentOptions & { runtime?: SessionAIRuntime } = {}
 ) {
 	const runtime = options.runtime ?? defaultRuntime();
-	const settings = await loadAISettings(),
-		prompt = loadSelectedPromptConfig();
+	const prompt = loadSelectedPromptConfig();
+	const persona = loadSessionPersona(gameId, sessionId);
+	const settings = await loadAISettings();
 	const { model, provider } = selectedModelConnection(settings, input.modelId);
 	if (options.signal?.aborted) {
 		throw aiError('canceled');
@@ -69,6 +71,7 @@ export async function invokeSessionAI(
 				signal: signal,
 				emit: emit,
 				config: prompt,
+				persona,
 				regex: rules
 			});
 			if (signal.aborted) {

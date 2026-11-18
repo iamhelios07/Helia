@@ -7,7 +7,12 @@ import { transformRegexMessages, transformRegexText } from '#lib/games/regex-run
 import { parseGameState } from '#lib/games/state/value.js';
 
 import { removeMessageEcho } from './message-echo.js';
-import { parsePromptConfig, assemblePrompt, type PromptConfig } from './prompts.js';
+import {
+	parsePromptConfig,
+	assemblePrompt,
+	type PromptConfig,
+	type PromptContext
+} from './prompts.js';
 import {
 	aiError,
 	AI_LIMITS,
@@ -33,6 +38,7 @@ export interface AgentWorkspaceOptions {
 	signal: AbortSignal;
 	emit: (event: AgentEvent) => void;
 	config?: PromptConfig;
+	persona?: PromptContext['persona'];
 	regex?: RegexRule[];
 }
 export async function runAgentWorkspace(
@@ -77,6 +83,7 @@ class AgentWorkspace {
 		);
 		const input = transformed.pop()!.content;
 		const prompt = assemblePrompt(this.ai, {
+			persona: this.options.persona,
 			settings: history.snapshot.settings,
 			lorebook: history.snapshot.ai?.lorebook,
 			messages: messages.map((m, i) => ({ ...m, content: transformed[i].content })),

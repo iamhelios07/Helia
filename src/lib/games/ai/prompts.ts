@@ -300,6 +300,7 @@ export function importPromptPreset(value: unknown): PromptConfig {
 	});
 }
 export interface PromptContext {
+	persona?: { name: string; description: string };
 	settings: GameSettings;
 	lorebook?: LoreEntry[];
 	messages: Message[];
@@ -406,7 +407,7 @@ class PromptAssembler {
 	private appendSlot(block: PromptBlock) {
 		const value =
 			block.type === 'persona' || block.type === 'postEverything'
-				? (block.text ?? '')
+				? this.blockText(block)
 				: this.slots[block.type] || (block.type === 'authornote' ? (block.defaultText ?? '') : '');
 		if (value) {
 			this.add(
@@ -417,6 +418,13 @@ class PromptAssembler {
 		if (block.type === 'postEverything') {
 			this.add('system', this.ai.promptSettings.postEndInnerFormat);
 		}
+	}
+	private blockText(block: PromptBlock): string {
+		if (block.type !== 'persona' || !this.context.persona) {
+			return block.text ?? '';
+		}
+		const { name, description } = this.context.persona;
+		return [`Player persona: ${name}`, description, block.text ?? ''].filter(Boolean).join('\n\n');
 	}
 	private append(block: PromptBlock) {
 		if (block.enabled === false) {

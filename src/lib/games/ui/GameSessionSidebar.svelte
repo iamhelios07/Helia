@@ -9,6 +9,7 @@
 	import GameSettingsPanel from './GameSettingsPanel.svelte';
 	import SessionHistoryPanel from './SessionHistoryPanel.svelte';
 	import SessionModelSelect from './SessionModelSelect.svelte';
+	import SessionPersonaSelect from './SessionPersonaSelect.svelte';
 	let { workspace }: { workspace: GameWorkspaceController } = $props();
 	let historyButton: HTMLButtonElement | undefined;
 	let sessionList: HTMLElement | undefined;
@@ -140,6 +141,7 @@
 				/>{/if}
 		</div>
 		<SessionModelSelect chat={workspace.chat} blocked={workspace.busy} />
+		<SessionPersonaSelect chat={workspace.chat} blocked={workspace.busy} />
 	</div>
 	{#if workspace.chat?.showTimeline}
 		{@const chat = workspace.chat}
@@ -260,13 +262,24 @@
 	.sidebar-standard,
 	.panel-content {
 		display: flex;
-		flex: 1;
 		flex-direction: column;
 		min-height: 0;
 	}
+	.sidebar-standard {
+		overflow-y: auto;
+		scrollbar-width: thin;
+	}
+	.panel-content {
+		flex-shrink: 0;
+	}
+	.panel-content nav {
+		flex: 0 1 auto;
+		max-height: 40vh;
+	}
 	.game-panel {
-		flex: 1;
+		flex: 0 1 auto;
 		min-height: 0;
+		max-height: 45vh;
 		overflow-y: auto;
 	}
 	button {

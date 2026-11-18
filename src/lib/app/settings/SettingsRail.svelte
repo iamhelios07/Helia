@@ -43,6 +43,15 @@
 			onclick={() => controller.switchSection('prompts')}
 			><Icon name="book" size={18} />프롬프트</button
 		>
+		<button
+			class={{ selected: controller.section === 'personas' }}
+			type="button"
+			aria-label="페르소나"
+			aria-current={controller.section === 'personas' ? 'page' : undefined}
+			disabled={controller.busy || controller.promptPanel?.isBusy()}
+			onclick={() => controller.switchSection('personas')}
+			><Icon name="user" size={18} />페르소나</button
+		>
 	</nav>
 	<div class="rail-footer"><Icon name="sun" size={19} /><span>Helia</span></div>
 </aside>

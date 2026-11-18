@@ -24,6 +24,7 @@ import {
 } from '../repository.js';
 import { safeChatStyle } from './chat-style.js';
 import { GenerationMonitor } from './generation-monitor.svelte.js';
+import { SessionPersonaController } from './session-persona-controller.svelte.js';
 
 interface SessionChatControllerOptions {
 	gameId: string;
@@ -85,6 +86,10 @@ export class SessionChatController {
 	externalBusy = $state(false);
 	streamedText = $state('');
 	readonly monitor = new GenerationMonitor();
+	readonly persona = new SessionPersonaController(() => ({
+		gameId: this.gameId,
+		sessionId: this.sessionId
+	}));
 	private retryDraft = $state('');
 	thinking = $state('');
 	progressText = $state('');
@@ -508,6 +513,7 @@ export class SessionChatController {
 		void this.sendMessage();
 	};
 	mount = () => {
+		const unsubscribePersona = this.persona.mount();
 		void this.loadModels();
 		this.externalBusy = isSessionBusy(this.gameId, this.sessionId);
 		const unsubscribeActivity = subscribeSessionActivity(this.gameId, this.sessionId, () => {
@@ -541,6 +547,7 @@ export class SessionChatController {
 			this.modelRequestId++;
 			this.generation?.abort();
 			this.monitor.dispose();
+			unsubscribePersona();
 			unsubscribeActivity();
 			unsubscribeAIEvents();
 			unsubscribe();

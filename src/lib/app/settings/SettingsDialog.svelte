@@ -7,6 +7,7 @@
 	import ConnectionSettingsForm from './ConnectionSettingsForm.svelte';
 	import { selectDefaultModel } from './model.js';
 	import ModelPicker from './ModelPicker.svelte';
+	import PersonaSettingsPanel from './PersonaSettingsPanel.svelte';
 	import PromptSettingsPanel from './PromptSettingsPanel.svelte';
 	import { SERVICE_PRESETS, getServicePreset } from './services.js';
 	import { SettingsDialogController } from './settings-dialog-controller.svelte.js';
@@ -49,7 +50,12 @@
 						onclick={controller.beginConnection}><Icon name="plus" size={17} />새 연결</button
 					>{/if}
 			</div>
-			{#if controller.section === 'prompts'}
+			{#if controller.section === 'personas'}
+				<PersonaSettingsPanel
+					bind:this={controller.personaPanel}
+					requestChange={controller.changeView}
+				/>
+			{:else if controller.section === 'prompts'}
 				<PromptSettingsPanel
 					bind:this={controller.promptPanel}
 					requestChange={controller.changeView}
