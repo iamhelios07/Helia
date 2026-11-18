@@ -162,7 +162,7 @@ it('guards section changes, preset changes and closing while keeping cancelled e
 		.getByRole('button', { name: 'API 연결', exact: true })
 		.click();
 	await expect.element(discard()).toBeVisible();
-	await discard().getByRole('button', { name: '돌아가기', exact: true }).click();
+	await discard().getByRole('button', { name: '취소', exact: true }).click();
 	await expect.element(nameInput()).toHaveValue('아직 저장하지 않은 프리셋');
 	await page.getByRole('combobox', { name: '편집할 프리셋', exact: true }).selectOptions('default');
 	await expect.element(discard()).toBeVisible();
@@ -456,7 +456,7 @@ it('guards replacing unsaved edits and accepts the same file again after cancell
 	);
 	await userEvent.upload(importFile(), file);
 	await expect.element(discard()).toBeVisible();
-	await discard().getByRole('button', { name: '돌아가기', exact: true }).click();
+	await discard().getByRole('button', { name: '취소', exact: true }).click();
 	await expect.element(nameInput()).toHaveValue('유지할 수정 내용');
 	await expect.element(importFile()).toHaveValue('');
 	expect(localStorage.getItem(PROMPT_SETTINGS_KEY)).toBeNull();
@@ -484,10 +484,10 @@ it('duplicates and confirms deletion of presets while keeping at least one prese
 	expect(loadPromptSettings().presets).toHaveLength(2);
 	await page.getByRole('button', { name: '프리셋 삭제', exact: true }).click();
 	const confirmation = page.getByRole('dialog', { name: '프롬프트 프리셋 삭제', exact: true });
-	await confirmation.getByRole('button', { name: '돌아가기', exact: true }).click();
+	await confirmation.getByRole('button', { name: '취소', exact: true }).click();
 	expect(loadPromptSettings().presets).toHaveLength(2);
 	await page.getByRole('button', { name: '프리셋 삭제', exact: true }).click();
-	await confirmation.getByRole('button', { name: '프리셋 삭제', exact: true }).click();
+	await confirmation.getByRole('button', { name: '삭제', exact: true }).click();
 	expect(loadPromptSettings().presets).toHaveLength(1);
 	await expect.element(nameInput()).toHaveValue('기본 프롬프트');
 	await expect

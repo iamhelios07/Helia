@@ -1,5 +1,6 @@
 <script lang="ts">
 	import Icon from '#lib/components/Icon.svelte';
+	import ItemActionButton from '#lib/components/ItemActionButton.svelte';
 
 	import {
 		arrayItem,
@@ -177,11 +178,10 @@
 					onclick={() => onselect(selected === selectionKey ? null : selectionKey)}
 					><Icon name="settings" size={14} /></button
 				>
-				{#if required !== undefined}<button
-						type="button"
-						class="icon-button delete"
-						aria-label="{label} 필드 삭제"
-						title="필드 삭제"
+				{#if required !== undefined}<ItemActionButton
+						action="delete"
+						compact
+						label="{label} 필드 삭제"
 						{disabled}
 						onclick={() =>
 							onconfirm(`${label} 필드와 해당 초기값을 삭제할까요?`, () => {
@@ -191,17 +191,15 @@
 								) {
 									onselect(null);
 								}
-							})}><Icon name="trash" size={14} /></button
-					>{/if}
-			{:else if onremove}<button
-					type="button"
-					class="icon-button delete"
-					aria-label="{label} 항목 삭제"
-					title="항목 삭제"
+							})}
+					/>{/if}
+			{:else if onremove}<ItemActionButton
+					action="delete"
+					compact
+					label="{label} 항목 삭제"
 					disabled={disabled || valueDisabled}
 					onclick={() => onconfirm(`${label} 항목을 삭제할까요?`, () => onremove?.())}
-					><Icon name="trash" size={14} /></button
-				>{/if}
+				/>{/if}
 		</div>
 	</div>
 {/if}
@@ -246,13 +244,14 @@
 		{#if !template && value !== undefined && isStateObject(value)}
 			{#each Object.keys(value).filter((key) => !Object.hasOwn(object!.properties, key)) as key (key)}
 				<div class="unknown-field">
-					<span role="alert">정의되지 않은 필드: {key}</span><button
-						type="button"
+					<span role="alert">정의되지 않은 필드: {key}</span><ItemActionButton
+						action="delete"
+						compact
+						label={`${label}.${key} 초기값 삭제`}
 						{disabled}
 						onclick={() =>
 							onconfirm(`${label}.${key} 초기값을 삭제할까요?`, () => changeChild(key, undefined))}
-						>초기값 삭제</button
-					>
+					/>
 				</div>
 			{/each}
 		{/if}
@@ -418,9 +417,6 @@
 	.icon-button[aria-pressed='true'] {
 		background: var(--surface-active);
 	}
-	.delete {
-		color: var(--text-muted);
-	}
 	button:disabled {
 		opacity: 0.5;
 		cursor: default;
@@ -471,8 +467,7 @@
 		border-color: var(--border);
 		background: var(--background);
 	}
-	.add-field button,
-	.unknown-field button {
+	.add-field button {
 		border: 1px solid var(--border);
 		background: var(--surface);
 		padding: 5px 9px;

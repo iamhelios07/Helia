@@ -3,15 +3,11 @@
 
 	import ConfirmDialog from '#lib/components/ConfirmDialog.svelte';
 	import Icon from '#lib/components/Icon.svelte';
+	import ItemActions from '#lib/components/ItemActions.svelte';
 
 	import { GAME_STYLESHEET, parseCodeProject, type CodeProject } from '../../code-project.js';
-	import {
-		cleanProjectPath,
-		codeDropPath,
-		codeFolders,
-		codeLanguage,
-		renameCodePath
-	} from './code-files.js';
+	import { codeDropPath, codeFolders, renameCodePath } from './code-files.js';
+	import CodeOperationDialog from './CodeOperationDialog.svelte';
 	import { TreeDrag } from './tree-drag.svelte.js';
 	let {
 		source,
@@ -40,9 +36,8 @@
 	let folder = $state('');
 	let operation = $state<'file' | 'folder' | 'rename' | null>(null);
 	let path = $state('');
-	let error = $state('');
-	let deleting = $state(false);
-	let dialog: HTMLDialogElement | undefined;
+	let target = $state('');
+	let deleting = $state<string | null>(null);
 	let disposed = false;
 	onDestroy(() => {
 		disposed = true;
@@ -50,7 +45,7 @@
 	let paths = $derived(Object.keys(project?.files ?? {}).sort());
 	let folders = $derived(project ? codeFolders(project) : []);
 	const drag = new TreeDrag<string>(() => ({
-		disabled: disabled || operation !== null || deleting,
+		disabled: disabled || operation !== null || deleting !== null,
 		canDrop: (before, destination) => {
 			try {
 				return !!project && codeDropPath(project, before, destination) !== null;
@@ -98,71 +93,26 @@
 	function write(next: CodeProject) {
 		onchange(JSON.stringify(parseCodeProject(next), null, 2));
 	}
-	function begin(kind: 'file' | 'folder' | 'rename') {
+	function begin(kind: 'file' | 'folder' | 'rename', item = '') {
 		operation = kind;
+		target = item;
 		path = folder ? folder + '/' : '';
 		if (kind === 'rename') {
-			path = active ?? folder;
-		}
-		error = '';
-		dialog?.showModal();
-	}
-	function operationTitle() {
-		if (operation === 'rename') {
-			return '경로 이름 변경';
-		}
-		return operation === 'folder' ? '새 코드 폴더' : '새 코드 파일';
-	}
-	function ensureAvailable(nextPath: string, before: string) {
-		if (operation === 'rename' && nextPath === before) {
-			return;
-		}
-		if (paths.includes(nextPath) || folders.includes(nextPath)) {
-			throw new Error('같은 경로가 이미 있어요.');
+			path = item.split('/').at(-1)!;
 		}
 	}
-	async function submit(event: SubmitEvent) {
-		event.preventDefault();
-		if (!project || locked) {
-			return;
-		}
-		try {
-			const nextPath = cleanProjectPath(path);
-			const before = active ?? folder;
-			ensureAvailable(nextPath, before);
-			if (operation === 'rename') {
-				if (!before) {
-					return;
-				}
-				if (paths.includes(before)) {
-					codeLanguage(nextPath);
-				}
-				write(await renameCodePath(project, before, nextPath));
-				onmove(before, nextPath);
-			} else if (operation === 'folder') {
-				write({ ...project, folders: [...folders, nextPath] });
-				folder = nextPath;
-			} else {
-				write({
-					...project,
-					files: { ...project.files, [nextPath]: { language: codeLanguage(nextPath), source: '' } }
-				});
-				onselect(nextPath);
-			}
-			dialog?.close();
-			operation = null;
-		} catch (cause) {
-			error = cause instanceof Error ? cause.message : '경로를 변경하지 못했어요.';
-		}
+	function deleteReason(item: string) {
+		return project && (project.entry === item || project.entry.startsWith(item + '/'))
+			? '진입점이 포함되어 있어요. 다른 파일을 진입점으로 지정한 뒤 삭제하세요.'
+			: '';
 	}
 	function remove() {
-		if (!project || locked) {
+		if (!project || locked || !deleting) {
 			return;
 		}
-		const target = active ?? folder;
-		const removed = paths.filter((item) => item === target || item.startsWith(target + '/'));
+		const removed = paths.filter((item) => item === deleting || item.startsWith(deleting + '/'));
 		if (removed.includes(project.entry)) {
-			deleting = false;
+			deleting = null;
 			return;
 		}
 		write({
@@ -170,11 +120,11 @@
 			files: Object.fromEntries(
 				Object.entries(project.files).filter(([key]) => !removed.includes(key))
 			),
-			folders: folders.filter((item) => item !== target && !item.startsWith(target + '/'))
+			folders: folders.filter((item) => item !== deleting && !item.startsWith(deleting + '/'))
 		});
 		onremove(removed);
 		folder = '';
-		deleting = false;
+		deleting = null;
 	}
 </script>
 
@@ -230,114 +180,113 @@
 				></button
 			>
 		</div>
-		{#if active !== '.helia/GameState.d.ts' && active !== '.helia/runtime.d.ts' && (active || folder)}<div
-				class="selection-tools"
-			>
-				<button type="button" disabled={locked} onclick={() => begin('rename')}>이름 변경</button>
-				<button
-					type="button"
-					disabled={locked ||
-						(active ?? folder) === project.entry ||
-						(project.entry.startsWith(folder + '/') && !active)}
-					onclick={() => (deleting = true)}>삭제</button
-				>
-				{#if active && active !== '.helia/GameState.d.ts' && active !== '.helia/runtime.d.ts' && active !== project.entry}<button
-						type="button"
-						disabled={locked}
-						onclick={() => project && active && write({ ...project, entry: active })}
-						>진입점 지정</button
-					>{/if}
-			</div>{/if}
 	{:else}<p role="alert">코드 프로젝트를 읽지 못했어요.</p>{/if}
 </section>
 
 {#snippet directory(parent: string)}
 	{#each folders.filter((item) => item.split('/').slice(0, -1).join('/') === parent) as item (item)}
-		<details open>
-			<summary
-				class={{
-					selected: folder === item,
-					dragging: drag.key === item,
-					'drop-target': drag.target === item
-				}}
-				title={item}
-				draggable={!locked}
-				ondragstart={(event) => startDrag(event, item, parent)}
-				ondragend={drag.end}
-				ondragover={(event) => overFolder(event, item)}
-				ondragleave={drag.leave}
-				ondrop={drag.drop}
-				onclick={() => {
-					folder = item;
-					onselect('');
-				}}><Icon name="folder" size={13} /><span>{item.split('/').at(-1)}</span></summary
-			>
-			<div class="children">{@render directory(item)}</div>
-		</details>
+		<div class="folder-row">
+			<details open>
+				<summary
+					class={{
+						selected: folder === item,
+						dragging: drag.key === item,
+						'drop-target': drag.target === item
+					}}
+					title={item}
+					draggable={!locked}
+					ondragstart={(event) => startDrag(event, item, parent)}
+					ondragend={drag.end}
+					ondragover={(event) => overFolder(event, item)}
+					ondragleave={drag.leave}
+					ondrop={drag.drop}
+					onclick={() => {
+						folder = item;
+						onselect('');
+					}}><Icon name="folder" size={13} /><span>{item.split('/').at(-1)}</span></summary
+				>
+				<div class="children">{@render directory(item)}</div>
+			</details>
+			<div class="folder-actions">
+				<ItemActions
+					name={item}
+					disabled={locked}
+					onrename={() => begin('rename', item)}
+					ondelete={() => {
+						deleting = item;
+					}}
+					deleteReason={deleteReason(item)}
+				/>
+			</div>
+		</div>
 	{/each}
 	{#each paths.filter((item) => item.split('/').slice(0, -1).join('/') === parent) as item (item)}
-		<button
-			type="button"
-			class={['file', { selected: active === item, dragging: drag.key === item }]}
-			draggable={!locked && item !== GAME_STYLESHEET}
-			ondragstart={(event) => startDrag(event, item, parent)}
-			ondragend={drag.end}
-			ondragover={(event) => drag.over(event, parent)}
-			ondragleave={drag.leave}
-			ondrop={drag.drop}
-			aria-current={active === item ? 'page' : undefined}
-			onclick={() => {
-				folder = parent;
-				onselect(item);
-			}}
-			title={item}
-			><span class="mark">{item.split('.').at(-1)?.toUpperCase()}</span><span
-				>{item.split('/').at(-1)}</span
-			>{#if project?.entry === item}<span class="annotation" title="프로젝트 진입점">진입점</span
-				>{/if}</button
-		>
+		<div class="file-row">
+			<button
+				type="button"
+				class={['file', { selected: active === item, dragging: drag.key === item }]}
+				draggable={!locked && item !== GAME_STYLESHEET}
+				ondragstart={(event) => startDrag(event, item, parent)}
+				ondragend={drag.end}
+				ondragover={(event) => drag.over(event, parent)}
+				ondragleave={drag.leave}
+				ondrop={drag.drop}
+				aria-current={active === item ? 'page' : undefined}
+				onclick={() => {
+					folder = parent;
+					onselect(item);
+				}}
+				title={item}
+				><span class="mark">{item.split('.').at(-1)?.toUpperCase()}</span><span
+					>{item.split('/').at(-1)}</span
+				>{#if project?.entry === item}<span class="annotation" title="프로젝트 진입점">진입점</span
+					>{/if}</button
+			><ItemActions
+				name={item}
+				disabled={locked}
+				onrename={() => begin('rename', item)}
+				renameReason={item === GAME_STYLESHEET ? 'style.css는 고정된 이름이에요.' : ''}
+				ondelete={() => {
+					deleting = item;
+				}}
+				deleteReason={deleteReason(item)}
+				actions={project && project.entry !== item && project.files[item].language !== 'css'
+					? [
+							{
+								id: 'set-entry',
+								icon: 'arrow-right',
+								text: '진입점 지정',
+								onclick: () => {
+									if (project) {
+										write({ ...project, entry: item });
+									}
+								}
+							}
+						]
+					: []}
+			/>
+		</div>
 	{/each}
 {/snippet}
 
-<dialog
-	{@attach (element) => {
-		dialog = element;
-		return () => {
-			dialog = undefined;
-		};
-	}}
-	oncancel={() => (operation = null)}
->
-	<form onsubmit={submit}>
-		<h2>
-			{operationTitle()}
-		</h2>
-		<label for="code-path">프로젝트 상대 경로</label><input
-			id="code-path"
-			bind:value={path}
-			placeholder="components/Inventory.tsx"
-			required
-			autocomplete="off"
-		/>
-		<p>폴더는 /로 구분해요. 파일 이름 변경 시 연결된 import도 갱신됩니다.</p>
-		{#if error}<p role="alert">{error}</p>{/if}
-		<footer>
-			<button
-				type="button"
-				onclick={() => {
-					dialog?.close();
-					operation = null;
-				}}>취소</button
-			><button type="submit" disabled={locked}>확인</button>
-		</footer>
-	</form>
-</dialog>
+{#if operation}<CodeOperationDialog
+		kind={operation}
+		{target}
+		name={path}
+		{source}
+		disabled={locked}
+		{onchange}
+		{onmove}
+		{onselect}
+		onfolder={(value) => (folder = value)}
+		onclose={() => (operation = null)}
+	/>{/if}
 {#if deleting}<ConfirmDialog
 		title="코드 삭제"
-		message="{active ??
-			folder}을(를) 삭제할까요? 이 코드를 참조하는 파일은 수정이 필요할 수 있어요."
+		message={`‘${deleting}’${folders.includes(deleting) ? ' 폴더와 안의 파일' : ''}을 삭제할까요? 이 코드를 참조하는 파일은 수정이 필요할 수 있어요.`}
+		disabled={locked}
 		onconfirm={remove}
-		oncancel={() => (deleting = false)}
+		oncancel={() => (deleting = null)}
 	/>{/if}
 
 <style>
@@ -348,8 +297,7 @@
 	h2,
 	.tools,
 	.file,
-	summary,
-	.selection-tools {
+	summary {
 		display: flex;
 		align-items: center;
 	}
@@ -446,14 +394,25 @@
 		padding: 6px 12px;
 		overflow-wrap: anywhere;
 	}
-	.selection-tools {
-		gap: 3px;
-		flex-wrap: wrap;
-		padding: 7px 12px;
+	.file-row {
+		display: flex;
+		align-items: center;
+		padding-right: 8px;
 	}
-	.selection-tools button {
-		font-size: 10px;
-		padding: 4px;
+	.file-row .file {
+		flex: 1;
+		min-width: 0;
+	}
+	.folder-row {
+		position: relative;
+	}
+	.folder-row summary {
+		padding-right: 40px;
+	}
+	.folder-actions {
+		position: absolute;
+		top: 0;
+		right: 8px;
 	}
 	summary {
 		list-style: none;
@@ -461,47 +420,10 @@
 	summary::-webkit-details-marker {
 		display: none;
 	}
-	dialog {
-		background: var(--background);
-		color: var(--text);
-		border: 1px solid var(--border-strong);
-		border-radius: 7px;
-		padding: 22px;
-		width: min(460px, 90vw);
-	}
-	dialog::backdrop {
-		background: #0008;
-	}
-	form {
-		display: grid;
-		gap: 12px;
-	}
-	dialog h2 {
-		font-size: 15px;
-		color: var(--text-strong);
-	}
-	input {
-		width: 100%;
-		padding: 9px;
-		border: 1px solid var(--border);
-		background: var(--surface);
-		color: var(--text);
-		border-radius: 4px;
-	}
 	p {
 		font-size: 11px;
 		color: var(--text-muted);
 		margin: 0;
 		line-height: 1.6;
-	}
-	footer {
-		display: flex;
-		justify-content: flex-end;
-		gap: 10px;
-	}
-	footer button {
-		padding: 7px 12px;
-		border: 1px solid var(--border);
-		border-radius: 4px;
 	}
 </style>

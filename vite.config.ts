@@ -45,6 +45,7 @@ export default defineConfig(({ mode }) => ({
 				optimizeDeps: {
 					// Discover lazy editor contributions before browser tests mount an editor.
 					include: [
+						'@lucide/svelte/icons/ellipsis',
 						'typescript',
 						'@jitl/quickjs-singlefile-browser-release-sync',
 						'quickjs-emscripten-core',

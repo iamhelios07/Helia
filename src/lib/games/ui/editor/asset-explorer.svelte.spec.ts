@@ -3,6 +3,8 @@ import { expect, it, vi } from 'vitest';
 import { render } from 'vitest-browser-svelte';
 import { page, userEvent } from 'vitest/browser';
 
+import { chooseItemAction } from '#lib/components/item-actions-test.js';
+
 import AssetExplorer from './AssetExplorer.svelte';
 
 const portrait = {
@@ -14,9 +16,11 @@ const portrait = {
 it('opens real files through folder rows and renames folders without changing stable references', async () => {
 	let source = JSON.stringify({ portrait });
 	const onselect = vi.fn();
+	const onremove = vi.fn();
 	const screen = render(AssetExplorer, {
 		source,
 		onselect,
+		onremove,
 		onchange: (next) => {
 			source = next;
 			void screen.rerender({ source });
@@ -28,19 +32,20 @@ it('opens real files through folder rows and renames folders without changing st
 	await expect
 		.element(page.getByRole('button', { name: 'images/characters/hero.png', exact: true }))
 		.not.toBeInTheDocument();
-	await page.getByRole('button', { name: '에셋 폴더 이름 변경', exact: true }).click();
-	await page.getByRole('textbox', { name: '폴더 경로', exact: true }).fill('art');
+	await chooseItemAction('images', 'rename');
+	await page.getByRole('textbox', { name: '이름', exact: true }).fill('art');
 	await page.getByRole('button', { name: '확인', exact: true }).click();
 	await expect.poll(() => JSON.parse(source).portrait.name).toBe('art/characters/hero.png');
 	await expect
 		.element(page.getByRole('button', { name: 'art/characters/hero.png', exact: true }))
 		.toBeVisible();
-	await page.getByRole('button', { name: '에셋 폴더 삭제', exact: true }).click();
+	await chooseItemAction('art', 'delete');
 	await page.getByRole('button', { name: '취소', exact: true }).click();
 	expect(JSON.parse(source).portrait).toBeDefined();
-	await page.getByRole('button', { name: '에셋 폴더 삭제', exact: true }).click();
+	await chooseItemAction('art', 'delete');
 	await page.getByRole('button', { name: '삭제', exact: true }).click();
 	await expect.poll(() => JSON.parse(source)).toEqual({});
+	expect(onremove).toHaveBeenCalledWith(['portrait']);
 });
 
 it('uploads into a newly created folder and rejects duplicate files without overwriting content', async () => {

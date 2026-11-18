@@ -1,5 +1,6 @@
 <script lang="ts">
 	import Icon from '#lib/components/Icon.svelte';
+	import ItemActionButton from '#lib/components/ItemActionButton.svelte';
 
 	import type { SettingsDialogController } from './settings-dialog-controller.svelte.js';
 
@@ -156,11 +157,12 @@
 				type="submit"
 				disabled={controller.readingServiceAccount}
 				>{controller.saveLabel}<Icon name="arrow-right" size={16} /></button
-			>{#if !controller.creating}<button
-					class="delete-connection"
-					type="button"
-					onclick={controller.removeConnection}><Icon name="trash" size={15} />연결 삭제</button
-				>{/if}
+			>{#if !controller.creating}<ItemActionButton
+					action="delete"
+					label="연결 삭제"
+					disabled={controller.busy}
+					onclick={controller.removeConnection}
+				/>{/if}
 		</fieldset>
 	</form>{/if}
 
@@ -298,22 +300,6 @@
 		width: 100%;
 		justify-content: space-between;
 		margin-top: 3px;
-	}
-	.delete-connection {
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		gap: 6px;
-		width: 100%;
-		min-height: 36px;
-		margin-top: 15px;
-		border: 0;
-		background: transparent;
-		color: var(--text-muted);
-		font-size: 11px;
-	}
-	.delete-connection:hover {
-		color: var(--text-strong);
 	}
 
 	.notice {

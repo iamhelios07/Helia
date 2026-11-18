@@ -1067,7 +1067,8 @@ describe('sessions', () => {
 describe('sessions', () => {
 	it('renames inline and updates the active session heading after commit', async () => {
 		render(GameWorkspace, { gameId: game.id });
-		await page.getByRole('button', { name: '새 세션 이름 수정' }).click();
+		await page.getByRole('button', { name: '새 세션 작업', exact: true }).click();
+		await page.getByRole('button', { name: '새 세션 이름 변경', exact: true }).click();
 		await expect.element(page.getByRole('textbox', { name: '세션 이름' })).toHaveFocus();
 		await page.getByRole('textbox', { name: '세션 이름' }).fill('  첫 번째 모험  ');
 		await userEvent.keyboard('{Enter}');
@@ -1080,10 +1081,11 @@ describe('sessions', () => {
 	it('rejects blank names, preserves failed edits, and supports cancelling', async () => {
 		vi.mocked(renameSession).mockRejectedValueOnce(new Error('Write failed'));
 		render(GameWorkspace, { gameId: game.id });
-		await page.getByRole('button', { name: '새 세션 이름 수정' }).click();
+		await page.getByRole('button', { name: '새 세션 작업', exact: true }).click();
+		await page.getByRole('button', { name: '새 세션 이름 변경', exact: true }).click();
 		await page.getByRole('textbox', { name: '세션 이름' }).fill(' ');
 		await userEvent.keyboard('{Enter}');
-		await expect.element(page.getByRole('alert')).toHaveTextContent('세션 이름을 입력해주세요');
+		await expect.element(page.getByRole('alert')).toHaveTextContent('이름을 입력해주세요');
 		expect(renameSession).not.toHaveBeenCalled();
 		await page.getByRole('textbox', { name: '세션 이름' }).fill('유지할 이름');
 		await userEvent.keyboard('{Enter}');
@@ -1101,6 +1103,7 @@ describe('sessions', () => {
 describe('sessions', () => {
 	it('requires confirmation before deleting and can cancel', async () => {
 		render(GameWorkspace, { gameId: game.id });
+		await page.getByRole('button', { name: '새 세션 작업', exact: true }).click();
 		await page.getByRole('button', { name: '새 세션 삭제' }).click();
 		await expect.element(page.getByRole('dialog', { name: '세션 삭제' })).toBeVisible();
 		expect(deleteSession).not.toHaveBeenCalled();
@@ -1117,6 +1120,7 @@ describe('sessions', () => {
 			sessions: [session, otherSession]
 		});
 		render(GameWorkspace, { gameId: game.id });
+		await page.getByRole('button', { name: otherSession.title + ' 작업', exact: true }).click();
 		await page.getByRole('button', { name: otherSession.title + ' 삭제' }).click();
 		await page.getByRole('dialog').getByRole('button', { name: '삭제', exact: true }).click();
 		await expect.element(page.getByRole('heading', { name: '새 세션', exact: true })).toBeVisible();
@@ -1129,6 +1133,7 @@ describe('sessions', () => {
 	it('preserves sessions when deletion fails and can retry', async () => {
 		vi.mocked(deleteSession).mockRejectedValueOnce(new Error('Write failed'));
 		render(GameWorkspace, { gameId: game.id });
+		await page.getByRole('button', { name: '새 세션 작업', exact: true }).click();
 		await page.getByRole('button', { name: '새 세션 삭제' }).click();
 		await page.getByRole('dialog').getByRole('button', { name: '삭제', exact: true }).click();
 		await expect.element(page.getByRole('alert')).toHaveTextContent('세션을 삭제하지 못했어요');

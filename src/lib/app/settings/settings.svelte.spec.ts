@@ -348,7 +348,7 @@ it('requires confirmation before losing key input through navigation or Escape',
 	await expect
 		.element(page.getByRole('dialog', { name: '변경 사항을 버릴까요?', exact: true }))
 		.toBeVisible();
-	await page.getByRole('button', { name: '돌아가기', exact: true }).click();
+	await page.getByRole('button', { name: '취소', exact: true }).click();
 	await expect.element(page.getByLabelText('API 키', { exact: true })).toHaveValue('draft-key');
 	await userEvent.keyboard('{Escape}');
 	await expect
@@ -400,10 +400,10 @@ it('removes connection metadata and credentials while preserving unrelated conne
 	await page.getByRole('button', { name: '연결 삭제', exact: true }).click();
 	const confirmation = page.getByRole('dialog', { name: 'API 연결을 삭제할까요?', exact: true });
 	await expect.element(confirmation).toHaveTextContent('모델 1개도 함께 삭제');
-	await page.getByRole('button', { name: '돌아가기', exact: true }).click();
+	await page.getByRole('button', { name: '취소', exact: true }).click();
 	expect(deleteCredential).not.toHaveBeenCalled();
 	await page.getByRole('button', { name: '연결 삭제', exact: true }).click();
-	await confirmation.getByRole('button', { name: '연결 삭제', exact: true }).click();
+	await confirmation.getByRole('button', { name: '삭제', exact: true }).click();
 	await expect
 		.poll(async () => (await stored()).providers.map((provider) => provider.id))
 		.toEqual(['provider-two']);

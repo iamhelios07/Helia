@@ -23,6 +23,7 @@
 	let parsed = $derived(readAuthoringSource(source));
 	let error = $state('');
 	let confirmation = $state('');
+	let deleting = $derived(confirmation.includes('삭제'));
 	let confirming = $state(false);
 	let pending: (() => void) | null = null;
 	function confirm(message: string, action: () => void) {
@@ -93,9 +94,10 @@
 	{/if}
 </div>
 {#if confirming}<ConfirmDialog
-		title="상태 변경 확인"
+		title={deleting ? '삭제 확인' : '상태 변경 확인'}
 		message={confirmation}
-		confirmLabel="변경"
+		confirmLabel={deleting ? '삭제' : '변경'}
+		tone={deleting ? 'danger' : 'default'}
 		{disabled}
 		oncancel={() => {
 			confirming = false;

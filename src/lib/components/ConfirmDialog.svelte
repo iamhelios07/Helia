@@ -4,6 +4,8 @@
 		message,
 		confirmLabel = '삭제',
 		disabled = false,
+		error = '',
+		tone = 'danger',
 		onconfirm,
 		oncancel
 	}: {
@@ -11,13 +13,21 @@
 		message: string;
 		confirmLabel?: string;
 		disabled?: boolean;
+		error?: string;
+		tone?: 'danger' | 'default';
 		onconfirm: () => void;
 		oncancel: () => void;
 	} = $props();
 	const id = $props.id();
 	function open(element: HTMLDialogElement) {
+		const previousFocus = document.activeElement;
 		element.showModal();
-		return () => element.close();
+		return () => {
+			element.close();
+			if (previousFocus instanceof HTMLElement && previousFocus.isConnected) {
+				previousFocus.focus();
+			}
+		};
 	}
 </script>
 
@@ -34,9 +44,12 @@
 >
 	<h2 id={`${id}-title`}>{title}</h2>
 	<p id={`${id}-message`}>{message}</p>
+	{#if error}<p class="error" role="alert">{error}</p>{/if}
 	<div class="actions">
 		<button type="button" {disabled} onclick={oncancel}>취소</button>
-		<button type="button" class="confirm" {disabled} onclick={onconfirm}>{confirmLabel}</button>
+		<button type="button" class={['confirm', tone]} {disabled} onclick={onconfirm}
+			>{confirmLabel}</button
+		>
 	</div>
 </dialog>
 
@@ -81,6 +94,14 @@
 	button.confirm {
 		background: var(--text);
 		color: var(--background);
+	}
+	button.danger {
+		background: color-mix(in srgb, var(--danger, #ef9b9b) 15%, transparent);
+		border-color: color-mix(in srgb, var(--danger, #ef9b9b) 50%, transparent);
+		color: var(--danger, #ef9b9b);
+	}
+	.error {
+		color: var(--danger, #ef9b9b);
 	}
 	button:focus-visible {
 		outline: 2px solid var(--text);

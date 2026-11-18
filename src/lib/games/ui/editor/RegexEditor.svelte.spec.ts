@@ -3,6 +3,8 @@ import { expect, it } from 'vitest';
 import { render } from 'vitest-browser-svelte';
 import { page } from 'vitest/browser';
 
+import { chooseItemAction } from '#lib/components/item-actions-test.js';
+
 import { createRegexRule, type RegexRule } from '../../regex.js';
 import RegexEditor from './RegexEditor.svelte';
 
@@ -53,7 +55,8 @@ it('orders, disables, retargets and removes rules', async () => {
 	await expect
 		.poll(() => JSON.parse(source)[1])
 		.toMatchObject({ stage: 'request', roles: ['assistant', 'user'] });
-	await page.getByRole('button', { name: '규칙 삭제' }).click();
+	await chooseItemAction('첫 규칙', 'delete');
+	await page.getByRole('button', { name: '삭제', exact: true }).click();
 	await expect.poll(() => JSON.parse(source).map((r: RegexRule) => r.id)).toEqual([second.id]);
 });
 

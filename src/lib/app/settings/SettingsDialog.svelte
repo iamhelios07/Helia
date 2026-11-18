@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 
+	import ConfirmDialog from '#lib/components/ConfirmDialog.svelte';
 	import Icon from '#lib/components/Icon.svelte';
 
 	import ConnectionSettingsForm from './ConnectionSettingsForm.svelte';
@@ -277,28 +278,16 @@
 			</div>
 		</form>
 	</dialog>{/if}
-{#if controller.confirmation}<dialog
-		class="confirmation-dialog"
-		{@attach controller.openModal}
-		aria-labelledby="confirmation-heading"
-		aria-describedby="confirmation-message"
-		oncancel={(event) => {
-			event.preventDefault();
-			controller.confirmation = null;
-		}}
-	>
-		<h2 id="confirmation-heading">{controller.confirmation.heading}</h2>
-		<p id="confirmation-message">{controller.confirmation.message}</p>
-		<div class="form-actions">
-			<button
-				class="secondary-button"
-				type="button"
-				onclick={() => (controller.confirmation = null)}>돌아가기</button
-			><button class="primary-button" type="button" onclick={controller.confirmAction}
-				>{controller.confirmation.label}</button
-			>
-		</div>
-	</dialog>{/if}
+{#if controller.confirmation}<ConfirmDialog
+		title={controller.confirmation.heading}
+		message={controller.confirmation.message}
+		confirmLabel={controller.confirmation.label.includes('삭제')
+			? '삭제'
+			: controller.confirmation.label}
+		tone={controller.confirmation.label.includes('삭제') ? 'danger' : 'default'}
+		onconfirm={controller.confirmAction}
+		oncancel={() => (controller.confirmation = null)}
+	/>{/if}
 
 <style>
 	dialog {
@@ -718,8 +707,7 @@
 	.empty-state button {
 		margin-top: 5px;
 	}
-	.editor-dialog,
-	.confirmation-dialog {
+	.editor-dialog {
 		width: min(440px, calc(100vw - 32px));
 		max-height: calc(100dvh - 32px);
 		padding: 27px;
@@ -733,18 +721,10 @@
 		gap: 15px;
 		margin-bottom: 24px;
 	}
-	.editor-heading h2,
-	.confirmation-dialog h2 {
+	.editor-heading h2 {
 		font-size: 18px;
 		font-weight: 550;
 		color: var(--text-strong);
-	}
-	.confirmation-dialog p {
-		margin: 16px 0 24px;
-		font-size: 13px;
-		line-height: 1.8;
-		color: var(--text-muted);
-		overflow-wrap: anywhere;
 	}
 	.form-actions {
 		display: flex;

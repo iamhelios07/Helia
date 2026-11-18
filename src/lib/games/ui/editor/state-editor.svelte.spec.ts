@@ -57,11 +57,11 @@ it('updates both canonical sources for schema changes and reflects source change
 		.element(page.getByRole('spinbutton', { name: '상태.party[0].health 초기값', exact: true }))
 		.toHaveValue(42);
 	await page.getByRole('button', { name: '상태.party[].health 필드 삭제', exact: true }).click();
-	await expect.element(page.getByRole('dialog', { name: '상태 변경 확인' })).toBeVisible();
+	await expect.element(page.getByRole('dialog', { name: '삭제 확인' })).toBeVisible();
 	await page.getByRole('button', { name: '취소', exact: true }).click();
 	expect(onchange).toHaveBeenCalledTimes(1);
 	await page.getByRole('button', { name: '상태.party[].health 필드 삭제', exact: true }).click();
-	await page.getByRole('button', { name: '변경', exact: true }).click();
+	await page.getByRole('button', { name: '삭제', exact: true }).click();
 	next = JSON.parse(onchange.mock.lastCall![0]);
 	expect(next.initialState.party).toEqual([{ nickname: null }, {}]);
 	expect(JSON.stringify(next.schema)).not.toContain('health');
@@ -105,7 +105,7 @@ it('edits optional/null values and nested arrays without adding absent values on
 	expect(next.initialState.party[2]).toEqual({ hp: 0 });
 	await screen.rerender({ source: JSON.stringify(next) });
 	await page.getByRole('button', { name: '상태.party[1] 항목 삭제', exact: true }).click();
-	await page.getByRole('button', { name: '변경', exact: true }).click();
+	await page.getByRole('button', { name: '삭제', exact: true }).click();
 	expect(JSON.parse(onchange.mock.lastCall![0]).initialState.party).toEqual([
 		{ hp: 10, nickname: null },
 		{ hp: 0 }

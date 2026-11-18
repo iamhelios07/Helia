@@ -1,5 +1,6 @@
 <script lang="ts">
 	import Icon from '#lib/components/Icon.svelte';
+	import ItemActions from '#lib/components/ItemActions.svelte';
 
 	import {
 		createRegexRule,
@@ -123,7 +124,13 @@
 								disabled={disabled || index === rules.length - 1}
 								onclick={() => move(1)}>↓</button
 							>
-							<button type="button" class="delete" onclick={remove}>규칙 삭제</button>
+							<ItemActions
+								name={selected.name || '이름 없는 규칙'}
+								{disabled}
+								onrenamevalue={(name) => update({ name })}
+								ondelete={remove}
+								deleteMessage={`‘${selected.name || '이름 없는 규칙'}’ 규칙을 삭제할까요?`}
+							/>
 						</div>
 						<label
 							>규칙 이름<input
@@ -298,9 +305,6 @@
 	}
 	.tools .check {
 		margin-right: auto;
-	}
-	.delete {
-		color: var(--danger, #e47878);
 	}
 	.help {
 		margin: 0;

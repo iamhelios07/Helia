@@ -2,6 +2,7 @@
 	import { SvelteMap } from 'svelte/reactivity';
 
 	import Icon from '#lib/components/Icon.svelte';
+	import ItemActions from '#lib/components/ItemActions.svelte';
 	import { parseGameAIContent, type LoreEntry } from '#lib/games/ai/prompts.js';
 
 	import {
@@ -29,8 +30,6 @@
 
 	let selectedId = $state<string | null>(null);
 	let expandedFolders = $state.raw<string[]>([]);
-	let renamingFolder = $state<string | null>(null);
-	let renamingValue = $state('');
 
 	let content = $derived.by(() => {
 		try {
@@ -141,31 +140,16 @@
 			? expandedFolders.filter((name) => name !== folder)
 			: [...expandedFolders, folder];
 	}
-	function startRename(folder: string) {
-		renamingFolder = folder;
-		renamingValue = folder;
-	}
-	function commitRename() {
-		const next = renamingValue.trim();
-		const previous = renamingFolder;
-		renamingFolder = null;
-		if (
-			!previous ||
-			!next ||
-			next === previous ||
-			entries === null ||
-			content === null ||
-			disabled
-		) {
+	function renameFolder(previous: string, next: string) {
+		if (!content || !entries || disabled || next === previous) {
 			return;
 		}
 		if (folders.some((group) => group.folder === next)) {
-			return;
+			throw Error('같은 이름의 폴더가 이미 있어요.');
 		}
-		const declared = knownFolders(content).filter((name) => name !== previous);
 		commit(
 			entries.map((entry) => (entry.folder === previous ? { ...entry, folder: next } : entry)),
-			[...declared, next]
+			[...knownFolders(content).filter((name) => name !== previous), next]
 		);
 	}
 	function deleteFolder(folder: string) {
@@ -228,59 +212,32 @@
 			</div>
 			{#each folders as group (group.folder)}
 				{#if group.folder}
-					{#if renamingFolder === group.folder}
-						<input
-							class="folder-rename"
-							value={renamingValue}
-							{disabled}
-							aria-label="폴더 이름 변경"
-							oninput={(event) => (renamingValue = event.currentTarget.value)}
-							onkeydown={(event) => {
-								if (event.key === 'Enter') {
-									commitRename();
-								} else if (event.key === 'Escape') {
-									renamingFolder = null;
-								}
-							}}
-							onblur={commitRename}
-						/>
-					{:else}
-						<div
-							role="group"
-							class="folder-row"
-							ondragover={(event) => dragOverFolder(event, group.folder)}
-							ondragleave={drag.leave}
-							ondrop={drag.drop}
+					<div
+						role="group"
+						class="folder-row"
+						ondragover={(event) => dragOverFolder(event, group.folder)}
+						ondragleave={drag.leave}
+						ondrop={drag.drop}
+					>
+						<button
+							type="button"
+							class="folder-open"
+							aria-label={`${group.folder} 폴더 펼치기`}
+							aria-expanded={expandedFolders.includes(group.folder)}
+							onclick={() => toggleFolder(group.folder)}
 						>
-							<button
-								type="button"
-								class="folder-open"
-								aria-label={`${group.folder} 폴더 펼치기`}
-								aria-expanded={expandedFolders.includes(group.folder)}
-								onclick={() => toggleFolder(group.folder)}
+							<Icon name="folder" size={13} /><span>{group.folder}</span><span class="folder-count"
+								>{group.items.length}</span
 							>
-								<Icon name="folder" size={13} /><span>{group.folder}</span><span
-									class="folder-count">{group.items.length}</span
-								>
-							</button>
-							<span class="folder-tools">
-								<button
-									type="button"
-									class="icon-action"
-									{disabled}
-									aria-label={`${group.folder} 이름 변경`}
-									onclick={() => startRename(group.folder)}><Icon name="pencil" size={12} /></button
-								>
-								<button
-									type="button"
-									class="icon-action"
-									{disabled}
-									aria-label={`${group.folder} 삭제 (로어는 최상위로 이동)`}
-									onclick={() => deleteFolder(group.folder)}><Icon name="close" size={12} /></button
-								>
-							</span>
-						</div>
-					{/if}
+						</button>
+						<ItemActions
+							name={group.folder}
+							{disabled}
+							onrenamevalue={(name) => renameFolder(group.folder, name)}
+							ondelete={() => deleteFolder(group.folder)}
+							deleteMessage={`‘${group.folder}’ 폴더를 삭제할까요? 안의 로어는 최상위로 이동합니다.`}
+						/>
+					</div>
 				{/if}
 				{#if !group.folder || expandedFolders.includes(group.folder)}
 					{#each group.items as entry (entryKey(entry))}
@@ -309,15 +266,21 @@
 								onclick={() => (selectedId = entryKey(entry))}
 								>{entry.name ?? entry.keys[0] ?? '이름 없음'}</button
 							>
-							<span class="entry-tools">
-								<button
-									type="button"
-									class="icon-action"
-									{disabled}
-									aria-label={`${entry.name ?? '로어'} 삭제`}
-									onclick={() => removeEntry(entry)}><Icon name="close" size={12} /></button
-								>
-							</span>
+							<ItemActions
+								name={entry.name ?? '로어'}
+								{disabled}
+								onrenamevalue={(name) => {
+									if (entries) {
+										commit(
+											entries.map((item) =>
+												entryKey(item) === entryKey(entry) ? { ...item, name } : item
+											)
+										);
+									}
+								}}
+								ondelete={() => removeEntry(entry)}
+								deleteMessage={`‘${entry.name ?? '로어'}’ 로어를 삭제할까요?`}
+							/>
 						</div>
 					{/each}
 					{#if !group.folder}
@@ -492,23 +455,6 @@
 		font-size: 12px;
 		text-align: left;
 	}
-	.folder-tools {
-		display: none;
-		gap: 2px;
-	}
-	.folder-row:hover .folder-tools {
-		display: flex;
-	}
-	.folder-rename {
-		width: 100%;
-		padding: 4px 6px;
-		border: 1px solid var(--accent, var(--text-muted));
-		border-radius: 5px;
-		background: var(--background);
-		color: var(--text);
-		font: inherit;
-		font-size: 12px;
-	}
 	.folder-count {
 		margin-left: auto;
 		color: var(--text-muted);
@@ -539,14 +485,6 @@
 		text-align: left;
 		text-overflow: ellipsis;
 		white-space: nowrap;
-	}
-	.entry-tools {
-		display: none;
-		gap: 2px;
-	}
-	.entry-row:hover .entry-tools,
-	.entry-row.selected .entry-tools {
-		display: flex;
 	}
 	.icon-action {
 		display: inline-grid;

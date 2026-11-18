@@ -292,6 +292,7 @@
 		title="테스트를 다시 시작할까요?"
 		message="현재 테스트 진행 기록을 삭제하고 최신 초안의 초기 상태에서 다시 시작합니다."
 		confirmLabel="다시 시작"
+		tone="default"
 		disabled={busy}
 		onconfirm={() => {
 			resetRequested = false;

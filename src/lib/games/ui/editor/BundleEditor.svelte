@@ -2,6 +2,7 @@
 	import { onDestroy } from 'svelte';
 
 	import ConfirmDialog from '#lib/components/ConfirmDialog.svelte';
+	import ItemActions from '#lib/components/ItemActions.svelte';
 
 	import {
 		readAuthoringBundle,
@@ -144,22 +145,17 @@
 			error = cause instanceof Error ? cause.message : '추가하지 못했어요.';
 		}
 	}
-	function renameModule() {
-		const name = moduleName.trim();
+	function renameModule(name: string) {
 		if (name === activeId || !active) {
 			return;
 		}
-		try {
-			validateName(name);
-			const next = Object.fromEntries(
-				Object.entries(modules).map(([id, value]) => [id === activeId ? name : id, value])
-			);
-			emit(next, bundle?.value.entry === activeId ? name : undefined);
-			selected = name;
-			moduleName = '';
-		} catch (cause) {
-			error = cause instanceof Error ? cause.message : '이름을 변경하지 못했어요.';
-		}
+		validateName(name);
+		const next = Object.fromEntries(
+			Object.entries(modules).map(([id, value]) => [id === activeId ? name : id, value])
+		);
+		emit(next, bundle?.value.entry === activeId ? name : undefined);
+		selected = name;
+		moduleName = '';
 	}
 	function removeModule() {
 		if (!deleteTarget || disabled) {
@@ -222,14 +218,14 @@
 			<button type="button" disabled={disabled || !moduleName.trim()} onclick={addModule}
 				>추가</button
 			>
-			<button
-				type="button"
-				disabled={disabled || !active || !moduleName.trim()}
-				onclick={renameModule}>이름 변경</button
-			>
-			<button type="button" disabled={disabled || !active} onclick={() => (deleteTarget = activeId)}
-				>모듈 삭제</button
-			>
+			{#if active}<ItemActions
+					name={activeId}
+					{disabled}
+					onrenamevalue={renameModule}
+					ondelete={() => {
+						deleteTarget = activeId;
+					}}
+				/>{/if}
 		</div>
 		{#if error}<p role="alert">{error}</p>{/if}
 		{#if showTypes}<div class="types">

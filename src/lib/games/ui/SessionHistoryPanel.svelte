@@ -4,6 +4,9 @@
 	import type { HistoryEvent, SessionTimeline } from '#lib/games/state/history.js';
 	import type { StateSlot } from '#lib/games/state/model.js';
 
+	import ConfirmDialog from '#lib/components/ConfirmDialog.svelte';
+	import ItemActionButton from '#lib/components/ItemActionButton.svelte';
+
 	import type { MessageAppearance } from './message-frame.js';
 
 	import { historyGraph, HISTORY_ROW_HEIGHT } from './history-graph.js';
@@ -25,7 +28,6 @@
 		onreload: () => Promise<void>;
 		appearance?: MessageAppearance;
 	} = $props();
-	const uid = $props.id();
 	let deleting = $state.raw<HistoryEvent | null>(null);
 	let deletingRevision = 0;
 	let graph = $derived(historyGraph(timeline?.events ?? []));
@@ -38,10 +40,6 @@
 		}
 		deletingRevision = timeline.history.progress.revision;
 		deleting = event;
-	}
-	function openDialog(dialog: HTMLDialogElement) {
-		dialog.showModal();
-		return () => dialog.close();
 	}
 	function attachGraph(viewport: HTMLDivElement) {
 		const index = untrack(() =>
@@ -178,13 +176,12 @@
 							)}</pre>
 					</details>
 				</details>
-				<button
-					class="delete"
-					type="button"
+				<ItemActionButton
+					action="delete"
+					label={`${preview.summary} 삭제`}
 					disabled={busy}
 					onclick={() => requestDelete(preview!)}
-					aria-label={`${preview.summary} 삭제`}>이벤트 삭제</button
-				>
+				/>
 			{:else}<p class="hint">게임을 시작한 지점입니다.</p>{/if}
 			<details>
 				<summary>현재 게임 상태</summary>
@@ -204,38 +201,15 @@
 	{/if}
 </section>
 
-{#if deleting}
-	<dialog
-		{@attach openDialog}
-		aria-labelledby={`${uid}-delete-title`}
-		aria-describedby={`${uid}-delete-description`}
-		oncancel={(event) => {
-			if (busy) {
-				event.preventDefault();
-			}
-		}}
-		onclose={() => {
-			if (!busy) {
-				deleting = null;
-			}
-		}}
-	>
-		<h3 id={`${uid}-delete-title`}>이벤트 삭제</h3>
-		<p>{deleting.summary}</p>
-		<p id={`${uid}-delete-description`}>
-			이 이벤트와 여기서 이어지는 모든 분기의 후속 이벤트, 메시지와 연결된 기억을 삭제합니다.
-			공유하는 이전 이력과 다른 분기는 보존됩니다. 이 작업은 되돌릴 수 없습니다.
-		</p>
-		{#if error}<p role="alert">{error}</p>{/if}
-		<div class="dialog-actions">
-			<button type="button" disabled={busy} onclick={() => (deleting = null)}>취소</button><button
-				type="button"
-				disabled={busy}
-				onclick={confirmDelete}>{busy ? '삭제 중…' : '삭제'}</button
-			>
-		</div>
-	</dialog>
-{/if}
+{#if deleting}<ConfirmDialog
+		title="이벤트 삭제"
+		message={`${deleting.summary}\n이 이벤트와 여기서 이어지는 모든 분기의 후속 이벤트, 메시지와 연결된 기억을 삭제합니다. 공유하는 이전 이력과 다른 분기는 보존됩니다. 이 작업은 되돌릴 수 없습니다.`}
+		disabled={busy}
+		{error}
+		confirmLabel={busy ? '삭제 중…' : '삭제'}
+		onconfirm={confirmDelete}
+		oncancel={() => (deleting = null)}
+	/>{/if}
 
 <style>
 	.timeline {
@@ -404,10 +378,6 @@
 		margin-top: 8px;
 		white-space: pre-wrap;
 	}
-	.delete {
-		margin-top: 10px;
-		color: var(--text-muted);
-	}
 	.hint {
 		color: var(--text-muted);
 		font-size: 11px;
@@ -426,28 +396,5 @@
 	pre {
 		max-height: 220px;
 		overflow: auto;
-	}
-	dialog {
-		width: min(440px, calc(100vw - 32px));
-		padding: 24px;
-		border: 1px solid var(--border-strong);
-		border-radius: 10px;
-		background: var(--background);
-		color: var(--text);
-		font-size: 13px;
-		line-height: 1.7;
-	}
-	dialog::backdrop {
-		background: #0009;
-	}
-	h3 {
-		margin: 0;
-		font-size: 15px;
-	}
-	.dialog-actions {
-		display: flex;
-		justify-content: flex-end;
-		gap: 8px;
-		margin-top: 20px;
 	}
 </style>

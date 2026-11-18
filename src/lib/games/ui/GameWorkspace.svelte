@@ -3,10 +3,13 @@
 	import { onMount } from 'svelte';
 
 	import { MIN_SIDEBAR_WIDTH } from '#lib/app/preferences/sidebar.js';
+	import ConfirmDialog from '#lib/components/ConfirmDialog.svelte';
 	import Icon from '#lib/components/Icon.svelte';
+	import NameDialog from '#lib/components/NameDialog.svelte';
 
 	import type { GameUI } from './runtime/model.js';
 
+	import { SESSION_TITLE_MAX_LENGTH } from '../model.js';
 	import GameSessionSidebar from './GameSessionSidebar.svelte';
 	import GameWorkbench from './GameWorkbench.svelte';
 	import { GameWorkspaceController } from './gameworkspace-controller.svelte.js';
@@ -135,67 +138,25 @@
 	{/if}
 </div>
 
-{#if workspace.deletingSession}
-	<dialog
-		class="delete-dialog"
-		{@attach workspace.openDeleteDialog}
-		aria-labelledby="delete-session-heading"
-		oncancel={(event) => {
-			if (workspace.busy) {
-				event.preventDefault();
-			}
-		}}
-		onclose={() => {
-			if (!workspace.busy) {
-				workspace.deletingSession = null;
-			}
-		}}
-	>
-		<h2 id="delete-session-heading">세션 삭제</h2>
-		<p class="delete-title">{workspace.deletingSession.title}</p>
-		{#if workspace.deleteError}<p class="session-error" role="alert">
-				{workspace.deleteError}
-			</p>{/if}
-		<div class="dialog-actions">
-			<button
-				type="button"
-				disabled={workspace.busy}
-				onclick={() => (workspace.deletingSession = null)}>취소</button
-			>
-			<button type="button" disabled={workspace.busy} onclick={workspace.confirmDelete}
-				>{workspace.busy ? '삭제 중…' : '삭제'}</button
-			>
-		</div>
-	</dialog>
-{/if}
+{#if workspace.renamingSessionId}<NameDialog
+		name={workspace.sessionName}
+		label="세션 이름"
+		maxlength={SESSION_TITLE_MAX_LENGTH}
+		disabled={workspace.busy}
+		onconfirm={workspace.saveSessionName}
+		oncancel={() => (workspace.renamingSessionId = null)}
+	/>{/if}
+{#if workspace.deletingSession}<ConfirmDialog
+		title="세션 삭제"
+		message={`‘${workspace.deletingSession.title}’ 세션과 진행 기록을 삭제할까요?`}
+		disabled={workspace.busy}
+		error={workspace.deleteError}
+		confirmLabel={workspace.busy ? '삭제 중…' : '삭제'}
+		onconfirm={workspace.confirmDelete}
+		oncancel={() => (workspace.deletingSession = null)}
+	/>{/if}
 
 <style>
-	.session-error {
-		color: var(--text-strong);
-		font-size: 12px;
-		line-height: 1.7;
-	}
-	.delete-dialog {
-		width: min(360px, calc(100vw - 32px));
-		padding: 24px;
-		border: 1px solid var(--border-strong);
-		border-radius: 10px;
-		background: var(--background);
-		color: var(--text);
-	}
-	.delete-dialog::backdrop {
-		background: #0009;
-	}
-	.delete-title {
-		overflow-wrap: anywhere;
-		font-size: 14px;
-	}
-	.dialog-actions {
-		display: flex;
-		justify-content: flex-end;
-		gap: 8px;
-		margin-top: 24px;
-	}
 	.workspace {
 		display: flex;
 		height: 100dvh;

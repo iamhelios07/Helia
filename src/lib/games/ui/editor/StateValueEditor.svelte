@@ -1,4 +1,6 @@
 <script lang="ts">
+	import ItemActionButton from '#lib/components/ItemActionButton.svelte';
+
 	import { allowsNull, arrayItem, initialValueFor, objectShape } from '../../state/authoring.js';
 	import { schemaType, validateValue, type ValueSchema } from '../../state/schema.js';
 	import { isStateObject, sameValue, type StateValue } from '../../state/value.js';
@@ -127,13 +129,13 @@
 				{/each}
 				{#each Object.keys(value).filter((name) => !Object.hasOwn(object!.properties, name)) as name (name)}
 					<p role="alert">정의되지 않은 필드: {name}</p>
-					<button
-						type="button"
-						aria-label="{label}.{name} 알 수 없는 초기값 삭제"
+					<ItemActionButton
+						action="delete"
+						compact
+						label="{label}.{name} 알 수 없는 초기값 삭제"
 						onclick={() =>
 							onconfirm(`${label}.${name} 초기값을 삭제할까요?`, () => child(name, undefined))}
-						>초기값 삭제</button
-					>
+					/>
 				{/each}
 			{/if}
 		{:else if itemSchema && Array.isArray(value)}
@@ -152,16 +154,17 @@
 							}}
 							{onconfirm}
 						/>
-						<button
-							type="button"
-							aria-label="{label}[{index}] 항목 삭제"
+						<ItemActionButton
+							action="delete"
+							compact
+							label="{label}[{index}] 항목 삭제"
 							onclick={() =>
 								onconfirm(`${label}[${index}] 항목을 삭제할까요?`, () => {
 									if (Array.isArray(value)) {
 										onchange(value.filter((_, i) => i !== index));
 									}
-								})}>항목 삭제</button
-						>
+								})}
+						/>
 					</div>
 				{/each}
 				<button

@@ -132,21 +132,21 @@ it('edits source files as project tabs, keeps imports on rename, and hides stora
 	await setMonacoSource('main.ts 소스', "export { default as logic } from './logic';");
 	await page.getByRole('tab', { name: /logic\.ts/ }).click();
 	await expect.element(logic).toHaveValue(expect.stringContaining('answer'));
-	await page.getByRole('button', { name: '이름 변경', exact: true }).click();
-	await page.getByRole('textbox', { name: '프로젝트 상대 경로' }).fill('logic/queries.ts');
+	await page.getByRole('button', { name: 'logic.ts 작업', exact: true }).click();
+	await page.getByRole('button', { name: 'logic.ts 이름 변경', exact: true }).click();
+	await page.getByRole('textbox', { name: '이름', exact: true }).fill('queries.ts');
 	await page.getByRole('button', { name: '확인', exact: true }).click();
 	await expect
-		.element(page.getByRole('textbox', { name: 'logic/queries.ts 소스', exact: true }))
+		.element(page.getByRole('textbox', { name: 'queries.ts 소스', exact: true }))
 		.toBeVisible();
 	await page.getByRole('tab', { name: /main\.ts/ }).click();
 	await expect
 		.poll(() => getMonacoSource('main.ts 소스'))
-		.toBe("export { default as logic } from './logic/queries.ts';");
+		.toBe("export { default as logic } from './queries.ts';");
 	await expect
 		.poll(
 			() =>
-				JSON.parse(loadEditorDraft(game.id)?.documents.code ?? '{}').files?.['logic/queries.ts']
-					?.source
+				JSON.parse(loadEditorDraft(game.id)?.documents.code ?? '{}').files?.['queries.ts']?.source
 		)
 		.toContain('answer');
 	await page.getByRole('button', { name: /GameState\.d\.ts.*자동/ }).click();
@@ -157,12 +157,37 @@ it('edits source files as project tabs, keeps imports on rename, and hides stora
 		.element(page.getByRole('button', { name: 'JSON으로 편집', exact: true }))
 		.not.toBeInTheDocument();
 });
+it('closes deleted code tabs and preserves the active file when another file is removed', async () => {
+	const game = await createGame();
+	const draft = createEditorDraft(game);
+	const code = JSON.parse(draft.documents.code);
+	code.files['helper.ts'] = { language: 'typescript', source: 'export const value = 1;' };
+	draft.documents.code = JSON.stringify(code);
+	storeEditorDraft(draft);
+	render(GameEditor, { gameId: game.id });
+	await page.getByTitle('helper.ts', { exact: true }).click();
+	await expect
+		.element(page.getByRole('textbox', { name: 'helper.ts 소스', exact: true }))
+		.toBeVisible();
+	await page.getByRole('button', { name: /main\.ts.*진입점/ }).click();
+	await page.getByRole('button', { name: 'helper.ts 작업', exact: true }).click();
+	await page.getByRole('button', { name: 'helper.ts 삭제', exact: true }).click();
+	await page.getByRole('button', { name: '삭제', exact: true }).click();
+	await expect.element(page.getByRole('tab', { name: /helper\.ts/ })).not.toBeInTheDocument();
+	await expect
+		.element(page.getByRole('textbox', { name: 'main.ts 소스', exact: true }))
+		.toBeVisible();
+	await expect
+		.poll(() => JSON.parse(loadEditorDraft(game.id)?.documents.code ?? '{}').files?.['helper.ts'])
+		.toBeUndefined();
+});
+
 it('creates style.css, edits it as CSS, and rejects renaming the stylesheet', async () => {
 	const game = await createGame();
 	render(GameEditor, { gameId: game.id });
 	await expect.element(nameInput()).toBeVisible();
 	// Every project starts with the stylesheet entry, like main.ts.
-	await page.getByTitle('style.css').click();
+	await page.getByTitle('style.css', { exact: true }).click();
 	const sheet = page.getByRole('textbox', { name: 'style.css 소스', exact: true });
 	await expect.element(sheet).toBeVisible();
 	await setMonacoSource('style.css 소스', '.hp {\n  color: #eab4ae;\n}\n');
@@ -172,14 +197,12 @@ it('creates style.css, edits it as CSS, and rejects renaming the stylesheet', as
 				JSON.parse(loadEditorDraft(game.id)?.documents.code ?? '{}').files?.['style.css']?.language
 		)
 		.toBe('css');
-	await page.getByRole('button', { name: '이름 변경', exact: true }).click();
-	await page.getByRole('textbox', { name: '프로젝트 상대 경로' }).fill('theme.css');
-	await page.getByRole('button', { name: '확인', exact: true }).click();
+	await page.getByRole('button', { name: 'style.css 작업', exact: true }).click();
 	await expect
-		.element(page.getByRole('main').getByRole('alert'))
-		.toHaveTextContent('파일 확장자는 .ts, .tsx를 사용해주세요.');
-	await page.getByRole('button', { name: '취소', exact: true }).click();
-	await expect.element(page.getByTitle('style.css')).toBeVisible();
+		.element(page.getByRole('button', { name: 'style.css 이름 변경', exact: true }))
+		.toBeDisabled();
+	await userEvent.keyboard('{Escape}');
+	await expect.element(page.getByTitle('style.css', { exact: true })).toBeVisible();
 });
 
 it('retargets open source tabs and saves rewritten imports when a code folder is dragged', async () => {

@@ -267,23 +267,12 @@ export class GameWorkspaceController {
 		this.sessionName = session.title;
 		this.renameError = '';
 	};
-	focusSessionName = (input: HTMLInputElement) => {
-		input.focus();
-		input.select();
-	};
-	saveSessionName = async (event: SubmitEvent) => {
-		event.preventDefault();
+	saveSessionName = async (name: string) => {
 		if (!this.game || !this.renamingSessionId || this.busy) {
 			return;
 		}
 		this.renameError = '';
-		let title: string;
-		try {
-			title = validateSessionTitle(this.sessionName);
-		} catch (error) {
-			this.renameError = error instanceof Error ? error.message : '세션 이름을 확인해주세요.';
-			return;
-		}
+		const title = validateSessionTitle(name);
 		this.sessionBusy = true;
 		try {
 			const updated = await renameSession(this.game.id, this.renamingSessionId, title);
@@ -292,7 +281,7 @@ export class GameWorkspaceController {
 			);
 			this.renamingSessionId = null;
 		} catch {
-			this.renameError = '세션 이름을 저장하지 못했어요. 다시 시도해주세요.';
+			throw Error('세션 이름을 저장하지 못했어요. 다시 시도해주세요.');
 		} finally {
 			this.sessionBusy = false;
 		}
@@ -302,10 +291,6 @@ export class GameWorkspaceController {
 		this.renameError = '';
 		this.deleteError = '';
 		this.deletingSession = session;
-	};
-	openDeleteDialog = (dialog: HTMLDialogElement) => {
-		dialog.showModal();
-		return () => dialog.close();
 	};
 	confirmDelete = async () => {
 		if (!this.game || !this.deletingSession || this.busy) {

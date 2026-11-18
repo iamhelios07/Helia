@@ -6,36 +6,39 @@
 	import FileVideo from '@lucide/svelte/icons/file-video';
 	import Folder from '@lucide/svelte/icons/folder';
 	import FolderPlus from '@lucide/svelte/icons/folder-plus';
-	import Pencil from '@lucide/svelte/icons/pencil';
-	import Trash2 from '@lucide/svelte/icons/trash-2';
 	import Upload from '@lucide/svelte/icons/upload';
 	import { onDestroy } from 'svelte';
 
-	import ConfirmDialog from '#lib/components/ConfirmDialog.svelte';
+	import ItemActions from '#lib/components/ItemActions.svelte';
+	import NameDialog from '#lib/components/NameDialog.svelte';
 
-	import { parseResources, renameResourceFolder, validateResourcePath } from '../../resources.js';
+	import { parseResources, validateResourcePath } from '../../resources.js';
+	import AssetOperationDialog from './AssetOperationDialog.svelte';
 	import { ACCEPTED_RESOURCES as accepted, uploadResources } from './resource-upload.js';
 	let {
 		source,
 		active = null,
 		disabled = false,
 		onselect,
-		onchange
+		onchange,
+		onremove
 	}: {
 		source: string;
 		active?: string | null;
 		disabled?: boolean;
 		onselect: (id: string) => void;
 		onchange: (source: string) => void;
+		onremove?: (ids: string[]) => void;
 	} = $props();
 	let error = $state('');
 	let uploading = $state(false);
 	let destination = $state('');
 	let collapsed = $state<string[]>([]);
 	let emptyFolders = $state<string[]>([]);
-	let folderForm = $state<'create' | 'rename' | null>(null);
-	let folderName = $state('');
-	let deleteFolder = $state<string | null>(null);
+	let creatingFolder = $state(false);
+	let operation = $state<{ kind: 'rename' | 'delete'; path: string; id: string | null } | null>(
+		null
+	);
 	let disposed = false;
 	onDestroy(() => {
 		disposed = true;
@@ -108,57 +111,37 @@
 			? collapsed.filter((item) => item !== path)
 			: [...collapsed, path];
 	}
-	function applyFolder() {
+	function applyFolder(folderName: string) {
 		if (disabled || !parsed.resources) {
 			return;
 		}
-		try {
-			validateResourcePath(folderName);
-			if (
-				folders.includes(folderName) ||
-				Object.values(parsed.resources).some(
-					(asset) => asset.name === folderName || folderName.startsWith(asset.name + '/')
-				)
-			) {
-				throw Error('같은 경로가 이미 있어요.');
-			}
-			if (folderForm === 'rename') {
-				onchange(
-					JSON.stringify(renameResourceFolder(parsed.resources, destination, folderName), null, 2)
-				);
-				emptyFolders = emptyFolders.map((path) =>
-					path === destination || path.startsWith(destination + '/')
-						? folderName + path.slice(destination.length)
-						: path
-				);
-			} else {
-				emptyFolders = [...emptyFolders, folderName];
-			}
-			destination = folderName;
-			collapsed = collapsed.filter((path) => path !== folderName);
-			folderForm = null;
-			error = '';
-		} catch (cause) {
-			error = cause instanceof Error ? cause.message : '폴더를 수정하지 못했어요.';
-		}
-	}
-	function removeFolder() {
-		if (!deleteFolder || !parsed.resources || disabled) {
-			return;
-		}
-		const path = deleteFolder;
-		onchange(
-			JSON.stringify(
-				Object.fromEntries(
-					Object.entries(parsed.resources).filter(([, asset]) => !asset.name.startsWith(path + '/'))
-				),
-				null,
-				2
+		validateResourcePath(folderName);
+		if (
+			folders.includes(folderName) ||
+			Object.values(parsed.resources).some(
+				(asset) => asset.name === folderName || folderName.startsWith(asset.name + '/')
 			)
-		);
+		) {
+			throw Error('같은 경로가 이미 있어요.');
+		}
+		emptyFolders = [...emptyFolders, folderName];
+		destination = folderName;
+		collapsed = collapsed.filter((path) => path !== folderName);
+		error = '';
+	}
+	function renamed(before: string, after: string) {
+		const retarget = (path: string) =>
+			path === before || path.startsWith(before + '/') ? after + path.slice(before.length) : path;
+		emptyFolders = emptyFolders.map(retarget);
+		collapsed = collapsed.filter((path) => path !== before).map(retarget);
+		destination = retarget(destination);
+	}
+	function removed(ids: string[], path: string) {
 		emptyFolders = emptyFolders.filter((item) => item !== path && !item.startsWith(path + '/'));
-		destination = '';
-		deleteFolder = null;
+		if (destination === path || destination.startsWith(path + '/')) {
+			destination = '';
+		}
+		onremove?.(ids);
 	}
 	async function upload(event: Event) {
 		const input = event.currentTarget as HTMLInputElement;
@@ -203,10 +186,7 @@
 				aria-label="새 에셋 폴더"
 				title="새 폴더"
 				disabled={disabled || uploading || !parsed.resources}
-				onclick={() => {
-					folderForm = 'create';
-					folderName = destination ? destination + '/' : '';
-				}}><FolderPlus size={14} /></button
+				onclick={() => (creatingFolder = true)}><FolderPlus size={14} /></button
 			>
 			<label class="upload" title="파일 추가"
 				><Upload size={14} /><input
@@ -222,66 +202,49 @@
 	</header>
 	{#if parsed.error || error}<p role="alert">{error || parsed.error}</p>{/if}
 	{#if uploading}<p role="status">파일 추가 중…</p>{/if}
-	{#if folderForm}<form
-			onsubmit={(event) => {
-				event.preventDefault();
-				applyFolder();
-			}}
-		>
-			<input
-				aria-label="폴더 경로"
-				bind:value={folderName}
-				placeholder="images/characters"
-				{disabled}
-			/>
-			<div class="form-actions">
-				<button type="submit" {disabled}>확인</button><button
-					type="button"
-					onclick={() => (folderForm = null)}>취소</button
-				>
-			</div>
-		</form>{/if}
 	<nav aria-label="에셋 파일">
 		{#each rows as row (row.folder ? 'folder:' + row.path : row.id)}
-			<button
-				type="button"
-				class={['entry', { selected: row.folder ? destination === row.path : active === row.id }]}
-				style:--depth={row.depth}
-				title={row.path}
-				aria-label={row.folder ? `${row.path} 폴더` : row.path}
-				aria-expanded={row.folder ? !collapsed.includes(row.path) : undefined}
-				aria-current={!row.folder && active === row.id ? 'page' : undefined}
-				onclick={() => (row.folder ? toggle(row.path) : onselect(row.id!))}
-			>
-				{#if row.folder}{#if collapsed.includes(row.path)}<ChevronRight
-							size={12}
-						/>{:else}<ChevronDown size={12} />{/if}<Folder size={14} />{:else}<span class="indent"
-					></span>{#if row.mime.startsWith('image/')}<FileImage
-							size={14}
-						/>{:else if row.mime.startsWith('audio/')}<FileAudio size={14} />{:else}<FileVideo
-							size={14}
-						/>{/if}{/if}
-				<span class="filename">{row.path.split('/').at(-1)}</span>
-			</button>
+			<div class="entry-row">
+				<button
+					type="button"
+					class={['entry', { selected: row.folder ? destination === row.path : active === row.id }]}
+					style:--depth={row.depth}
+					title={row.path}
+					aria-label={row.folder ? `${row.path} 폴더` : row.path}
+					aria-expanded={row.folder ? !collapsed.includes(row.path) : undefined}
+					aria-current={!row.folder && active === row.id ? 'page' : undefined}
+					onclick={() => {
+						if (row.folder) {
+							toggle(row.path);
+						} else {
+							destination = row.path.split('/').slice(0, -1).join('/');
+							onselect(row.id!);
+						}
+					}}
+				>
+					{#if row.folder}{#if collapsed.includes(row.path)}<ChevronRight
+								size={12}
+							/>{:else}<ChevronDown size={12} />{/if}<Folder size={14} />{:else}<span class="indent"
+						></span>{#if row.mime.startsWith('image/')}<FileImage
+								size={14}
+							/>{:else if row.mime.startsWith('audio/')}<FileAudio size={14} />{:else}<FileVideo
+								size={14}
+							/>{/if}{/if}
+					<span class="filename">{row.path.split('/').at(-1)}</span>
+				</button>
+				<ItemActions
+					name={row.path}
+					disabled={disabled || uploading}
+					onrename={() => (operation = { kind: 'rename', path: row.path, id: row.id })}
+					ondelete={() => {
+						operation = { kind: 'delete', path: row.path, id: row.id };
+					}}
+				/>
+			</div>
 		{:else}<p class="empty">파일을 추가해보세요.</p>{/each}
 	</nav>
 	{#if folders.includes(destination)}<div class="folder-actions">
-			<span title={destination}>{destination}/</span><button
-				type="button"
-				aria-label="에셋 폴더 이름 변경"
-				title="폴더 이름 변경"
-				disabled={disabled || uploading}
-				onclick={() => {
-					folderForm = 'rename';
-					folderName = destination;
-				}}><Pencil size={12} /></button
-			><button
-				type="button"
-				aria-label="에셋 폴더 삭제"
-				title="폴더 삭제"
-				disabled={disabled || uploading}
-				onclick={() => (deleteFolder = destination)}><Trash2 size={12} /></button
-			><button
+			<span title={destination}>추가 위치: {destination}/</span><button
 				type="button"
 				aria-label="에셋 루트 선택"
 				title="루트에 파일 추가"
@@ -289,12 +252,23 @@
 			>
 		</div>{/if}
 </section>
-{#if deleteFolder}<ConfirmDialog
-		title="폴더 삭제"
-		message={`‘${deleteFolder}’ 폴더와 안의 파일을 삭제할까요? 사용 중인 코드의 참조를 확인해주세요.`}
+{#if creatingFolder}<NameDialog
+		title="새 에셋 폴더"
+		label="폴더 경로"
+		name={destination ? destination + '/' : ''}
 		disabled={disabled || uploading}
-		onconfirm={removeFolder}
-		oncancel={() => (deleteFolder = null)}
+		onconfirm={applyFolder}
+		oncancel={() => (creatingFolder = false)}
+	/>{/if}
+{#if operation && parsed.resources}<AssetOperationDialog
+		{operation}
+		resources={parsed.resources}
+		{folders}
+		disabled={disabled || uploading}
+		{onchange}
+		onrename={renamed}
+		onremove={removed}
+		onclose={() => (operation = null)}
 	/>{/if}
 
 <style>
@@ -303,7 +277,6 @@
 	}
 	header,
 	.tools,
-	.form-actions,
 	.folder-actions {
 		display: flex;
 		align-items: center;
@@ -370,6 +343,13 @@
 		padding: 5px 10px 5px calc(10px + var(--depth) * 12px);
 		text-align: left;
 		font-size: 11px;
+		flex: 1;
+		min-width: 0;
+	}
+	.entry-row {
+		display: flex;
+		align-items: center;
+		padding-right: 8px;
 	}
 	.entry.selected {
 		background: var(--surface-selected, #ffffff14);
@@ -396,24 +376,6 @@
 	p[role='alert'] {
 		color: var(--danger, #ef9b9b);
 		overflow-wrap: anywhere;
-	}
-	form {
-		padding: 6px 12px;
-	}
-	form input {
-		width: 100%;
-		min-width: 0;
-		padding: 6px;
-		border: 1px solid var(--border);
-		border-radius: 3px;
-		background: var(--background);
-	}
-	.form-actions {
-		justify-content: flex-end;
-		margin-top: 4px;
-	}
-	.form-actions button {
-		padding: 4px;
 	}
 	.folder-actions {
 		margin: 6px 8px;

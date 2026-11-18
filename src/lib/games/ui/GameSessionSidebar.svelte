@@ -2,10 +2,10 @@
 	import { tick } from 'svelte';
 
 	import Icon from '#lib/components/Icon.svelte';
+	import ItemActions from '#lib/components/ItemActions.svelte';
 
 	import type { GameWorkspaceController } from './gameworkspace-controller.svelte.js';
 
-	import { SESSION_TITLE_MAX_LENGTH } from '../model.js';
 	import GameSettingsPanel from './GameSettingsPanel.svelte';
 	import SessionHistoryPanel from './SessionHistoryPanel.svelte';
 	import SessionModelSelect from './SessionModelSelect.svelte';
@@ -103,79 +103,27 @@
 			<nav {@attach attachSessionList} aria-label="세션 목록" aria-busy={workspace.busy}>
 				{#each workspace.sessions as session (session.id)}
 					<div class={['session-row', { active: session.id === workspace.game?.activeSessionId }]}>
-						{#if workspace.renamingSessionId === session.id}
-							<form class="session-rename" onsubmit={workspace.saveSessionName}>
-								<span class="session-prefix" aria-hidden="true">#</span>
-								<input
-									{@attach workspace.focusSessionName}
-									aria-label="세션 이름"
-									bind:value={workspace.sessionName}
-									maxlength={SESSION_TITLE_MAX_LENGTH}
-									disabled={workspace.busy}
-									aria-describedby={workspace.renameError ? 'session-rename-error' : undefined}
-									onkeydown={(event) => {
-										if (event.key === 'Escape' && !workspace.busy) {
-											event.preventDefault();
-											workspace.renamingSessionId = null;
-											workspace.renameError = '';
-										}
-									}}
-								/>
-								<button
-									class="session-action"
-									type="submit"
-									aria-label="이름 저장"
-									disabled={workspace.busy}><Icon name="check" size={16} /></button
-								>
-								<button
-									class="session-action"
-									type="button"
-									aria-label="이름 수정 취소"
-									disabled={workspace.busy}
-									onclick={() => {
-										workspace.renamingSessionId = null;
-										workspace.renameError = '';
-									}}><Icon name="close" size={16} /></button
-								>
-							</form>
-						{:else}
-							<button
-								class="session"
-								type="button"
-								aria-current={session.id === workspace.game?.activeSessionId ? 'true' : undefined}
-								disabled={workspace.busy}
-								aria-label={`${session.title} 열기`}
-								onclick={() => workspace.changeSession(session.id)}
+						<button
+							class="session"
+							type="button"
+							aria-current={session.id === workspace.game?.activeSessionId ? 'true' : undefined}
+							disabled={workspace.busy}
+							aria-label={`${session.title} 열기`}
+							onclick={() => workspace.changeSession(session.id)}
+						>
+							<span class="session-prefix" aria-hidden="true">#</span><strong
+								>{session.title}</strong
 							>
-								<span class="session-prefix" aria-hidden="true">#</span><strong
-									>{session.title}</strong
-								>
-							</button>
-							<button
-								class="session-action"
-								type="button"
-								aria-label={`${session.title} 이름 수정`}
-								title="이름 수정"
-								disabled={workspace.busy}
-								onclick={() => workspace.startRename(session)}
-								><Icon name="pencil" size={16} /></button
-							>
-							<button
-								class="session-action"
-								type="button"
-								aria-label={`${session.title} 삭제`}
-								title="삭제"
-								disabled={workspace.busy}
-								onclick={() => workspace.requestDelete(session)}
-								><Icon name="trash" size={16} /></button
-							>
-						{/if}
+						</button>
+						<ItemActions
+							name={session.title}
+							disabled={workspace.busy}
+							onrename={() => workspace.startRename(session)}
+							ondelete={() => workspace.requestDelete(session)}
+						/>
 					</div>
 				{/each}
 			</nav>
-			{#if workspace.renameError}<p class="session-error" id="session-rename-error" role="alert">
-					{workspace.renameError}
-				</p>{/if}
 		</div>
 		<div
 			class="game-panel"
@@ -228,34 +176,6 @@
 		padding-right: 4px;
 		border: 1px solid transparent;
 		border-radius: 6px;
-	}
-	.session-action {
-		width: 28px;
-		min-height: 28px;
-		flex-shrink: 0;
-		padding: 4px;
-		border: 0;
-		background: transparent;
-		color: var(--text-muted);
-	}
-	.session-rename {
-		display: flex;
-		min-width: 0;
-		flex: 1;
-		align-items: center;
-		gap: 4px;
-		padding: 3px 0 3px 10px;
-	}
-	.session-rename input {
-		width: 100%;
-		min-width: 0;
-		padding: 5px;
-		border: 1px solid var(--border-strong);
-		border-radius: 4px;
-		background: var(--background);
-		color: var(--text-strong);
-		font: inherit;
-		font-size: 12px;
 	}
 	.sessions-panel {
 		display: flex;
@@ -375,11 +295,6 @@
 	button:focus-visible {
 		outline: 2px solid var(--accent);
 		outline-offset: 2px;
-	}
-	.session-error {
-		color: var(--text-strong);
-		font-size: 12px;
-		line-height: 1.7;
 	}
 	.history-view {
 		display: flex;

@@ -378,10 +378,23 @@ export class EditorWorkspace {
 		this.secondaryDocument = move(this.secondaryDocument);
 	};
 	removeCode = (paths: string[]) => {
-		for (const path of paths) {
-			this.closeDocument('code:' + path);
-		}
+		this.removeDocuments(paths.map<DocumentId>((path) => `code:${path}`));
 	};
+	removeAssets = (ids: string[]) => {
+		this.removeDocuments(ids.map<DocumentId>((id) => `asset:${id}`));
+	};
+	removeDocuments(ids: DocumentId[]) {
+		for (const id of ids) {
+			this.closeDocument(id);
+			if (this.secondaryDocument === id) {
+				this.secondaryDocument = this.activeDocument ?? 'info';
+			}
+		}
+		this.sourceDocuments = this.sourceDocuments.filter((id) => !ids.includes(id as DocumentId));
+		if (this.codeSelection && ids.includes(`code:${this.codeSelection}`)) {
+			this.codeSelection = null;
+		}
+	}
 	showProblem = (problem: {
 		documentId: string;
 		file?: string;

@@ -1,5 +1,6 @@
 <script lang="ts">
 	import Icon from '#lib/components/Icon.svelte';
+	import ItemActionButton from '#lib/components/ItemActionButton.svelte';
 
 	import type { CatalogModel } from './credentials.js';
 	import type { ModelSettings, ProviderSettings } from './model.js';
@@ -103,13 +104,13 @@
 							disabled={busy}
 							aria-label={`${model.name} 모델 편집`}
 							onclick={() => onedit(model)}><Icon name="pencil" size={16} /></button
-						><button
-							class="icon-button"
-							type="button"
+						><ItemActionButton
+							action="delete"
+							label={`${model.name} 모델 삭제`}
+							compact
 							disabled={busy}
-							aria-label={`${model.name} 모델 삭제`}
-							onclick={() => ondelete(model)}><Icon name="trash" size={16} /></button
-						>
+							onclick={() => ondelete(model)}
+						/>
 					</div>
 				</li>{:else}<li class="empty-copy">검색 결과가 없어요.</li>{/each}
 		</ul>

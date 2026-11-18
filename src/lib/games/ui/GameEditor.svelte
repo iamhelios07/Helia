@@ -157,6 +157,7 @@
 							disabled={editor.editingBlocked}
 							onselect={(id) => editor.openDocument(('asset:' + id) as DocumentId)}
 							onchange={(value) => editor.changeDocument('assets', value)}
+							onremove={editor.removeAssets}
 						/>
 						<CodeExplorer
 							source={editor.draft.documents.code}

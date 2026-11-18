@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 
 	import Icon from '#lib/components/Icon.svelte';
+	import ItemActionButton from '#lib/components/ItemActionButton.svelte';
 
 	import { PROMPT_TYPE_LABELS } from './prompt-labels.js';
 	import { PromptSettingsController } from './prompt-settings-controller.svelte.js';
@@ -152,14 +153,15 @@
 										/></label
 									>
 									<div class="block-actions">
-										<button
-											type="button"
-											aria-label={`${index + 1}번 블록 삭제`}
+										<ItemActionButton
+											action="delete"
+											compact
+											label={`${index + 1}번 블록 삭제`}
 											onclick={() =>
 												(controller.blocks = controller.blocks.filter(
 													(block) => block.id !== entry.id
-												))}><Icon name="close" size={18} /></button
-										><button
+												))}
+										/><button
 											type="button"
 											aria-label={`${index + 1}번 블록 아래로`}
 											disabled={index === controller.blocks.length - 1}
@@ -239,11 +241,12 @@
 						type="button"
 						disabled={!controller.savedDraft || controller.activeDraft}
 						onclick={controller.usePreset}>기본 프롬프트로 사용</button
-					><button
-						type="button"
+					><ItemActionButton
+						action="delete"
+						label="프리셋 삭제"
 						disabled={!controller.savedDraft || controller.settings.presets.length < 2}
-						onclick={controller.deletePreset}>프리셋 삭제</button
-					><button type="button" onclick={controller.exportPreset}>JSON 내보내기</button>
+						onclick={controller.deletePreset}
+					/><button type="button" onclick={controller.exportPreset}>JSON 내보내기</button>
 				</div>
 				<p class="help">
 					사용 중인 프리셋은 모든 게임의 다음 AI 요청에 적용돼요. 게임의 설명·작가 노트·로어북은

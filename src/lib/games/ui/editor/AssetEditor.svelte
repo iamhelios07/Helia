@@ -1,6 +1,4 @@
 ﻿<script lang="ts">
-	import ConfirmDialog from '#lib/components/ConfirmDialog.svelte';
-
 	import { parseResources } from '../../resources.js';
 	import AssetExplorer from './AssetExplorer.svelte';
 	let {
@@ -15,8 +13,6 @@
 		onchange: (source: string) => void;
 	} = $props();
 	let localSelected = $state<string | null>(null);
-	let error = $state('');
-	let confirming = $state(false);
 	let parsed = $derived.by(() => {
 		try {
 			return { resources: parseResources(JSON.parse(source)), error: '' };
@@ -29,31 +25,6 @@
 	});
 	let id = $derived(selectedId ?? localSelected);
 	let asset = $derived(id ? parsed.resources?.[id] : undefined);
-	function rename(name: string) {
-		if (!parsed.resources || !id || !asset || disabled) {
-			return;
-		}
-		try {
-			const next = parseResources({ ...parsed.resources, [id]: { ...asset, name } });
-			onchange(JSON.stringify(next, null, 2));
-			error = '';
-		} catch (cause) {
-			error = cause instanceof Error ? cause.message : '파일 이름을 수정하지 못했어요.';
-		}
-	}
-	function remove() {
-		if (!parsed.resources || !id || disabled) {
-			return;
-		}
-		onchange(
-			JSON.stringify(
-				Object.fromEntries(Object.entries(parsed.resources).filter(([key]) => key !== id)),
-				null,
-				2
-			)
-		);
-		confirming = false;
-	}
 </script>
 
 <section class="asset-editor" aria-label="에셋 미리보기">
@@ -64,21 +35,20 @@
 			{onchange}
 			active={localSelected}
 			onselect={(next) => (localSelected = next)}
+			onremove={(ids) => {
+				if (localSelected && ids.includes(localSelected)) {
+					localSelected = null;
+				}
+			}}
 		/>
 	{/if}
-	{#if parsed.error || error}<p role="alert">{error || parsed.error}</p>{/if}
+	{#if parsed.error}<p role="alert">{parsed.error}</p>{/if}
 	{#if asset}
 		<header>
 			<div>
 				<h2>{asset.name.split('/').at(-1)}</h2>
 				<p class="path">{asset.name}</p>
 			</div>
-			<button
-				type="button"
-				{disabled}
-				aria-label={`${asset.name} 파일 삭제`}
-				onclick={() => (confirming = true)}>삭제</button
-			>
 		</header>
 		<div class="preview">
 			{#if asset.mime.startsWith('image/')}<img src={asset.data} alt={asset.name} />
@@ -93,14 +63,7 @@
 				>{/if}
 		</div>
 		<div class="metadata">
-			<label
-				>파일 경로<input
-					aria-label="에셋 파일 경로"
-					value={asset.name}
-					{disabled}
-					onchange={(event) => rename(event.currentTarget.value)}
-				/></label
-			>
+			<label>파일 경로<input aria-label="에셋 파일 경로" value={asset.name} readonly /></label>
 			<p>{asset.mime} · {Math.ceil((asset.data.split(',')[1].length * 0.75) / 1024)} KiB</p>
 			<label
 				>코드에서 사용<input
@@ -119,13 +82,6 @@
 			<p>이미지·오디오·동영상을 추가할 수 있어요. 파일당 1 MiB, 전체 3 MiB까지 지원합니다.</p>
 		</div>{/if}
 </section>
-{#if confirming && asset}<ConfirmDialog
-		title="파일 삭제"
-		message={`‘${asset.name}’ 파일을 초안에서 삭제할까요? 사용 중인 코드의 참조를 확인해주세요.`}
-		{disabled}
-		onconfirm={remove}
-		oncancel={() => (confirming = false)}
-	/>{/if}
 
 <style>
 	.asset-editor {
@@ -181,8 +137,7 @@
 		font-size: 11px;
 		color: var(--text-muted);
 	}
-	input,
-	button {
+	input {
 		border: 1px solid var(--border);
 		border-radius: 4px;
 		padding: 7px 9px;
@@ -190,13 +145,6 @@
 		color: var(--text);
 		font: inherit;
 		min-width: 0;
-	}
-	button {
-		cursor: pointer;
-	}
-	button:disabled {
-		opacity: 0.5;
-		cursor: default;
 	}
 	input[readonly] {
 		font-family: var(--font-mono, monospace);

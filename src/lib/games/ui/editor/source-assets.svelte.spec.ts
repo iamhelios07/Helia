@@ -3,6 +3,8 @@ import { expect, it, vi } from 'vitest';
 import { render } from 'vitest-browser-svelte';
 import { page, userEvent } from 'vitest/browser';
 
+import { chooseItemAction } from '#lib/components/item-actions-test.js';
+
 import AssetEditor from './AssetEditor.svelte';
 import BundleEditor from './BundleEditor.svelte';
 import { getMonacoSource, setMonacoSource } from './monaco-test.js';
@@ -60,17 +62,18 @@ it('adds and renames modules, preserves UI settings and requires a modal for rem
 	await page.getByRole('button', { name: '추가', exact: true }).click();
 	await expect.element(page.getByRole('textbox', { name: 'status.tsx 코드' })).toBeVisible();
 	await setMonacoSource('status.tsx 코드', 'export const label = "한 줄\\n다음 줄";\n');
-	await page.getByRole('textbox', { name: '모듈 이름', exact: true }).fill('status-panel.tsx');
-	await page.getByRole('button', { name: '이름 변경', exact: true }).click();
+	await chooseItemAction('status.tsx', 'rename');
+	await page.getByRole('textbox', { name: '이름', exact: true }).fill('status-panel.tsx');
+	await page.getByRole('button', { name: '확인', exact: true }).click();
 	await expect
 		.poll(() => getMonacoSource('status-panel.tsx 코드'))
 		.toBe('export const label = "한 줄\\n다음 줄";\n');
 	expect(JSON.parse(source).chatStyle).toEqual({ color: '#fff' });
-	await page.getByRole('button', { name: '모듈 삭제', exact: true }).click();
+	await chooseItemAction('status-panel.tsx', 'delete');
 	await expect.element(page.getByRole('dialog', { name: '모듈 삭제' })).toBeVisible();
 	await userEvent.keyboard('{Escape}');
 	expect(Object.hasOwn(JSON.parse(source).modules, 'status-panel.tsx')).toBe(true);
-	await page.getByRole('button', { name: '모듈 삭제', exact: true }).click();
+	await chooseItemAction('status-panel.tsx', 'delete');
 	await page.getByRole('button', { name: '삭제', exact: true }).click();
 	await expect
 		.poll(() => Object.hasOwn(JSON.parse(source).modules, 'status-panel.tsx'))
@@ -117,14 +120,17 @@ it('uploads media, previews it, renames it and confirms deletion', async () => {
 	await expect.element(page.getByRole('img', { name: 'portrait.png' })).toBeVisible();
 	const id = Object.keys(JSON.parse(source))[0];
 	expect(JSON.parse(source)[id].data).toMatch(/^data:image\/png;base64,/);
-	await page.getByRole('textbox', { name: '에셋 파일 경로' }).fill('초상화');
-	await page.getByRole('textbox', { name: '에셋 파일 경로' }).click();
-	await userEvent.keyboard('{Tab}');
+	await expect
+		.element(page.getByRole('textbox', { name: '에셋 파일 경로' }))
+		.toHaveAttribute('readonly');
+	await chooseItemAction('portrait.png', 'rename');
+	await page.getByRole('textbox', { name: '이름', exact: true }).fill('초상화');
+	await page.getByRole('button', { name: '확인', exact: true }).click();
 	await expect.element(page.getByRole('img', { name: '초상화' })).toBeVisible();
-	await page.getByRole('button', { name: '초상화 파일 삭제' }).click();
+	await chooseItemAction('초상화', 'delete');
 	await page.getByRole('button', { name: '취소', exact: true }).click();
 	expect(Object.keys(JSON.parse(source))).toHaveLength(1);
-	await page.getByRole('button', { name: '초상화 파일 삭제' }).click();
+	await chooseItemAction('초상화', 'delete');
 	await page.getByRole('button', { name: '삭제', exact: true }).click();
 	await expect.poll(() => JSON.parse(source)).toEqual({});
 });
