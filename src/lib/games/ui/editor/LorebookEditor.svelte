@@ -15,6 +15,7 @@
 		ZONE_END,
 		type DropZone
 	} from './lorebook-dnd.js';
+	import { TreeDrag } from './tree-drag.svelte.js';
 
 	let {
 		source,
@@ -114,41 +115,25 @@
 			)
 		);
 	}
-	let draggingKey = $state<string | null>(null);
-	let dropZone = $state<DropZone | null>(null);
+	const drag = new TreeDrag<DropZone>(() => ({
+		disabled: disabled || content === null,
+		ondrop: (key, zone) => {
+			if (content) {
+				commit(applyDrop(content.lorebook, key, zone));
+			}
+		}
+	}));
+	let draggingKey = $derived(drag.key);
+	let dropZone = $derived(drag.target);
 
 	function dragOverEntry(event: DragEvent, entry: LoreEntry) {
-		if (!draggingKey || disabled) {
-			return;
-		}
-		event.preventDefault();
-		dropZone = zoneForEntry(event, entry);
+		drag.over(event, zoneForEntry(event, entry));
 	}
 	function dragOverFolder(event: DragEvent, folder: string) {
-		if (!draggingKey || disabled) {
-			return;
-		}
-		event.preventDefault();
-		dropZone = zoneForFolder(folder);
+		drag.over(event, zoneForFolder(folder));
 	}
 	function dragOverTreeEnd(event: DragEvent) {
-		if (!draggingKey || disabled) {
-			return;
-		}
-		event.preventDefault();
-		dropZone = ZONE_END;
-	}
-	function clearDrop() {
-		dropZone = null;
-	}
-	function resolveDrop() {
-		const zone = dropZone;
-		if (!draggingKey || content === null || !zone) {
-			return;
-		}
-		commit(applyDrop(content.lorebook, draggingKey, zone));
-		draggingKey = null;
-		dropZone = null;
+		drag.over(event, ZONE_END);
 	}
 
 	function toggleFolder(folder: string) {
@@ -211,6 +196,7 @@
 			로어북 JSON을 읽을 수 없어요. JSON으로 편집을 전환해 형식을 고친 뒤 다시 시도해주세요.
 		</p>
 	{:else}
+		{#if drag.error}<p role="alert">{drag.error}</p>{/if}
 		<div class="entry-tree">
 			<div class="tree-heading">
 				<span>로어 항목</span>
@@ -263,11 +249,8 @@
 							role="group"
 							class="folder-row"
 							ondragover={(event) => dragOverFolder(event, group.folder)}
-							ondragleave={clearDrop}
-							ondrop={(event) => {
-								event.preventDefault();
-								resolveDrop();
-							}}
+							ondragleave={drag.leave}
+							ondrop={drag.drop}
 						>
 							<button
 								type="button"
@@ -307,23 +290,17 @@
 								'entry-row',
 								{ selected: entryKey(entry) === selectedId },
 								{ dragging: draggingKey === entryKey(entry) },
+								{ indented: !!group.folder },
 								{
 									'drop-before': dropZone?.kind === 'before' && dropZone.key === entryKey(entry),
 									'drop-after': dropZone?.kind === 'after' && dropZone.key === entryKey(entry)
 								}
 							]}
-							class:indented={!!group.folder}
-							draggable={!disabled}
-							ondragstart={() => (draggingKey = entryKey(entry))}
-							ondragend={() => {
-								draggingKey = null;
-								dropZone = null;
-							}}
+							draggable={!disabled && !drag.busy}
+							ondragstart={(event) => drag.start(event, entryKey(entry))}
+							ondragend={drag.end}
 							ondragover={(event) => dragOverEntry(event, entry)}
-							ondrop={(event) => {
-								event.preventDefault();
-								resolveDrop();
-							}}
+							ondrop={drag.drop}
 						>
 							<button
 								type="button"
@@ -348,11 +325,8 @@
 							role="group"
 							class={['tree-end', { active: dropZone?.kind === 'end' }]}
 							ondragover={(event) => dragOverTreeEnd(event)}
-							ondragleave={clearDrop}
-							ondrop={(event) => {
-								event.preventDefault();
-								resolveDrop();
-							}}
+							ondragleave={drag.leave}
+							ondrop={drag.drop}
 						></div>
 					{/if}
 				{/if}
@@ -364,11 +338,8 @@
 							{ active: dropZone?.kind === 'inside' && dropZone.folder === group.folder }
 						]}
 						ondragover={(event) => dragOverFolder(event, group.folder)}
-						ondragleave={clearDrop}
-						ondrop={(event) => {
-							event.preventDefault();
-							resolveDrop();
-						}}
+						ondragleave={drag.leave}
+						ondrop={drag.drop}
 					></div>
 				{/if}
 			{/each}

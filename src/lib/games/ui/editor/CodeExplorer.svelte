@@ -1,9 +1,18 @@
 <script lang="ts">
+	import { onDestroy } from 'svelte';
+
 	import ConfirmDialog from '#lib/components/ConfirmDialog.svelte';
 	import Icon from '#lib/components/Icon.svelte';
 
-	import { parseCodeProject, type CodeProject } from '../../code-project.js';
-	import { cleanProjectPath, codeLanguage, renameCodePath } from './code-files.js';
+	import { GAME_STYLESHEET, parseCodeProject, type CodeProject } from '../../code-project.js';
+	import {
+		cleanProjectPath,
+		codeDropPath,
+		codeFolders,
+		codeLanguage,
+		renameCodePath
+	} from './code-files.js';
+	import { TreeDrag } from './tree-drag.svelte.js';
 	let {
 		source,
 		active,
@@ -34,21 +43,58 @@
 	let error = $state('');
 	let deleting = $state(false);
 	let dialog: HTMLDialogElement | undefined;
-	let paths = $derived(Object.keys(project?.files ?? {}).sort());
-	let folders = $derived.by(() => {
-		const result = [...(project?.folders ?? [])];
-		for (const file of paths) {
-			const parts = file.split('/');
-			parts.pop();
-			while (parts.length) {
-				if (!result.includes(parts.join('/'))) {
-					result.push(parts.join('/'));
-				}
-				parts.pop();
-			}
-		}
-		return [...result].sort();
+	let disposed = false;
+	onDestroy(() => {
+		disposed = true;
 	});
+	let paths = $derived(Object.keys(project?.files ?? {}).sort());
+	let folders = $derived(project ? codeFolders(project) : []);
+	const drag = new TreeDrag<string>(() => ({
+		disabled: disabled || operation !== null || deleting,
+		canDrop: (before, destination) => {
+			try {
+				return !!project && codeDropPath(project, before, destination) !== null;
+			} catch {
+				return false;
+			}
+		},
+		ondrop: moveByDrag
+	}));
+	let locked = $derived(disabled || drag.busy);
+	function startDrag(event: DragEvent, item: string, parent: string) {
+		if (!drag.start(event, item)) {
+			return;
+		}
+		const file = Object.hasOwn(project?.files ?? {}, item);
+		folder = file ? parent : item;
+		onselect(file ? item : '');
+	}
+	async function moveByDrag(before: string, destination: string) {
+		if (!project || disabled) {
+			return;
+		}
+		const current = project,
+			original = source;
+		const after = codeDropPath(current, before, destination);
+		if (!after) {
+			return;
+		}
+		const next = await renameCodePath(current, before, after);
+		if (disposed) {
+			return;
+		}
+		if (disabled || source !== original) {
+			throw new Error('이동 중 코드가 변경되었어요. 최신 내용에서 다시 이동해주세요.');
+		}
+		write(next);
+		onmove(before, after);
+		folder = Object.hasOwn(current.files, before) ? destination : after;
+	}
+	function overFolder(event: DragEvent, destination: string) {
+		if (drag.over(event, destination)) {
+			(event.currentTarget as HTMLElement).closest('details')?.setAttribute('open', '');
+		}
+	}
 	function write(next: CodeProject) {
 		onchange(JSON.stringify(parseCodeProject(next), null, 2));
 	}
@@ -77,7 +123,7 @@
 	}
 	async function submit(event: SubmitEvent) {
 		event.preventDefault();
-		if (!project || disabled) {
+		if (!project || locked) {
 			return;
 		}
 		try {
@@ -110,7 +156,7 @@
 		}
 	}
 	function remove() {
-		if (!project || disabled) {
+		if (!project || locked) {
 			return;
 		}
 		const target = active ?? folder;
@@ -132,7 +178,7 @@
 	}
 </script>
 
-<section class="code-explorer" aria-label="코드 파일">
+<section class="code-explorer" aria-label="코드 파일" aria-busy={drag.busy}>
 	<header>
 		<h2><Icon name="tool" size={13} />코드</h2>
 		<div class="tools">
@@ -140,20 +186,32 @@
 				type="button"
 				title="새 코드 파일"
 				aria-label="새 코드 파일"
-				{disabled}
+				disabled={locked}
 				onclick={() => begin('file')}><Icon name="plus" size={13} /></button
 			>
 			<button
 				type="button"
 				title="새 코드 폴더"
 				aria-label="새 코드 폴더"
-				{disabled}
+				disabled={locked}
 				onclick={() => begin('folder')}><Icon name="folder" size={13} /></button
 			>
 		</div>
 	</header>
 	{#if project}
 		{@render directory('')}
+		{#if drag.key !== null}<div
+				class={['root-drop', { 'drop-target': drag.target === '' }]}
+				role="group"
+				aria-label="코드 루트로 이동"
+				ondragover={(event) => drag.over(event, '')}
+				ondragleave={drag.leave}
+				ondrop={drag.drop}
+			>
+				코드 루트로 이동
+			</div>{/if}
+		{#if drag.busy}<p class="move-status" role="status">코드를 이동하는 중…</p>{/if}
+		{#if drag.error}<p class="move-status" role="alert">{drag.error}</p>{/if}
 		<div class="generated" role="group" aria-label="자동 생성 파일">
 			<button
 				type="button"
@@ -175,17 +233,17 @@
 		{#if active !== '.helia/GameState.d.ts' && active !== '.helia/runtime.d.ts' && (active || folder)}<div
 				class="selection-tools"
 			>
-				<button type="button" {disabled} onclick={() => begin('rename')}>이름 변경</button>
+				<button type="button" disabled={locked} onclick={() => begin('rename')}>이름 변경</button>
 				<button
 					type="button"
-					disabled={disabled ||
+					disabled={locked ||
 						(active ?? folder) === project.entry ||
 						(project.entry.startsWith(folder + '/') && !active)}
 					onclick={() => (deleting = true)}>삭제</button
 				>
 				{#if active && active !== '.helia/GameState.d.ts' && active !== '.helia/runtime.d.ts' && active !== project.entry}<button
 						type="button"
-						{disabled}
+						disabled={locked}
 						onclick={() => project && active && write({ ...project, entry: active })}
 						>진입점 지정</button
 					>{/if}
@@ -197,7 +255,18 @@
 	{#each folders.filter((item) => item.split('/').slice(0, -1).join('/') === parent) as item (item)}
 		<details open>
 			<summary
-				class={{ selected: folder === item }}
+				class={{
+					selected: folder === item,
+					dragging: drag.key === item,
+					'drop-target': drag.target === item
+				}}
+				title={item}
+				draggable={!locked}
+				ondragstart={(event) => startDrag(event, item, parent)}
+				ondragend={drag.end}
+				ondragover={(event) => overFolder(event, item)}
+				ondragleave={drag.leave}
+				ondrop={drag.drop}
 				onclick={() => {
 					folder = item;
 					onselect('');
@@ -209,7 +278,13 @@
 	{#each paths.filter((item) => item.split('/').slice(0, -1).join('/') === parent) as item (item)}
 		<button
 			type="button"
-			class={['file', { selected: active === item }]}
+			class={['file', { selected: active === item, dragging: drag.key === item }]}
+			draggable={!locked && item !== GAME_STYLESHEET}
+			ondragstart={(event) => startDrag(event, item, parent)}
+			ondragend={drag.end}
+			ondragover={(event) => drag.over(event, parent)}
+			ondragleave={drag.leave}
+			ondrop={drag.drop}
 			aria-current={active === item ? 'page' : undefined}
 			onclick={() => {
 				folder = parent;
@@ -253,7 +328,7 @@
 					dialog?.close();
 					operation = null;
 				}}>취소</button
-			><button type="submit" {disabled}>확인</button>
+			><button type="submit" disabled={locked}>확인</button>
 		</footer>
 	</form>
 </dialog>
@@ -349,6 +424,27 @@
 	}
 	.children {
 		margin-left: 13px;
+	}
+	.dragging {
+		opacity: 0.4;
+	}
+	.drop-target {
+		background: var(--surface-active);
+		outline: 1px solid var(--accent);
+		outline-offset: -1px;
+	}
+	.root-drop {
+		padding: 9px 12px;
+		margin: 4px 8px;
+		color: var(--text-muted);
+		border: 1px dashed var(--border);
+		border-radius: 4px;
+		font-size: 10px;
+		text-align: center;
+	}
+	.move-status {
+		padding: 6px 12px;
+		overflow-wrap: anywhere;
 	}
 	.selection-tools {
 		gap: 3px;

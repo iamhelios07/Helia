@@ -1,4 +1,59 @@
-import { GAME_STYLESHEET, validCodePath, type CodeProject } from '../../code-project.js';
+import {
+	GAME_STYLESHEET,
+	parseCodeProject,
+	validCodePath,
+	type CodeProject
+} from '../../code-project.js';
+
+/** Includes implicit ancestors and declared empty folders, so both remain reachable in the tree. */
+export function codeFolders(project: CodeProject): string[] {
+	const folders = new Set<string>();
+	for (const path of [...(project.folders ?? []), ...Object.keys(project.files)]) {
+		const parts = path.split('/');
+		if (!project.folders?.includes(path)) {
+			parts.pop();
+		}
+		while (parts.length) {
+			folders.add(parts.join('/'));
+			parts.pop();
+		}
+	}
+	return [...folders].sort();
+}
+
+function validateMove(project: CodeProject, before: string, after: string) {
+	cleanProjectPath(before);
+	cleanProjectPath(after);
+	const folders = codeFolders(project);
+	if (!Object.hasOwn(project.files, before) && !folders.includes(before)) {
+		throw new Error('이동할 코드 경로가 없어요.');
+	}
+	if (before === after) {
+		return;
+	}
+	if (before === GAME_STYLESHEET) {
+		throw new Error('style.css는 이름을 바꾸거나 이동할 수 없어요.');
+	}
+	if (after.startsWith(before + '/')) {
+		throw new Error('폴더를 자기 자신이나 하위 폴더로 이동할 수 없어요.');
+	}
+	if (Object.hasOwn(project.files, after) || folders.includes(after)) {
+		throw new Error('같은 경로가 이미 있어요.');
+	}
+}
+
+/** A file-row drop adopts that row's parent; folder-row drops go inside the folder. */
+export function codeDropPath(project: CodeProject, before: string, folder: string): string | null {
+	if (folder && !codeFolders(project).includes(folder)) {
+		throw new Error('대상 코드 폴더가 없어요.');
+	}
+	if (folder === before || folder.startsWith(before + '/')) {
+		throw new Error('폴더를 자기 자신이나 하위 폴더로 이동할 수 없어요.');
+	}
+	const after = [folder, before.split('/').at(-1)].filter(Boolean).join('/');
+	validateMove(project, before, after);
+	return before === after ? null : after;
+}
 
 export function codeLanguage(path: string): 'typescript' | 'tsx' | 'css' {
 	const extension = path.split('.').at(-1);
@@ -57,14 +112,46 @@ function relative(from: string, to: string): string {
 	return path.startsWith('.') ? path : './' + path;
 }
 
+function moduleRequest(node: import('typescript').Node, ts: typeof import('typescript')) {
+	let request: import('typescript').Node | undefined;
+	if (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) {
+		request = node.moduleSpecifier;
+	} else if (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword) {
+		request = node.arguments[0];
+	} else if (ts.isImportTypeNode(node) && ts.isLiteralTypeNode(node.argument)) {
+		request = node.argument.literal;
+	}
+	return request && ts.isStringLiteralLike(request) ? request : undefined;
+}
+
+/** Persist emptied source folders without duplicating every implicit ancestor in the manifest. */
+function retainedFolders(
+	project: CodeProject,
+	files: CodeProject['files'],
+	moved: (path: string) => string
+): string[] {
+	const declared = new Set((project.folders ?? []).map(moved));
+	const occupied = new Set(codeFolders({ ...project, files, folders: [] }));
+	const empty = codeFolders(project)
+		.map(moved)
+		.filter((path) => !occupied.has(path));
+	for (const path of empty) {
+		if (!empty.some((other) => other.startsWith(path + '/'))) {
+			declared.add(path);
+		}
+	}
+	return [...declared];
+}
+
 /** Keep relative imports attached to their targets when a file or directory moves. */
 export async function renameCodePath(
 	project: CodeProject,
 	before: string,
 	after: string
 ): Promise<CodeProject> {
-	if (before === GAME_STYLESHEET && after !== GAME_STYLESHEET) {
-		throw new Error('style.css는 이름을 바꿀 수 없어요. 삭제 후 다시 만들어주세요.');
+	validateMove(project, before, after);
+	if (before === after) {
+		return project;
 	}
 	const { default: ts } = await import('typescript');
 	const moved = (path: string) => {
@@ -84,12 +171,8 @@ export async function renameCodePath(
 		const parsed = ts.createSourceFile(path, file.source, ts.ScriptTarget.Latest, true);
 		const edits: { start: number; end: number; text: string }[] = [];
 		const visit = (node: import('typescript').Node) => {
-			if (
-				(ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) &&
-				node.moduleSpecifier &&
-				ts.isStringLiteral(node.moduleSpecifier)
-			) {
-				const request = node.moduleSpecifier;
+			const request = moduleRequest(node, ts);
+			if (request) {
 				const target = resolved(path, request.text, originalPaths);
 				if (target && (moved(target) !== target || nextPath !== path)) {
 					edits.push({
@@ -108,10 +191,10 @@ export async function renameCodePath(
 		}
 		files[nextPath] = { source, language: codeLanguage(nextPath) };
 	}
-	return {
+	return parseCodeProject({
 		...project,
 		entry: moved(project.entry),
 		files,
-		...(project.folders ? { folders: project.folders.map(moved) } : {})
-	};
+		folders: retainedFolders(project, files, moved)
+	});
 }

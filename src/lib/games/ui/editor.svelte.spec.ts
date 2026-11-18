@@ -8,7 +8,7 @@ import type { EditorDraft } from '../editor.js';
 
 import { loadAuthoringDraft, saveAuthoringDraft } from '../editor-draft-storage.js';
 import { loadEditorLayout } from '../editor-layout.js';
-import { loadEditorDraft } from '../editor.js';
+import { createEditorDraft, loadEditorDraft, storeEditorDraft } from '../editor.js';
 import { createGame, createSession, getGameWorkspace, updateGameSettings } from '../repository.js';
 import { loadSettingsDraft, storeSettingsDraft } from '../settings-draft.js';
 import { getMonacoSource, monacoModel, setMonacoSource } from './editor/monaco-test.js';
@@ -180,6 +180,45 @@ it('creates style.css, edits it as CSS, and rejects renaming the stylesheet', as
 		.toHaveTextContent('파일 확장자는 .ts, .tsx를 사용해주세요.');
 	await page.getByRole('button', { name: '취소', exact: true }).click();
 	await expect.element(page.getByTitle('style.css')).toBeVisible();
+});
+
+it('retargets open source tabs and saves rewritten imports when a code folder is dragged', async () => {
+	const game = await createGame();
+	const draft = createEditorDraft(game);
+	const code = JSON.parse(draft.documents.code);
+	code.files['main.ts'].source = "import './logic/helper';";
+	code.files['logic/helper.ts'] = { language: 'typescript', source: 'export const value = 1;' };
+	code.folders = ['target'];
+	draft.documents.code = JSON.stringify(code);
+	storeEditorDraft(draft);
+	render(GameEditor, { gameId: game.id });
+	await page.getByRole('button', { name: /main\.ts.*진입점/ }).click();
+	await page.getByTitle('logic/helper.ts', { exact: true }).click();
+	await expect
+		.element(page.getByRole('textbox', { name: 'logic/helper.ts 소스', exact: true }))
+		.toBeVisible();
+	const dragEvent = (type: string) =>
+		new DragEvent(type, { bubbles: true, cancelable: true, dataTransfer: new DataTransfer() });
+	page.getByTitle('logic', { exact: true }).element().dispatchEvent(dragEvent('dragstart'));
+	const target = page.getByTitle('target', { exact: true }).element();
+	target.dispatchEvent(dragEvent('dragover'));
+	target.dispatchEvent(dragEvent('drop'));
+	await expect
+		.element(page.getByRole('textbox', { name: 'target/logic/helper.ts 소스', exact: true }))
+		.toBeVisible();
+	await expect
+		.poll(() => getMonacoSource('target/logic/helper.ts 소스'))
+		.toContain('export const value = 1');
+	await expect
+		.poll(
+			() => JSON.parse(loadEditorDraft(game.id)?.documents.code ?? '{}').files['main.ts'].source
+		)
+		.toBe("import './target/logic/helper.ts';");
+	await page.getByRole('tab', { name: /main\.ts/ }).click();
+	await expect
+		.poll(() => getMonacoSource('main.ts 소스'))
+		.toBe("import './target/logic/helper.ts';");
+	expect((await getGameWorkspace(game.id))?.game.code).toEqual(game.code);
 });
 
 it('keeps document edits in a local draft until atomic apply, preserving the play session', async () => {
