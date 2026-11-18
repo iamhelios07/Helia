@@ -40,7 +40,8 @@ import {
 	ScriptTarget,
 	ModuleKind,
 	ModuleResolutionKind,
-	JsxEmit
+	JsxEmit,
+	getTypeScriptWorker
 } from 'monaco-editor/languages/features/typescript/register.js';
 
 import TypeScriptWorker from './monaco-typescript.worker.ts?worker';
@@ -83,6 +84,21 @@ jsonDefaults.setDiagnosticsOptions({
 	trailingCommas: 'error',
 	enableSchemaRequest: false
 });
+
+/** Model creation activates native providers asynchronously; await their actual registration. */
+export async function readyTypeScriptWorker() {
+	const started = performance.now();
+	for (;;) {
+		try {
+			return await getTypeScriptWorker();
+		} catch (error) {
+			if (error !== 'TypeScript not registered!' || performance.now() - started > 5000) {
+				throw error;
+			}
+			await new Promise<void>((resolve) => setTimeout(resolve, 0));
+		}
+	}
+}
 monaco.editor.defineTheme('helia', {
 	base: 'vs-dark',
 	inherit: true,

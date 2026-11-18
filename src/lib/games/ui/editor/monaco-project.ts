@@ -26,6 +26,8 @@ export class MonacoProject {
 	private disposed = false;
 	private diagnostics: ((items: CodeDiagnostic[]) => void) | undefined;
 	private codePaths = new Set<string>();
+	private preparation: Promise<void> = Promise.resolve();
+	private syncGeneration = 0;
 	/** Resolves a project-relative model path to an editor tab. Ctrl+click and Go to Definition use it. */
 	openSource: ((path: string, position?: Position) => boolean) | undefined;
 	update(
@@ -36,16 +38,17 @@ export class MonacoProject {
 	) {
 		this.diagnostics = ondiagnostics;
 		this.codePaths = new Set(Object.keys(files));
+		// The generated state module also activates the language service before source models.
 		this.pending = {
-			...files,
-			...Object.fromEntries(
-				Object.entries(documents).map(([path, source]) => [path, { source, language: 'json' }])
-			),
 			'.helia/GameState.d.ts': {
 				source: stateTypes || 'export type GameState = Record<string, unknown>;',
 				language: 'typescript'
 			},
-			'.helia/runtime.d.ts': { source: HELIA_AUTHORING_DECLARATIONS, language: 'typescript' }
+			'.helia/runtime.d.ts': { source: HELIA_AUTHORING_DECLARATIONS, language: 'typescript' },
+			...files,
+			...Object.fromEntries(
+				Object.entries(documents).map(([path, source]) => [path, { source, language: 'json' }])
+			)
 		};
 		this.sync();
 	}
@@ -69,6 +72,11 @@ export class MonacoProject {
 			});
 			this.sync();
 		}
+		let preparation: Promise<void>;
+		do {
+			preparation = this.preparation;
+			await preparation;
+		} while (preparation !== this.preparation);
 		return runtime;
 	}
 	private sync() {
@@ -83,7 +91,33 @@ export class MonacoProject {
 			// re-validates all models and repaints diagnostics such as unused-code fading.
 		}
 		this.removeDeletedModels();
+		const generation = ++this.syncGeneration;
+		if ([...this.models.values()].some((model) => model.getLanguageId() === 'plaintext')) {
+			this.preparation = this.prepareTypes(generation);
+			// ready() reports startup failures; background updates can retry on the next sync.
+			void this.preparation.catch(() => {});
+		}
 		this.publishDiagnostics();
+	}
+	private async prepareTypes(generation: number) {
+		const worker = await this.runtime!.readyTypeScriptWorker();
+		if (this.disposed || generation !== this.syncGeneration) {
+			return;
+		}
+		const resources = [...this.models.entries()]
+			.filter(([path]) => modelLanguage(this.pending[path].language) === 'typescript')
+			.map(([, model]) => model.uri);
+		// Sync the entire graph before enabling native diagnostics on the new source models.
+		await worker(...resources);
+		if (this.disposed || generation !== this.syncGeneration) {
+			return;
+		}
+		for (const [path, model] of this.models) {
+			const language = modelLanguage(this.pending[path].language);
+			if (model.getLanguageId() !== language) {
+				this.runtime!.monaco.editor.setModelLanguage(model, language);
+			}
+		}
 	}
 	private syncModel(path: string, file: MonacoDocument, language: string) {
 		const { monaco } = this.runtime!;
@@ -91,11 +125,15 @@ export class MonacoProject {
 		if (!model) {
 			this.models.set(
 				path,
-				monaco.editor.createModel(file.source, language, monaco.Uri.parse(this.root + path))
+				monaco.editor.createModel(
+					file.source,
+					language === 'typescript' && path !== '.helia/GameState.d.ts' ? 'plaintext' : language,
+					monaco.Uri.parse(this.root + path)
+				)
 			);
 			return;
 		}
-		if (model.getLanguageId() !== language) {
+		if (model.getLanguageId() !== language && language !== 'typescript') {
 			monaco.editor.setModelLanguage(model, language);
 		}
 		if (model.getValue() !== file.source) {
