@@ -13,7 +13,12 @@ import {
 	upsertPromptPreset,
 	selectPromptPreset
 } from '#lib/app/settings/prompts.js';
-import { createGame, updateGameRules, getSessionTimeline } from '#lib/games/repository.js';
+import {
+	createGame,
+	updateGameRules,
+	updateGameSettings,
+	getSessionTimeline
+} from '#lib/games/repository.js';
 
 import type { RoundRequest } from './protocol.js';
 
@@ -286,5 +291,43 @@ it('captures the bound persona for an invocation and does not put the profile in
 	await invokeSessionAI(game.id, game.activeSessionId, { text: 'Next' });
 	expect(faults.requests[1].messages.map((message) => message.content).join('\n')).toContain(
 		'Edited identity'
+	);
+});
+
+it('resolves game and bound persona CBS for live invocations without rewriting user input', async () => {
+	const game = await createGame();
+	await updateGameSettings(game.id, {
+		title: 'CBS Forge',
+		description: 'Place: {{game}}',
+		firstMessage: '',
+		authorNote: 'Wait for {{user}}'
+	});
+	const persona = { id: 'player', name: 'Traveler', description: 'Visitor to {{game}}' };
+	savePersonaSettings({
+		...upsertPersona(emptyPersonaSettings(), persona),
+		selectedPersonaId: persona.id
+	});
+	const settings = emptyPromptSettings();
+	settings.presets[0].config = parsePromptConfig({
+		version: 2,
+		promptTemplate: [
+			{ type: 'plain', text: '{{game}} / {{user}} / {{persona}}' },
+			{ type: 'description' },
+			{ type: 'authornote' },
+			{ type: 'chat' }
+		]
+	});
+	savePromptSettings(settings);
+	const result = await invokeSessionAI(game.id, game.activeSessionId, {
+		text: '{{user}}가 해드리죠!'
+	});
+	expect(faults.requests[0].messages.slice(0, 4)).toEqual([
+		{ role: 'system', content: 'CBS Forge / Traveler / Visitor to CBS Forge' },
+		{ role: 'system', content: 'Place: CBS Forge' },
+		{ role: 'system', content: 'Wait for Traveler' },
+		{ role: 'user', content: 'Traveler가 해드리죠!' }
+	]);
+	expect(result.messages.find((message) => message.role === 'user')?.content).toBe(
+		'{{user}}가 해드리죠!'
 	);
 });

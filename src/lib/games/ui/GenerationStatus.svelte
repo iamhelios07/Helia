@@ -1,4 +1,6 @@
 <script lang="ts">
+	import type { CBSContext } from '#lib/games/ai/cbs/index.js';
+
 	import Icon from '#lib/components/Icon.svelte';
 
 	import type { GenerationMonitor } from './generation-monitor.svelte.js';
@@ -15,7 +17,8 @@
 		progressText,
 		onstop,
 		onretry,
-		appearance
+		appearance,
+		context
 	}: {
 		monitor: GenerationMonitor;
 		status: string;
@@ -26,6 +29,7 @@
 		onstop?: () => void;
 		onretry?: () => void;
 		appearance?: MessageAppearance;
+		context?: CBSContext;
 	} = $props();
 	const uid = $props.id();
 	const toolLabels = { running: '실행 중', completed: '완료', failed: '실패' };
@@ -91,7 +95,7 @@
 		{#if progressText}<details>
 				<summary>중간 응답</summary>
 				<div class="text" aria-label="중간 응답 내용">
-					<MessageContent content={progressText} {appearance} />
+					<MessageContent content={progressText} {appearance} {context} />
 				</div>
 			</details>{/if}
 		{#if tools.length}<details>

@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { tick, untrack } from 'svelte';
 
+	import type { CBSContext } from '#lib/games/ai/cbs/index.js';
 	import type { HistoryEvent, SessionTimeline } from '#lib/games/state/history.js';
 	import type { StateSlot } from '#lib/games/state/model.js';
 
@@ -18,7 +19,8 @@
 		onselect,
 		ondelete,
 		onreload,
-		appearance
+		appearance,
+		context
 	}: {
 		timeline: SessionTimeline | null;
 		busy: boolean;
@@ -27,6 +29,7 @@
 		ondelete: (id: string, revision: number) => Promise<boolean>;
 		onreload: () => Promise<void>;
 		appearance?: MessageAppearance;
+		context?: CBSContext;
 	} = $props();
 	let deleting = $state.raw<HistoryEvent | null>(null);
 	let deletingRevision = 0;
@@ -159,7 +162,9 @@
 					<summary>변경 내용 · {preview.changes.length}개</summary>
 					<time datetime={preview.createdAt}>{new Date(preview.createdAt).toLocaleString()}</time>
 					{#each previewMessages as message (message.id)}
-						<div class="dialogue"><MessageContent content={message.content} {appearance} /></div>
+						<div class="dialogue">
+							<MessageContent content={message.content} {appearance} {context} />
+						</div>
 					{/each}
 					{#if preview.changes.length}<dl>
 							{#each preview.changes as change, index (`${preview.id}:${index}`)}

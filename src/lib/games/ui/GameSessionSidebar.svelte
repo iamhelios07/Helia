@@ -155,6 +155,7 @@
 			</div>
 			<p class="history-session">{workspace.activeSession?.title}</p>
 			<SessionHistoryPanel
+				context={chat.displayContext}
 				timeline={chat.timeline}
 				busy={chat.timelineBusy || chat.locked || chat.blocked}
 				appearance={chat.theme}

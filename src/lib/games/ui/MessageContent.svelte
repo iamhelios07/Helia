@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { renderCBS, type CBSContext } from '#lib/games/ai/cbs/index.js';
+
 	import { MessageFrame, type MessageAppearance } from './message-frame.js';
 	import { renderMessageContent } from './message-html.js';
 
@@ -6,15 +8,27 @@
 		content,
 		html = true,
 		appearance,
-		onresize
+		onresize,
+		context
 	}: {
 		content: string;
 		html?: boolean;
 		appearance?: MessageAppearance;
 		onresize?: (heightChange: number) => void;
+		context?: CBSContext;
 	} = $props();
 	let failed = $state(false);
-	const rendered = $derived(html && !failed ? renderMessageContent(content) : null);
+	const display = $derived.by(() => {
+		try {
+			return { text: context ? renderCBS(content, context) : content, error: '' };
+		} catch (cause) {
+			return {
+				text: '',
+				error: cause instanceof Error ? cause.message : '메시지를 표시하지 못했어요.'
+			};
+		}
+	});
+	const rendered = $derived(html && !failed ? renderMessageContent(display.text) : null);
 	const rich = $derived(rendered?.rich ?? false);
 
 	function attachFrame(element: HTMLIFrameElement) {
@@ -32,7 +46,9 @@
 	}
 </script>
 
-{#if rich}
+{#if display.error}
+	<p class="render-error" role="alert">{display.error}</p>
+{:else if rich}
 	<iframe
 		class="html-message"
 		title="메시지 HTML"
@@ -41,10 +57,15 @@
 		{@attach attachFrame}
 	></iframe>
 {:else}
-	<div class="plain-message">{content}</div>
+	<div class="plain-message">{display.text}</div>
 {/if}
 
 <style>
+	.render-error {
+		color: var(--danger, #ef9b9b);
+		white-space: pre-wrap;
+		overflow-wrap: anywhere;
+	}
 	.html-message {
 		display: block;
 		width: 100%;

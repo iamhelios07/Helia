@@ -1,5 +1,6 @@
 import { tick } from 'svelte';
 
+import type { CBSContext } from '#lib/games/ai/cbs/index.js';
 import type { AgentEvent } from '#lib/games/ai/protocol.js';
 import type { SessionTimeline } from '#lib/games/state/history.js';
 
@@ -16,7 +17,6 @@ import type { Message, Session } from '../model.js';
 import type { GameUI } from './runtime/model.js';
 
 import {
-	getSessionConversation,
 	getSessionTimeline,
 	selectSessionBranch,
 	deleteSessionEvent,
@@ -136,6 +136,13 @@ export class SessionChatController {
 	refreshRunning = false;
 	refreshTimer: ReturnType<typeof setTimeout> | undefined;
 	theme = $derived(safeChatStyle(this.chatStyle));
+	displayContext = $derived<CBSContext>({
+		game: this.gameTitle,
+		persona: this.persona.persona,
+		state: this.timeline?.history.progress.state ?? {},
+		description: this.timeline?.history.snapshot.settings.description,
+		authornote: this.timeline?.history.snapshot.settings.authorNote
+	});
 	scheduleRefresh = () => {
 		if (this.disposed || !this.refreshPending || this.refreshTimer !== undefined) {
 			return;
@@ -396,13 +403,11 @@ export class SessionChatController {
 		this.loading = true;
 		this.loadError = '';
 		try {
-			const conversation = await getSessionConversation(game, session);
+			const timeline = await getSessionTimeline(game, session);
 			if (!this.isCurrent(game, session)) {
 				return;
 			}
-			this.messages = conversation.messages;
-			this.onsessionupdate(conversation.session);
-			void this.scrollToEnd();
+			this.applyTimeline(timeline);
 		} catch {
 			if (this.isCurrent(game, session)) {
 				this.loadError = '채팅 기록을 불러오지 못했어요.';

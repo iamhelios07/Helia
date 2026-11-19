@@ -1,5 +1,7 @@
 <script lang="ts">
-	import { onDestroy } from 'svelte';
+	import { onDestroy, onMount } from 'svelte';
+
+	import type { CBSContext } from '#lib/games/ai/cbs/index.js';
 
 	import ConfirmDialog from '#lib/components/ConfirmDialog.svelte';
 	import {
@@ -12,6 +14,7 @@
 
 	import { RegexDisplay } from '../message-regex.svelte.js';
 	import MessageContent from '../MessageContent.svelte';
+	import { SessionPersonaController } from '../session-persona-controller.svelte.js';
 	import {
 		attachPlaygroundFrame,
 		runPlaygroundAI,
@@ -49,6 +52,18 @@
 	let current = $derived(mode === 'preview' ? sessions.preview : test);
 	let starting = $derived(sessions.starting[mode]);
 	let timeline = $derived(mode === 'preview' ? sessions.previewTimeline : sessions.testTimeline);
+	const persona = new SessionPersonaController(() => ({
+		gameId: current?.game.id ?? game.id,
+		sessionId: current?.game.activeSessionId ?? ''
+	}));
+	const displayContext = $derived<CBSContext>({
+		game: current?.game.title ?? game.title,
+		persona: persona.persona,
+		state: timeline?.history.progress.state ?? {},
+		description: timeline?.history.snapshot.settings.description,
+		authornote: timeline?.history.snapshot.settings.authorNote
+	});
+	onMount(persona.mount);
 	const display = new RegexDisplay(() => ({
 		messages: timeline?.messages ?? [],
 		rules: current?.game.regex
@@ -205,11 +220,11 @@
 		<div class="messages" aria-label="테스트 대화">
 			{#each display.messages as message (message.id)}<article>
 					<small>{message.role === 'user' ? '플레이어' : '게임'}</small>
-					<MessageContent content={message.content} />
+					<MessageContent content={message.content} context={displayContext} />
 				</article>{/each}
 			{#if streaming}<article aria-live="polite">
 					<small>게임</small>
-					<MessageContent content={streaming} />
+					<MessageContent content={streaming} context={displayContext} />
 				</article>{/if}
 		</div>
 		<form onsubmit={runAI}>

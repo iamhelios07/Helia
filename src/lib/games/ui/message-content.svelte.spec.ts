@@ -7,6 +7,35 @@ import type {} from '#lib/testing/message-frame-command.js';
 import { MessageFrame } from './message-frame.js';
 import MessageContent from './MessageContent.svelte';
 
+it('expands CBS before Markdown/HTML rendering and recovers from invalid expressions', async () => {
+	const content = '**{{user}}** · {{state::gold}}G <span>{{game}}</span>';
+	const context = {
+		state: { gold: 12 },
+		game: '대장간',
+		persona: { name: '백종원', description: '' }
+	};
+	const view = render(MessageContent, { props: { content, context } });
+	await expect
+		.poll(async () => (await commands.inspectMessageFrame()).html)
+		.toContain('<strong>백종원</strong>');
+	await expect
+		.poll(async () => (await commands.inspectMessageFrame()).text)
+		.toContain('12G 대장간');
+	await view.rerender({
+		context: { ...context, state: { gold: 3 }, persona: { name: '여행자', description: '' } }
+	});
+	await expect
+		.poll(async () => (await commands.inspectMessageFrame()).text)
+		.toContain('여행자 · 3G');
+	await view.rerender({ content: '{{calc::1/0}}' });
+	await expect.element(page.getByRole('alert')).toHaveTextContent('CBS:');
+	await expect.element(page.getByText('{{calc::1/0}}', { exact: true })).not.toBeInTheDocument();
+	await view.rerender({ content: '다시 {{user}}', html: false });
+	await expect.element(page.getByText('다시 여행자', { exact: true })).toBeVisible();
+	expect(content).toBe('**{{user}}** · {{state::gold}}G <span>{{game}}</span>');
+	await view.unmount();
+});
+
 it('keeps ordinary text lightweight and renders fenced HTML examples as escaped code', async () => {
 	const content = '철 < 은\nArray<T>';
 	const view = render(MessageContent, { content });

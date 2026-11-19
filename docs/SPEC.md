@@ -246,7 +246,7 @@ function deleteEvent(history, event):
 - Players MUST supply their own API credentials and choose the provider and model from supported integrations.
 - Helia MUST leave model selection to the player rather than granting a creator the ability to force a particular model.
 - The creator's prompt MUST determine the AI's role, including whether it acts as a game master, one character or multiple characters.
-- Prompt authoring SHOULD follow the RisuAI-style prompt management model, including ordered blocks, block types, special types and roles. The initial integration excludes CBS execution; exact compatibility and remaining authoring features MUST be documented.
+- Prompt authoring SHOULD follow the RisuAI-style prompt management model, including ordered blocks, block types, special types and roles. The supported CBS subset MUST remain read-only over Game State and explicitly provided game/persona context; exact compatibility and remaining authoring features MUST be documented. State changes MUST continue through Actions and Transactions.
 - Prompt presets MUST be player-owned, application-wide settings managed through Settings → Prompts. Presets and their active selection MUST NOT be saved in game definitions, game content snapshots, history or distributable game packages.
 - Game-specific instructions and lorebook content MUST remain creator-owned game content. Each AI invocation MUST assemble that content using the selected player preset captured at invocation start; preset changes MUST apply to the next invocation, including existing sessions.
 - Helia MUST support repeated tool calls and follow-up model responses within one agent loop.

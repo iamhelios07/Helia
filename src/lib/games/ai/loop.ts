@@ -10,6 +10,7 @@ import { removeMessageEcho } from './message-echo.js';
 import {
 	parsePromptConfig,
 	assemblePrompt,
+	renderPromptText,
 	type PromptConfig,
 	type PromptContext
 } from './prompts.js';
@@ -39,6 +40,7 @@ export interface AgentWorkspaceOptions {
 	emit: (event: AgentEvent) => void;
 	config?: PromptConfig;
 	persona?: PromptContext['persona'];
+	game?: string;
 	regex?: RegexRule[];
 }
 export async function runAgentWorkspace(
@@ -73,7 +75,7 @@ class AgentWorkspace {
 			throw aiError('canceled');
 		}
 	}
-	private async prompt() {
+	private async promptContext(): Promise<PromptContext> {
 		const { history, messages, events, memories } = this.timeline;
 		const transformed = await transformRegexMessages(
 			[...messages, { role: 'user' as const, content: this.input }],
@@ -82,7 +84,8 @@ class AgentWorkspace {
 			this.options.signal
 		);
 		const input = transformed.pop()!.content;
-		const prompt = assemblePrompt(this.ai, {
+		return {
+			game: this.options.game,
 			persona: this.options.persona,
 			settings: history.snapshot.settings,
 			lorebook: history.snapshot.ai?.lorebook,
@@ -93,9 +96,7 @@ class AgentWorkspace {
 			memories,
 			state: this.state,
 			input
-		});
-		prompt.pop();
-		return prompt;
+		};
 	}
 	private messages(prompt: AIMessage[], prefix: string): AIMessage[] {
 		const messages: AIMessage[] = [
@@ -252,11 +253,14 @@ class AgentWorkspace {
 			{ signal: this.options.signal }
 		);
 		this.tools = catalog.tools ?? [];
-		const prompt = await this.prompt();
+		const context = await this.promptContext();
 		const { emit } = this.options;
 		for (let round = 0; round < AI_LIMITS.rounds; round++) {
 			this.check();
-			const prefix = this.ai.promptSettings.assistantPrefill;
+			const current = { ...context, state: this.state };
+			const prompt = assemblePrompt(this.ai, current);
+			prompt.pop();
+			const prefix = renderPromptText(this.ai.promptSettings.assistantPrefill, current);
 			const messages = this.messages(prompt, prefix);
 			const output = await this.generate(messages, round + 1);
 			this.check();

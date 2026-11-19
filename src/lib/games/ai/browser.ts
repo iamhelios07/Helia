@@ -49,7 +49,7 @@ export async function invokeSessionAI(
 	if (options.signal?.aborted) {
 		throw aiError('canceled');
 	}
-	const { text, rules } = await prepareInput(runtime, gameId, input, options.signal);
+	const { text, rules, game } = await prepareInput(runtime, gameId, input, options.signal);
 	const timeline = await runtime.getSessionTimeline(gameId, sessionId),
 		idle = beginSessionActivity(gameId, sessionId);
 	const signal = options.signal ?? new AbortController().signal;
@@ -72,6 +72,7 @@ export async function invokeSessionAI(
 				emit: emit,
 				config: prompt,
 				persona,
+				game,
 				regex: rules
 			});
 			if (signal.aborted) {
@@ -135,7 +136,7 @@ async function prepareInput(
 			: validateMessageContent(
 					await transformRegexText(rawText, rules, { stage: 'input', role: 'user', signal })
 				);
-	return { text, rules };
+	return { text, rules, game: workspace.game.title };
 }
 
 async function runFollowUpHooks({

@@ -4,6 +4,8 @@ import type { GameState } from '#lib/games/state/value.js';
 
 import { credentialRecord } from '#lib/app/settings/credential-protocol.js';
 
+import { CBSRenderer } from './cbs/index.js';
+import { CBS_LIMITS, cbsError } from './cbs/model.js';
 import { aiError, type AIMessage } from './protocol.js';
 
 export const PROMPT_TYPES = [
@@ -300,6 +302,7 @@ export function importPromptPreset(value: unknown): PromptConfig {
 	});
 }
 export interface PromptContext {
+	game?: string;
 	persona?: { name: string; description: string };
 	settings: GameSettings;
 	lorebook?: LoreEntry[];
@@ -308,6 +311,19 @@ export interface PromptContext {
 	memories: Memory[];
 	state: GameState;
 	input?: string;
+}
+
+function promptRenderer(context: PromptContext): CBSRenderer {
+	return new CBSRenderer({
+		state: context.state,
+		game: context.game,
+		persona: context.persona,
+		description: context.settings.description,
+		authornote: context.settings.authorNote
+	});
+}
+export function renderPromptText(source: string, context: PromptContext): string {
+	return promptRenderer(context).render(source);
 }
 
 function normalizedRole(role: PromptBlock['role']): AIMessage['role'] {
@@ -344,11 +360,14 @@ export function assemblePrompt(ai: PromptConfig, context: PromptContext): AIMess
 class PromptAssembler {
 	private result: AIMessage[] = [];
 	private chat: AIMessage[];
-	private slots: Record<string, string>;
+	private lore: string[];
+	private cbs: CBSRenderer;
+	private contextChars = 0;
 	constructor(
 		private ai: PromptConfig,
 		private context: PromptContext
 	) {
+		this.cbs = promptRenderer(context);
 		this.chat = context.messages.map((message) => ({
 			role: message.role,
 			content: message.content
@@ -357,20 +376,34 @@ class PromptAssembler {
 			this.chat.push({ role: 'user', content: context.input });
 		}
 		const haystack = this.chat.map((m) => m.content).join('\n');
-		this.slots = {
-			description: context.settings.description,
-			lorebook: orderedLore(context.lorebook ?? [])
-				.filter((e) => matchesLore(e, haystack))
-				.map((e) => e.content)
-				.join('\n\n'),
-			memory: context.memories.map((m) => m.content).join('\n'),
-			authornote: context.settings.authorNote
-		};
+		this.lore = orderedLore(context.lorebook ?? [])
+			.filter((e) => matchesLore(e, haystack))
+			.map((e) => e.content);
 	}
 	private add(role: AIMessage['role'], content: string) {
 		if (content.trim()) {
+			this.contextChars += content.length;
+			this.checkContextSize(this.contextChars);
 			this.result.push({ role, content });
 		}
+	}
+	private checkContextSize(size: number) {
+		if (size > this.ai.maxContextChars) {
+			throw new Error('AI 컨텍스트 한도를 초과했어요. 프롬프트나 대화 범위를 조정해주세요.');
+		}
+	}
+	private loreText(): string {
+		const parts: string[] = [];
+		let length = 0;
+		for (const source of this.lore) {
+			const value = this.cbs.render(source);
+			length += value.length + (parts.length ? 2 : 0);
+			if (length > CBS_LIMITS.output) {
+				throw cbsError('출력 크기 한도를 초과했어요.');
+			}
+			parts.push(value);
+		}
+		return parts.join('\n\n');
 	}
 	private appendChat(block: PromptBlock) {
 		const end =
@@ -380,7 +413,7 @@ class PromptAssembler {
 				this.ai.promptSettings.sendChatAsSystem && !block.chatAsOriginalOnSystem
 					? 'system'
 					: message.role,
-				message.content
+				this.cbs.render(message.content)
 			);
 		}
 	}
@@ -391,7 +424,10 @@ class PromptAssembler {
 			throw new Error('ChatML 프롬프트 형식을 확인해주세요.');
 		}
 		for (const match of matches) {
-			this.add(match[1] === 'bot' ? 'assistant' : (match[1] as AIMessage['role']), match[2]);
+			this.add(
+				match[1] === 'bot' ? 'assistant' : (match[1] as AIMessage['role']),
+				this.cbs.render(match[2])
+			);
 		}
 	}
 	private cache(block: PromptBlock) {
@@ -405,26 +441,49 @@ class PromptAssembler {
 		}
 	}
 	private appendSlot(block: PromptBlock) {
-		const value =
-			block.type === 'persona' || block.type === 'postEverything'
-				? this.blockText(block)
-				: this.slots[block.type] || (block.type === 'authornote' ? (block.defaultText ?? '') : '');
+		const value = this.slotValue(block);
 		if (value) {
 			this.add(
 				normalizedRole(block.role),
-				block.innerFormat === undefined ? value : block.innerFormat.replaceAll('{{slot}}', value)
+				block.innerFormat === undefined ? value : this.cbs.render(block.innerFormat, value)
 			);
 		}
 		if (block.type === 'postEverything') {
-			this.add('system', this.ai.promptSettings.postEndInnerFormat);
+			this.add('system', this.cbs.render(this.ai.promptSettings.postEndInnerFormat));
 		}
 	}
 	private blockText(block: PromptBlock): string {
 		if (block.type !== 'persona' || !this.context.persona) {
-			return block.text ?? '';
+			return this.cbs.render(block.text ?? '');
 		}
-		const { name, description } = this.context.persona;
-		return [`Player persona: ${name}`, description, block.text ?? ''].filter(Boolean).join('\n\n');
+		const { name } = this.context.persona;
+		return [
+			`Player persona: ${name}`,
+			this.cbs.reference('persona'),
+			this.cbs.render(block.text ?? '')
+		]
+			.filter(Boolean)
+			.join('\n\n');
+	}
+	private slotValue(block: PromptBlock): string {
+		if (block.type === 'persona' || block.type === 'postEverything') {
+			return this.blockText(block);
+		}
+		if (block.type === 'description') {
+			return this.cbs.reference('description');
+		}
+		if (block.type === 'lorebook') {
+			return this.loreText();
+		}
+		if (block.type === 'memory') {
+			return this.context.memories.map((memory) => memory.content).join('\n');
+		}
+		if (block.type === 'authornote') {
+			return this.context.settings.authorNote
+				? this.cbs.reference('authornote')
+				: this.cbs.render(block.defaultText ?? '');
+		}
+		return '';
 	}
 	private append(block: PromptBlock) {
 		if (block.enabled === false) {
@@ -437,7 +496,7 @@ class PromptAssembler {
 			) {
 				return;
 			}
-			this.add(normalizedRole(block.role), block.text ?? '');
+			this.add(normalizedRole(block.role), this.cbs.render(block.text ?? ''));
 			return;
 		}
 		if (block.type === 'chat') {
@@ -472,9 +531,6 @@ class PromptAssembler {
 			'system',
 			'Current game state (authoritative structured facts):\n' + JSON.stringify(this.context.state)
 		);
-		if (this.result.reduce((sum, m) => sum + m.content.length, 0) > this.ai.maxContextChars) {
-			throw new Error('AI 컨텍스트 한도를 초과했어요. 프롬프트나 대화 범위를 조정해주세요.');
-		}
 		return this.result;
 	}
 }

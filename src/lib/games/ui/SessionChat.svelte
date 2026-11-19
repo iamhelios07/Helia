@@ -102,6 +102,7 @@
 							<div class="message-content">
 								<MessageContent
 									content={message.content}
+									context={chat.displayContext}
 									appearance={chat.theme}
 									onresize={chat.messageResized}
 								/>
@@ -115,6 +116,7 @@
 	<div class="chat-controls">
 		{#if chat.attemptStatus !== 'idle'}
 			<GenerationStatus
+				context={chat.displayContext}
 				monitor={chat.monitor}
 				status={chat.attemptStatus}
 				label={chat.attemptLabel}
@@ -131,6 +133,7 @@
 			/>
 		{/if}
 		<form class="composer" onsubmit={chat.sendMessage} aria-label="메시지 작성">
+			{#if display.error}<p class="save-error" role="alert">{display.error}</p>{/if}
 			{#if chat.modelError}<p class="save-error" role="alert">{chat.modelError}</p>
 			{:else if !chat.selectedModelId}<p class="save-error">
 					앱 설정에서 API 연결과 모델을 등록해주세요.

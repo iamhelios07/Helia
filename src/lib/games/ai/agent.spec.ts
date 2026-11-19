@@ -10,6 +10,7 @@ import type { ModelGenerator, AgentEvent } from './protocol.js';
 
 import { hostAILeases, SessionLeases } from './leases.js';
 import { runAgentWorkspace } from './loop.js';
+import { parsePromptConfig } from './prompts.js';
 import { aiError } from './protocol.js';
 
 const args = "{type:'object',properties:{},additionalProperties:false}";
@@ -92,6 +93,72 @@ async function setup(source = scripts) {
 	writes.length = 0;
 	return { storage, repo, game, timeline, writes };
 }
+
+it('re-evaluates CBS against temporary state on each tool round, including the prefill', async () => {
+	const { storage, timeline } = await setup();
+	let round = 0;
+	try {
+		const result = await runAgentWorkspace(timeline, 'Buy', {
+			connection,
+			run: evaluateAction,
+			signal: new AbortController().signal,
+			emit: () => {},
+			game: 'Forge',
+			config: parsePromptConfig({
+				version: 2,
+				promptTemplate: [
+					{ type: 'plain', text: '{{game}} balance={{state::gold}}' },
+					{ type: 'chat' }
+				],
+				promptSettings: { assistantPrefill: 'G{{state::gold}}' }
+			}),
+			generate: async (request) => {
+				const gold = 2 - round;
+				expect(request.messages[0].content).toBe(`Forge balance=${gold}`);
+				expect(request.messages.at(-2)).toEqual({ role: 'assistant', content: `G${gold}` });
+				expect(request.messages.at(-1)?.content).toContain(`"gold":${gold}`);
+				return round++ === 0
+					? { text: '', calls: [{ id: 'spend', name: 'spend', arguments: {} }] }
+					: { text: 'Done', calls: [] };
+			}
+		});
+		expect(result.state.gold).toBe(1);
+		expect(round).toBe(2);
+	} finally {
+		storage.close();
+	}
+});
+
+it('does not commit temporary tool changes when CBS fails before the next model round', async () => {
+	const { storage, timeline, repo, game } = await setup();
+	const generate = vi.fn<ModelGenerator>(async () => ({
+		text: '',
+		calls: [{ id: 'spend', name: 'spend', arguments: {} }]
+	}));
+	try {
+		await expect(
+			runAgentWorkspace(timeline, 'Buy', {
+				connection,
+				run: evaluateAction,
+				signal: new AbortController().signal,
+				emit: () => {},
+				generate,
+				config: parsePromptConfig({
+					version: 2,
+					promptTemplate: [
+						{ type: 'plain', text: '{{#when::{{state::gold}}::is::1}}{{calc::1/0}}{{/when}}' }
+					]
+				})
+			})
+		).rejects.toThrow('CBS:');
+		expect(generate).toHaveBeenCalledOnce();
+		expect(
+			(await repo.getSessionTimeline(game.id, game.activeSessionId)).history.progress.state.gold
+		).toBe(2);
+	} finally {
+		storage.close();
+	}
+});
 describe('atomic AI workspace', () => {
 	it('triggers explicit script AI requests after a successful commit even without a custom UI', async () => {
 		const storage = openStorage(':memory:'),
