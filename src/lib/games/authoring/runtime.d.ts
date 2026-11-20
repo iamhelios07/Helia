@@ -1,51 +1,177 @@
-/*
- * Authoring API for the game sandbox.
- *
- * This file is copied verbatim into the editing project as `.helia/runtime.d.ts`
- * and is excluded from the application type program, because its ambient
- * declarations only belong to the sandbox. `../GameState` there is the
- * declaration generated from the game's state schema.
- */
-
+/* Authoring declarations, loaded as .helia/runtime.d.ts inside each game project. */
 type GameState = import('./GameState').GameState;
-type JsonValue =
-	null | boolean | number | string | readonly JsonValue[] | { [key: string]: JsonValue };
-type ReadonlyState<T> = {
-	readonly [K in keyof T]: T[K] extends object ? ReadonlyState<T[K]> : T[K];
-};
+type JsonValue = null | boolean | number | string | readonly JsonValue[] | JsonObject;
+type JsonObject = { [key: string]: JsonValue };
+type ReadonlyJsonValue =
+	null | boolean | number | string | readonly ReadonlyJsonValue[] | ReadonlyJsonObject;
+interface ReadonlyJsonObject {
+	readonly [key: string]: ReadonlyJsonValue;
+}
+type ReadonlyState<T> = [JsonValue] extends [T]
+	? ReadonlyJsonValue
+	: T extends object
+		? { readonly [K in keyof T]: ReadonlyState<T[K]> }
+		: T;
 
-interface ActionContext<TArgs extends object = Record<string, JsonValue>> {
-	state: GameState;
-	args: ReadonlyState<TArgs>;
+interface GameAction {
+	name: string;
+	args: JsonObject;
 }
 interface ChatMessageInput {
 	role: 'user' | 'assistant';
 	content: string;
 }
-interface ReadContext<TArgs extends object = Record<string, JsonValue>> {
+interface CommitResult {
+	revision: number;
+}
+interface TurnOptions {
+	visible?: boolean;
+}
+type ModelContent =
+	| { type: 'text'; text: string }
+	| { type: 'image' | 'audio' | 'video' | 'file'; mimeType: string; data: string };
+interface ModelToolCall {
+	id: string;
+	name: string;
+	arguments: JsonValue;
+}
+interface ModelContinuation {
+	provider:
+		| 'openai-compatible'
+		| 'openai-responses'
+		| 'anthropic'
+		| 'google'
+		| 'google-vertex'
+		| 'google-interactions';
+	model: string;
+	data: JsonValue[];
+}
+interface ModelMessage {
+	role: 'system' | 'user' | 'assistant' | 'tool';
+	content: string | ModelContent[];
+	toolCalls?: ModelToolCall[];
+	toolCallId?: string;
+	continuation?: ModelContinuation;
+}
+interface ModelTool {
+	name: string;
+	description?: string;
+	arguments: ArgumentSchema;
+}
+interface ModelCallOptions {
+	model?: 'main' | 'auxiliary';
+	messages: ModelMessage[];
+	tools?: ModelTool[];
+}
+interface ModelResponse {
+	content: ModelContent[];
+	toolCalls: ModelToolCall[];
+	continuation?: ModelContinuation;
+	usage?: { inputTokens: number; outputTokens: number };
+}
+interface ActionContext<TArgs extends object> {
+	state: GameState;
+	args: ReadonlyState<TArgs>;
+}
+interface ReadContext<TArgs extends object> {
 	state: ReadonlyState<GameState>;
 	args: ReadonlyState<TArgs>;
 }
-interface ActionDefinition<TArgs extends object = Record<string, JsonValue>> {
+
+interface SchemaAnnotations {
+	title?: string;
+	description?: string;
+	enum?: readonly JsonValue[];
+}
+type NullableType<T extends string> = T | readonly [T, 'null'] | readonly ['null', T];
+type ValueSchema = SchemaAnnotations &
+	(
+		| { type: NullableType<'string' | 'number' | 'integer' | 'boolean'> | 'null' }
+		| { type: NullableType<'array'>; items: ValueSchema }
+		| {
+				type: NullableType<'object'>;
+				properties: Record<string, ValueSchema>;
+				required?: readonly string[];
+				additionalProperties: false;
+		  }
+	);
+interface ArgumentSchema extends SchemaAnnotations {
+	type: 'object';
+	properties: Record<string, ValueSchema>;
+	required?: readonly string[];
+	additionalProperties: false;
+}
+interface OperationDefinition {
 	name: string;
-	arguments?: object;
 	description?: string;
 	ai?: boolean;
+}
+interface ActionDefinition<TArgs extends object> extends OperationDefinition {
+	arguments?: never;
 	run(context: ActionContext<TArgs>): GameState;
 }
-interface QueryDefinition<TArgs extends object = Record<string, JsonValue>> {
-	name: string;
-	arguments?: object;
-	description?: string;
-	ai?: boolean;
+interface QueryDefinition<TArgs extends object> extends OperationDefinition {
+	arguments?: never;
 	run(context: ReadContext<TArgs>): JsonValue;
+}
+interface SchemaActionDefinition extends OperationDefinition {
+	arguments: ArgumentSchema;
+	run(context: ActionContext<JsonObject>): GameState;
+}
+interface SchemaQueryDefinition extends OperationDefinition {
+	arguments: ArgumentSchema;
+	run(context: ReadContext<JsonObject>): JsonValue;
+}
+type StateSlot = { exists: false } | { exists: true; value: JsonValue };
+interface StateChange {
+	path: readonly string[];
+	before: StateSlot;
+	after: StateSlot;
+}
+interface RuleContext {
+	readonly state: ReadonlyState<GameState>;
+	readonly before: ReadonlyState<GameState>;
+	readonly after: ReadonlyState<GameState>;
+	readonly action: ReadonlyState<GameAction>;
+	readonly changes: readonly ReadonlyState<StateChange>[];
+}
+interface FilterDecision {
+	allow: boolean;
+	reason?: string;
 }
 interface RuleDefinition {
 	name: string;
+	description?: string;
 	priority?: number;
-	actions?: string[];
+	actions?: readonly string[];
+}
+interface FilterDefinition extends RuleDefinition {
+	run(context: RuleContext): FilterDecision;
+}
+interface HookDefinition extends RuleDefinition {
 	mode?: 'included' | 'independent';
-	run(context: ReadContext): unknown;
+	run(context: RuleContext): readonly GameAction[] | void;
+}
+
+/** Synchronous QuickJS API. State is supplied through each operation's context. */
+interface HeliaRuntime {
+	defineAction<TArgs extends object = JsonObject>(definition: ActionDefinition<TArgs>): void;
+	defineAction(definition: SchemaActionDefinition): void;
+	defineQuery<TArgs extends object = JsonObject>(definition: QueryDefinition<TArgs>): void;
+	defineQuery(definition: SchemaQueryDefinition): void;
+	defineFilter(definition: FilterDefinition): void;
+	defineHook(definition: HookDefinition): void;
+	emit(name: string, payload?: JsonObject): void;
+	/** Buffer a message in the current Action or Hook's transaction. */
+	appendMessage(message: ChatMessageInput): void;
+	/** Schedule AI after the current Action or Hook commits. */
+	queueTurn(text: string, options?: TurnOptions): void;
+}
+
+interface PanelDefinition {
+	id: string;
+	title: string;
+	component: () => import('preact').ComponentChildren;
 }
 interface StoredFile {
 	ref: string;
@@ -64,91 +190,92 @@ interface SessionFileStorage {
 	}): Promise<{ files: StoredFile[]; nextCursor: string | null }>;
 	remove(ref: string): Promise<void>;
 }
-interface HeliaRuntime {
-	/** Session file access is available only in the UI runtime. */
+interface ProgressProps {
+	value: number;
+	max?: number;
+	label?: string;
+}
+interface ItemListProps<T> {
+	items?: readonly T[];
+	renderItem?: (item: T, index: number) => import('preact').ComponentChildren;
+	label?: string;
+}
+interface StatsProps {
+	items?: readonly { label: import('preact').ComponentChildren; value: JsonValue }[];
+	label?: string;
+}
+/** Preact frame API. Writes resolve after the host commits. */
+interface HeliaUIRuntime {
 	readonly storage: SessionFileStorage;
 	useAssetURL(ref: string | null | undefined): {
 		url: string | null;
 		loading: boolean;
 		error: Error | null;
 	};
-
-	defineAction<TArgs extends object = Record<string, JsonValue>>(
-		definition: ActionDefinition<TArgs>
-	): void;
-	defineQuery<TArgs extends object = Record<string, JsonValue>>(
-		definition: QueryDefinition<TArgs>
-	): void;
-	defineFilter(definition: RuleDefinition): void;
-	defineHook(definition: RuleDefinition): void;
-	emit(name: string, payload?: JsonValue): void;
-	/** Scripts buffer messages until their Action/Hook commits. UI calls return a Promise. */
-	appendMessage(message: ChatMessageInput): void | Promise<{ revision: number }>;
-	requestAI(text: string, options?: { visible?: boolean }): void;
-	asset(id: string): string;
+	asset(pathOrId: string): string;
 	getState(): ReadonlyState<GameState>;
-	action(name: string, args?: JsonValue): Promise<unknown>;
-	transaction(
-		action: { name: string; args: Record<string, JsonValue> },
-		state: GameState
-	): Promise<unknown>;
-	ai(text: string, options?: { visible?: boolean }): Promise<unknown>;
-	registerPanel(panel: { id: string; title: string; component: () => unknown }): () => void;
 	subscribeState(listener: (state: ReadonlyState<GameState>) => void): () => void;
+	useGameState(): ReadonlyState<GameState>;
+	useUIState<T>(key: string, initial: T): [T, (next: T | ((previous: T) => T)) => void];
+	useUIEvent(name: string, listener: (payload: ReadonlyState<JsonObject>) => void): void;
+	onEvent(name: string, listener: (payload: ReadonlyState<JsonObject>) => void): () => void;
+	onDispose(dispose: () => void): () => void;
+	action(name: string, args?: JsonObject): Promise<CommitResult>;
+	commitState(action: GameAction, nextState: GameState): Promise<CommitResult>;
+	runTurn(text: string, options?: TurnOptions): Promise<CommitResult>;
+	/** One model response, with no automatic context, tool execution or commit. */
+	callModel(options: ModelCallOptions): Promise<ModelResponse>;
+	appendMessage(message: ChatMessageInput): Promise<CommitResult>;
+	registerPanel(panel: PanelDefinition): () => void;
+	Button(props: import('preact').JSX.IntrinsicElements['button']): JSX.Element;
+	Text(props: import('preact').JSX.IntrinsicElements['span']): JSX.Element;
+	Progress(props: ProgressProps): JSX.Element;
+	Inventory<T>(props: ItemListProps<T>): JSX.Element;
+	Stats(props: StatsProps): JSX.Element;
+	QuestList<T>(props: ItemListProps<T>): JSX.Element;
 }
 
 declare const helia: HeliaRuntime;
 declare namespace JSX {
-	type Element = unknown;
-	interface IntrinsicElements {
-		[name: string]: Record<string, unknown>;
-	}
+	type Element = import('preact').JSX.Element;
+	type IntrinsicElements = import('preact').JSX.IntrinsicElements;
+	type IntrinsicAttributes = import('preact').JSX.IntrinsicAttributes;
+	type ElementChildrenAttribute = import('preact').JSX.ElementChildrenAttribute;
+	type ElementAttributesProperty = import('preact').JSX.ElementAttributesProperty;
 }
 
 declare module '@helia/state' {
 	export type GameState = import('./GameState').GameState;
 }
 declare module '@helia/ui' {
-	export const storage: SessionFileStorage;
-	export const useAssetURL: HeliaRuntime['useAssetURL'];
+	export type ModelContent = globalThis.ModelContent;
+	export type ModelToolCall = globalThis.ModelToolCall;
+	export type ModelMessage = globalThis.ModelMessage;
+	export type ModelTool = globalThis.ModelTool;
+	export type ModelCallOptions = globalThis.ModelCallOptions;
+	export type ModelResponse = globalThis.ModelResponse;
+	export const callModel: HeliaUIRuntime['callModel'];
+	export const storage: HeliaUIRuntime['storage'];
+	export const useAssetURL: HeliaUIRuntime['useAssetURL'];
 	export type ChatMessage = ChatMessageInput;
-	export const helia: HeliaRuntime;
-	export function useGameState(): ReadonlyState<GameState>;
-	export function getState(): ReadonlyState<GameState>;
-	export function useUIState<T>(
-		key: string,
-		initial: T
-	): [T, (next: T | ((previous: T) => T)) => void];
-	export function useUIEvent(event: string, listener: (payload: JsonValue) => void): void;
-	export function onEvent(event: string, listener: (payload: JsonValue) => void): () => void;
-	export function onDispose(dispose: () => void): () => void;
-	export const registerPanel: typeof helia.registerPanel;
-	export const subscribeState: typeof helia.subscribeState;
-	export const action: typeof helia.action;
-	export const transaction: typeof helia.transaction;
-	export const ai: typeof helia.ai;
-	/** Persist a message without calling AI. Resolves after the message is committed. */
-	export function appendMessage(message: ChatMessageInput): Promise<{ revision: number }>;
-	export const asset: typeof helia.asset;
-	export function Button(props: Record<string, unknown>): JSX.Element;
-	export function Text(props: Record<string, unknown>): JSX.Element;
-	export function Progress(props: Record<string, unknown>): JSX.Element;
-	export function Inventory(props: Record<string, unknown>): JSX.Element;
-	export function Stats(props: Record<string, unknown>): JSX.Element;
-	export function QuestList(props: Record<string, unknown>): JSX.Element;
-}
-declare module 'preact' {
-	export function h(type: unknown, props: unknown, ...children: unknown[]): JSX.Element;
-	export const Fragment: unknown;
-}
-declare module 'preact/hooks' {
-	export function useState<T>(
-		initial: T | (() => T)
-	): [T, (next: T | ((previous: T) => T)) => void];
-	export function useEffect(
-		effect: () => void | (() => void),
-		dependencies?: readonly unknown[]
-	): void;
-	export function useMemo<T>(factory: () => T, dependencies: readonly unknown[]): T;
-	export function useRef<T>(value: T): { current: T };
+	export const helia: HeliaUIRuntime;
+	export const useGameState: HeliaUIRuntime['useGameState'];
+	export const getState: HeliaUIRuntime['getState'];
+	export const useUIState: HeliaUIRuntime['useUIState'];
+	export const useUIEvent: HeliaUIRuntime['useUIEvent'];
+	export const onEvent: HeliaUIRuntime['onEvent'];
+	export const onDispose: HeliaUIRuntime['onDispose'];
+	export const registerPanel: HeliaUIRuntime['registerPanel'];
+	export const subscribeState: HeliaUIRuntime['subscribeState'];
+	export const action: HeliaUIRuntime['action'];
+	export const commitState: HeliaUIRuntime['commitState'];
+	export const runTurn: HeliaUIRuntime['runTurn'];
+	export const appendMessage: HeliaUIRuntime['appendMessage'];
+	export const asset: HeliaUIRuntime['asset'];
+	export const Button: HeliaUIRuntime['Button'];
+	export const Text: HeliaUIRuntime['Text'];
+	export const Progress: HeliaUIRuntime['Progress'];
+	export const Inventory: HeliaUIRuntime['Inventory'];
+	export const Stats: HeliaUIRuntime['Stats'];
+	export const QuestList: HeliaUIRuntime['QuestList'];
 }

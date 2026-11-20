@@ -14,6 +14,7 @@ import { runCreatorAction } from '#lib/games/scripting/browser.js';
 
 import { beginSessionActivity, publishSessionAIEvent } from './activity.js';
 import { runAgentWorkspace } from './loop.js';
+import { parsePromptConfig } from './prompts.js';
 import { aiError, type AgentOptions } from './protocol.js';
 import { beginGeneration } from './transport.js';
 
@@ -42,10 +43,8 @@ export async function invokeSessionAI(
 	options: AgentOptions & { runtime?: SessionAIRuntime } = {}
 ) {
 	const runtime = options.runtime ?? defaultRuntime();
-	const prompt = loadSelectedPromptConfig();
 	const persona = loadSessionPersona(gameId, sessionId);
-	const settings = await loadAISettings();
-	const { model, provider } = selectedModelConnection(settings, input.modelId);
+	const { model, provider, prompt } = await selectedModelConnection(input.modelId);
 	if (options.signal?.aborted) {
 		throw aiError('canceled');
 	}
@@ -171,10 +170,9 @@ async function runFollowUpHooks({
 	}
 }
 
-function selectedModelConnection(
-	settings: Awaited<ReturnType<typeof loadAISettings>>,
-	modelId: string | undefined
-) {
+async function selectedModelConnection(modelId: string | undefined) {
+	const prompt = parsePromptConfig(loadSelectedPromptConfig());
+	const settings = await loadAISettings();
 	const model = settings.models.find((m) => m.id === (modelId ?? settings.defaultModelId));
 	if (!model) {
 		throw new Error('앱 설정에서 사용할 모델을 등록하고 선택해주세요.');
@@ -183,7 +181,8 @@ function selectedModelConnection(
 	if (!provider) {
 		throw new Error('모델의 API 연결을 확인해주세요.');
 	}
-	return { model, provider };
+	prompt.maxTokens = model.maxOutputTokens ?? prompt.maxTokens;
+	return { model, provider, prompt };
 }
 
 function createEmitter(

@@ -32,12 +32,14 @@ export interface ModelSettings {
 	name: string;
 	providerId: string;
 	modelId: string;
+	maxOutputTokens?: number;
 }
 export interface AISettings {
 	version: 1;
 	providers: ProviderSettings[];
 	models: ModelSettings[];
 	defaultModelId: string | null;
+	auxiliaryModelId?: string | null;
 }
 
 export function emptyAISettings(): AISettings {
@@ -87,6 +89,31 @@ function endpoint(value: unknown): string {
 	return url.href.replace(/\/+$/, '');
 }
 
+function parseModelSettings(item: unknown, providerIds: Set<string>): ModelSettings {
+	const model = object(item);
+	const providerId = id(model.providerId);
+	if (!providerIds.has(providerId)) {
+		throw new Error('모델에 연결할 프로바이더를 먼저 등록해주세요.');
+	}
+	if (
+		model.maxOutputTokens !== undefined &&
+		(!Number.isInteger(model.maxOutputTokens) ||
+			Number(model.maxOutputTokens) < 1 ||
+			Number(model.maxOutputTokens) > 65536)
+	) {
+		throw new Error('최대 출력 토큰은 1~65536 사이의 정수여야 해요.');
+	}
+	return {
+		id: id(model.id),
+		name: text(model.name, '모델 이름'),
+		providerId,
+		modelId: text(model.modelId, '모델 ID', 256),
+		...(model.maxOutputTokens === undefined
+			? {}
+			: { maxOutputTokens: Number(model.maxOutputTokens) })
+	};
+}
+
 /** Rebuild a non-secret document instead of persisting arbitrary caller-supplied fields. */
 export function parseAISettings(value: unknown): AISettings {
 	const input = object(value);
@@ -127,19 +154,7 @@ export function parseAISettings(value: unknown): AISettings {
 	if (providerIds.size !== providers.length) {
 		throw new Error('중복된 프로바이더 식별자가 있어요.');
 	}
-	const models: ModelSettings[] = input.models.map((item: unknown) => {
-		const model = object(item);
-		const providerId = id(model.providerId);
-		if (!providerIds.has(providerId)) {
-			throw new Error('모델에 연결할 프로바이더를 먼저 등록해주세요.');
-		}
-		return {
-			id: id(model.id),
-			name: text(model.name, '모델 이름'),
-			providerId,
-			modelId: text(model.modelId, '모델 ID', 256)
-		};
-	});
+	const models = input.models.map((item: unknown) => parseModelSettings(item, providerIds));
 	const modelIds = new Set(models.map((model) => model.id));
 	if (modelIds.size !== models.length) {
 		throw new Error('중복된 모델 식별자가 있어요.');
@@ -148,7 +163,17 @@ export function parseAISettings(value: unknown): AISettings {
 	if (defaultModelId !== null && !modelIds.has(defaultModelId)) {
 		throw new Error('기본 모델이 등록된 모델 목록에 없어요.');
 	}
-	return { version: 1, providers, models, defaultModelId };
+	const auxiliaryModelId = input.auxiliaryModelId == null ? null : id(input.auxiliaryModelId);
+	if (auxiliaryModelId !== null && !modelIds.has(auxiliaryModelId)) {
+		throw new Error('보조 모델이 등록된 모델 목록에 없어요.');
+	}
+	return {
+		version: 1,
+		providers,
+		models,
+		defaultModelId,
+		...(input.auxiliaryModelId === undefined ? {} : { auxiliaryModelId })
+	};
 }
 
 export function upsertProvider(settings: AISettings, provider: ProviderSettings): AISettings {
@@ -175,6 +200,7 @@ export function removeModel(settings: AISettings, modelId: string): AISettings {
 	return parseAISettings({
 		...settings,
 		models,
+		...(settings.auxiliaryModelId === modelId ? { auxiliaryModelId: null } : {}),
 		defaultModelId:
 			settings.defaultModelId === modelId ? (models[0]?.id ?? null) : settings.defaultModelId
 	});
@@ -185,6 +211,9 @@ export function removeProvider(settings: AISettings, providerId: string): AISett
 		...settings,
 		providers: settings.providers.filter((provider) => provider.id !== providerId),
 		models,
+		...(settings.auxiliaryModelId && !models.some((model) => model.id === settings.auxiliaryModelId)
+			? { auxiliaryModelId: null }
+			: {}),
 		defaultModelId: models.some((model) => model.id === settings.defaultModelId)
 			? settings.defaultModelId
 			: (models[0]?.id ?? null)
@@ -192,4 +221,8 @@ export function removeProvider(settings: AISettings, providerId: string): AISett
 }
 export function selectDefaultModel(settings: AISettings, modelId: string): AISettings {
 	return parseAISettings({ ...settings, defaultModelId: modelId });
+}
+
+export function selectAuxiliaryModel(settings: AISettings, modelId: string | null): AISettings {
+	return parseAISettings({ ...settings, auxiliaryModelId: modelId });
 }

@@ -1,6 +1,117 @@
 # Scripting API
 
-## Session file storage
+Helia's scripting API lets creators define game rules, interact with chat and AI, and build custom game panels in TypeScript. Scripts access the API through the global `helia` object.
+
+Logic scripts run synchronously in QuickJS. UI scripts run in an isolated Preact frame and can also import APIs from `@helia/ui`. Each scripting runtime exposes its own API subset.
+
+The editor provides completion and types through the generated `.helia/runtime.d.ts`. See the [authoring declarations](../src/lib/games/authoring/runtime.d.ts), [game UI guide](../src/lib/games/ui/README.md) and [AI execution guide](../src/lib/games/ai/README.md) for implementation details.
+
+## Logic scripts
+
+Logic scripts register Actions, Queries, Filters and Hooks in `main.ts` or its imported modules. Registrations are recreated for each execution, so persistent data belongs in Game State.
+
+| API                                      | Behavior                                                                                                                                          |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `helia.defineAction<Args>(definition)`   | Register an operation that receives `{ state, args }` and returns the complete next state. State is mutable; arguments are read-only.             |
+| `helia.defineQuery<Args>(definition)`    | Register a read-only operation that receives `{ state, args }` and returns a JSON value.                                                          |
+| `helia.defineFilter(definition)`         | Validate a proposed state change. Return `{ allow: boolean, reason?: string }`. Rejection cancels the operation.                                  |
+| `helia.defineHook(definition)`           | React to state changes by returning an array of Actions: `[{ name, args }]`. Returning nothing is equivalent to an empty array.                   |
+| `helia.emit(name, payload?)`             | Buffer a UI event for delivery after a successful commit. Available inside Actions and Hooks. Payload defaults to `{}` and must be a JSON object. |
+| `helia.appendMessage({ role, content })` | Buffer a chat message with the current Action or Hook. Returns synchronously; failure discards the message with the state changes.                |
+| `helia.queueTurn(text, { visible }?)`    | Schedule an AI request after the Action or Hook commits. `visible` defaults to `false`.                                                           |
+
+Actions and Queries accept these definition fields:
+
+| Field          | Behavior                                                                                                                                                                        |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `name`         | Unique within the registration kind. Names beginning with `$helia.` are reserved.                                                                                               |
+| `description?` | Describe the operation, including its purpose for AI tool use.                                                                                                                  |
+| `arguments?`   | Explicit object JSON Schema. Alternatively, provide an `Args` type to generate validation and tool schemas. The two forms cannot be combined. Omitting both means no arguments. |
+| `ai?`          | Expose the operation as an AI tool when `true`. Defaults to `false`.                                                                                                            |
+| `run(context)` | Synchronous implementation. An Action must return valid Game State; a Query must return a finite JSON value.                                                                    |
+
+Filters and Hooks accept `name`, `run`, optional `description`, `priority` and `actions`. Lower priorities run first; the default is `0`. Omit `actions` to match all action names, or provide a list to restrict matches.
+
+Their read-only context contains `state`, `before`, `after`, `action` and `changes`. Filters inspect proposed state. Hooks enqueue Actions instead of mutating their context. Hooks also accept `mode`: `included` (default) shares the originating transaction; `independent` runs separately after it commits. Hooks run when state actually changes.
+
+## UI scripts
+
+UI scripts register Preact panels and connect player interactions to game logic. Start UI modules with `'use ui';`. The following APIs are available both on global `helia` and as named exports from `@helia/ui`.
+
+### State and operations
+
+| API                                      | Behavior                                                                                                                         |
+| ---------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `getState()`                             | Read the current deeply frozen, committed Game State.                                                                            |
+| `subscribeState(listener)`               | Receive the current state immediately and subsequent updates. Returns an unsubscribe function.                                   |
+| `useGameState()`                         | Subscribe from a Preact component with automatic cleanup.                                                                        |
+| `action(name, args?)`                    | Run a registered Action through argument, state, Filter, Hook and revision checks. Arguments default to `{}`. Returns a Promise. |
+| `commitState({ name, args }, nextState)` | Submit a complete state proposal through validation and Hooks. Does not execute the named Action's body. Returns a Promise.      |
+| `useUIState(key, initialValue)`          | Share transient JSON UI state within a game/session. Returns `[value, setter]`; the setter accepts a value or updater function.  |
+
+Game State participates in persistence and history. UI state stays in memory for the current app execution and does not participate in branches or saved game content.
+
+### Chat and AI
+
+| API                                | Behavior                                                                                                                                     |
+| ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `appendMessage({ role, content })` | Persist a chat message without generation. Resolves to `{ revision }` after commit.                                                          |
+| `runTurn(text, { visible }?)`      | Invoke the player's default AI model. Returns a Promise. `visible` defaults to `false`; `true` also records the request as a player message. |
+
+Message roles are `user` or `assistant`, and content must be a nonblank string. Messages enter normal conversation context and history. Markdown and sanitized HTML are supported in chat display. Appending a message does not automatically request an AI reply.
+
+`action`, `commitState`, `runTurn` and `appendMessage` resolve to `{ revision: number }` after commit. Await each write before starting another, and handle rejected requests. Conflicts, validation errors, cancellation or a busy session can reject an operation. AI tool changes commit together with the final answer; a failed generation discards temporary changes.
+
+### Model calls
+
+`runTurn` runs the full session turn with its selected prompt preset, conversation and game tools. Logic scripts use `queueTurn` to schedule that turn after a successful commit. `callModel` makes a single request using only the supplied messages and tools. It does not assemble a preset, render CBS, run chat regex, execute tools or save its response. It is available in the asynchronous UI runtime.
+
+```ts
+const response = await helia.callModel({
+	model: 'auxiliary', // 'main' by default
+	messages: [
+		{ role: 'system', content: 'Evaluate the proposed equipment.' },
+		{ role: 'user', content: idea }
+	]
+});
+```
+
+`model` selects the app's default model or its auxiliary binding in **Settings → Models**. An unset auxiliary model rejects the call. Generation settings belong to the selected model; `temperature` and token limits are not call arguments. A model's optional maximum output tokens overrides the preset limit for session turns; direct model calls use that limit or 4,096 tokens.
+
+`messages` accepts `{ role, content, toolCalls?, toolCallId?, continuation? }`. Roles are `system`, `user`, `assistant` and `tool`. Content is a string or an array of `{ type: 'text', text }` and `{ type: 'image' | 'audio' | 'video' | 'file', mimeType, data }` blocks. Media data is base64. Media support depends on the configured provider and model; unsupported input formats reject instead of being dropped. Tool results use string content and the matching `toolCallId`.
+
+`tools` optionally declares `{ name, description?, arguments }` with the same object JSON Schema profile as Action arguments. These are caller-owned functions, not automatic registrations of game Actions or Queries. The response is `{ content, toolCalls, continuation?, usage? }`. `content` is an array of content blocks; `toolCalls` contains `{ id, name, arguments }`. When available, `usage` contains `inputTokens` and `outputTokens`.
+
+To continue after tool calls, append `{ role: 'assistant', ...response }`, followed by a `tool` message for each call, then call the model again. Preserve `continuation` unchanged; it holds provider continuation data and cannot be reused with another provider or model. The caller decides whether to execute any function or apply an Action.
+
+Both calls collect the streamed response before resolving. Ten minutes without stream activity times out; closing the UI cancels its active request. Direct calls temporarily reserve the session's generation slot but do not advance its revision. UI messages remain subject to the existing 2 MiB bridge limit.
+
+### Panels, events and assets
+
+| API                                       | Behavior                                                                                                          |
+| ----------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `registerPanel({ id, title, component })` | Register a Preact function component as a game panel. Returns an unregister function.                             |
+| `onEvent(name, listener)`                 | Observe committed UI event payloads. Returns an unsubscribe function. History restoration does not replay events. |
+| `useUIEvent(name, listener)`              | Subscribe to an event from a Preact component with automatic cleanup.                                             |
+| `onDispose(callback)`                     | Register runtime cleanup. Returns a function that removes the callback.                                           |
+| `asset(pathOrId)`                         | Resolve a packaged asset path or stable resource ID to a data URI. Throws if the asset is missing.                |
+
+Use `useUIState` for presentation state such as selected tabs. Store game progress in Game State. `asset()` reads resources registered by the creator; it does not create or save files.
+
+### Components
+
+| Component   | Props                                                     |
+| ----------- | --------------------------------------------------------- |
+| `Button`    | `children` and button props. Defaults to `type="button"`. |
+| `Text`      | `children` and span props.                                |
+| `Progress`  | `value`, `max` (default `100`), `label`.                  |
+| `Inventory` | `items`, `renderItem(item, index)`, `label`.              |
+| `Stats`     | `items: { label, value }[]`, `label`.                     |
+| `QuestList` | `items`, `renderItem(item, index)`, `label`.              |
+
+These are presentation helpers; they do not define inventory rules, statistics or quest progression. Ordinary Preact elements are also available. Packaged imports support `preact`, `preact/hooks`, `@helia/ui` and relative project modules. Import the generated state type with `import type { GameState } from '@helia/state'`.
+
+### Session file storage
 
 `storage` is available as `helia.storage` and as an export from `@helia/ui`. It stores immutable files for the current session, separately from Game State, chat history and packaged assets.
 
@@ -27,3 +138,9 @@ await action('setEquipmentImage', { image: file.ref });
 ```
 
 Use asynchronous storage calls inside an event handler or effect; top-level `await` is unavailable. Synchronous logic scripts receive file references through arguments and cannot call the storage API directly.
+
+## Runtime boundaries
+
+Logic scripts receive state through their execution context. UI scripts read committed state and request changes through the host bridge. Authoring types distinguish the two scripting runtimes. The editor resolves global `helia` for each module, including inherited UI helpers; modules shared by both runtimes can only use their common APIs.
+
+The scripting API does not expose API credentials, a provider client, the host filesystem or a general network bridge. `helia.fetch` is not implemented. UI frames restrict network access through CSP; logic scripts have no host network access. External packages, dynamic imports and top-level `await` are unavailable.

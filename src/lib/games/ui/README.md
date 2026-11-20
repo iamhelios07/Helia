@@ -148,7 +148,7 @@ export default function () {
 };
 ```
 
-The example expects a declared `hp` state field and a registered `rest` Action in the game's logic scripts. UI rendering, resizing and local UI State do not call AI or create game transactions. Explicit [AI invocation](../ai/README.md) is available through `ai(text, { visible })`; the UI editor belongs to the later authoring stage.
+The example expects a declared `hp` state field and a registered `rest` Action in the game's logic scripts. UI rendering, resizing and local UI State do not call AI or create game transactions. Explicit [AI invocation](../ai/README.md) is available through `runTurn(text, { visible })`; the UI editor belongs to the later authoring stage.
 
 Import `preact`, `preact/hooks`, `@helia/ui` or another packaged relative module (`./Status`, `./Status.tsx`). Static exports and circular packaged imports are supported. External packages, network imports, dynamic imports, `require`, `import.meta` and top-level `await` are unavailable. The optional default entry initializer is synchronous and may return a disposer. Registering panels at module scope is also supported. Imports do not grant access to the application's modules.
 
@@ -158,15 +158,17 @@ Preact 11 core requires explicit units for CSS lengths in object styles, for exa
 
 The same interface is available as global `helia` and as named exports from `@helia/ui`.
 
+Authoring declarations separate `HeliaRuntime` (QuickJS) from `HeliaUIRuntime` (Preact). The editor selects the global `helia` type for each module and follows UI imports into helpers without changing stored source. Shared helpers can use only APIs available in both runtimes. JSX elements, DOM events, hooks and component props use the installed Preact declarations.
+
 | Interface                                                | Behavior                                                                                                                    |
 | -------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
 | `registerPanel({ id, title, component })`                | Register a Preact function component; returns an unregister function. Dynamic registration/removal uses the same interface. |
 | `getState()` / `subscribeState(listener)`                | Read deeply frozen committed state; subscribe returns an unsubscribe function.                                              |
 | `useGameState()`                                         | Preact subscription with automatic cleanup when its component unmounts.                                                     |
 | `action(name, args)`                                     | Request a registered game Action; the host applies schema, Filter, Hook and revision checks.                                |
-| `ai(text, { visible })`                                  | Explicitly invoke the player's default AI model; defaults to an internal event.                                             |
+| `runTurn(text, { visible })`                             | Explicitly invoke the player's default AI model; defaults to an internal event.                                             |
 | `appendMessage({ role, content })`                       | Persist a player (`user`) or game (`assistant`) message without AI; resolves with the committed revision.                   |
-| `transaction({ name, args }, nextState)`                 | Submit one complete state proposal through the same validated commit path.                                                  |
+| `commitState({ name, args }, nextState)`                 | Submit one complete state proposal through the same validated commit path.                                                  |
 | `onEvent(name, listener)` / `useUIEvent(name, listener)` | Observe committed UI event payloads. The first returns an unsubscribe function; the hook cleans up on unmount.              |
 | `useUIState(key, initialValue)`                          | Shared transient JSON state; returns `[value, setter]` and supports functional setters.                                     |
 | `onDispose(callback)`                                    | Register entry-wide cleanup; returns a function that unregisters the cleanup.                                               |
@@ -175,7 +177,7 @@ The same interface is available as global `helia` and as named exports from `@he
 | `Stats({ items, label })`                                | Render `{ label, value }` pairs without defining game statistics or mechanics.                                              |
 | `QuestList({ items, renderItem, label })`                | Render creator-owned quest entries without enforcing quest progression.                                                     |
 
-Manual subscriptions belong in a Preact effect returning their unsubscribe function, or in entry cleanup. Hook subscriptions clean up automatically. UI requests reject on invalid input, conflicts, a busy host or cancellation; callers should handle rejection. Await a successful request before starting another. No keys, providers, model client or general host executor are exposed.
+Manual subscriptions belong in a Preact effect returning their unsubscribe function, or in entry cleanup. Hook subscriptions clean up automatically. `action`, `commitState`, `runTurn` and `appendMessage` resolve to `{ revision: number }` after commit. `callModel({ model?, messages, tools? })` returns a single main/auxiliary model response without automatic context, tool execution or writes; see [model calls](../../../../docs/scripting.md#model-calls). UI requests reject on invalid input, conflicts, a busy host or cancellation; callers should handle rejection. Await a successful request before starting another. No keys, providers, provider client or general host executor are exposed.
 
 `storage` and `useAssetURL` expose [session file storage](../../../../docs/scripting.md#session-file-storage). File operations use a bounded Blob channel independent of JSON state traffic. The hook creates frame-local media URLs and releases them on changes or unmount; deletion notifications invalidate live media in the current host and other tabs. In-memory preview stores are isolated from normal play. Chat resolves `helia-file:...` references only in media elements and displays a placeholder when a file is unavailable. Each message resolves at most 16 distinct files and holds at most 32 MiB of decoded file data. Message HTML cannot invoke storage writes.
 

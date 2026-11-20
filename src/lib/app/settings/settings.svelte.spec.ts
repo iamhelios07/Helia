@@ -78,6 +78,19 @@ async function seed() {
 		})
 	);
 }
+
+it('saves an auxiliary model binding and per-model output limit from model settings', async () => {
+	await seed();
+	const view = render(SettingsDialog, { onclose: vi.fn() });
+	await nav().getByRole('button', { name: '모델', exact: true }).click();
+	await page.getByRole('combobox', { name: '보조 모델', exact: true }).selectOptions('model-one');
+	await expect.poll(async () => (await stored()).auxiliaryModelId).toBe('model-one');
+	await page.getByRole('button', { name: '내 모델 모델 편집', exact: true }).click();
+	await page.getByRole('spinbutton', { name: '최대 출력 토큰', exact: true }).fill('1200');
+	await page.getByRole('button', { name: '모델 저장', exact: true }).click();
+	await expect.poll(async () => (await stored()).models[0].maxOutputTokens).toBe(1200);
+	await view.unmount();
+});
 async function newConnection(name = '테스트 연결') {
 	await page.getByRole('button', { name: '새 연결', exact: true }).click();
 	await page.getByRole('textbox', { name: '연결 이름', exact: true }).fill(name);

@@ -21,7 +21,7 @@ function load(id){
 function request(kind, payload){
   if(pending.size>=16)return Promise.reject(Error('Too many requests'));
   const id=String(++nextRequest);
-  return new Promise((resolve,reject)=>{const timer=setTimeout(()=>{pending.delete(id);reject(Error('Request timed out'));},30000);pending.set(id,{resolve,reject,timer});send({kind,id,...payload});});
+  return new Promise((resolve,reject)=>{const timeout=['turn','model'].includes(kind)?600000:30000;const job={resolve,reject,timer:undefined,touch:()=>{clearTimeout(job.timer);job.timer=setTimeout(()=>{pending.delete(id);reject(Error('Request timed out'));},timeout);}};pending.set(id,job);job.touch();send({kind,id,...payload});});
 }
 function setUI(key,value){
   if(typeof key!=='string'||key.length>128||['__proto__','constructor','prototype'].includes(key))throw Error('Invalid UI key');
@@ -42,6 +42,7 @@ function receive(message){
     for(const listener of [...stateListeners]){try{listener(latest);}catch{}}
   }else if(message.kind==='event'){
     for(const listener of [...(eventListeners.get(message.event.name)??[])]){try{listener(freeze(message.event.payload));}catch{}}
+  }else if(message.kind==='activity'){pending.get(message.id)?.touch?.();
   }else if(message.kind==='response'){
     const job=pending.get(message.id);if(!job)return;pending.delete(message.id);clearTimeout(job.timer);
     if(message.ok)job.resolve(message.result);else job.reject(Error(message.error));
@@ -85,7 +86,7 @@ function start(initial){
   const Inventory=({items=[],renderItem=item=>String(item),label='인벤토리'})=>h('ul',{'aria-label':label},items.map((item,index)=>h('li',{key:index},renderItem(item,index))));
   const Stats=({items=[],label='스탯'})=>h('dl',{'aria-label':label},items.map(item=>h(preact.Fragment,{},h('dt',{},item.label),h('dd',{},String(item.value)))));
   const QuestList=({items=[],renderItem=item=>String(item),label='퀘스트'})=>h(Inventory,{items,renderItem,label});
-  api={asset:id=>{if(typeof id!=='string'||!Object.hasOwn(resources,id))throw Error('리소스를 찾을 수 없어요.');return resources[id];},registerPanel,subscribeState,useGameState,useUIState,useUIEvent,onEvent,onDispose:fn=>{disposers.add(fn);return ()=>disposers.delete(fn);},getState:()=>latest,action:(action,args={})=>request('action',{action:{name:action,args}}),transaction:(action,state)=>request('transaction',{action,state}),ai:(text,options={})=>request('ai',{text,visible:options.visible===true}),appendMessage:message=>request('message',{message}),Button,Text,Progress,Inventory,Stats,QuestList};
+  api={asset:id=>{if(typeof id!=='string'||!Object.hasOwn(resources,id))throw Error('리소스를 찾을 수 없어요.');return resources[id];},registerPanel,subscribeState,useGameState,useUIState,useUIEvent,onEvent,onDispose:fn=>{disposers.add(fn);return ()=>disposers.delete(fn);},getState:()=>latest,action:(action,args={})=>request('action',{action:{name:action,args}}),commitState:(action,state)=>request('transaction',{action,state}),callModel:options=>request('model',{options}),runTurn:(text,options={})=>request('turn',{text,visible:options.visible===true}),appendMessage:message=>request('message',{message}),Button,Text,Progress,Inventory,Stats,QuestList};
   api.storage=storage;api.useAssetURL=useAssetURL;
   api.helia=api;Object.freeze(api);Object.defineProperty(globalThis,'helia',{value:api,writable:false,configurable:false});
   try{const module=load(entry);if(typeof module.default==='function'){const dispose=module.default(api);if(dispose!==undefined&&typeof dispose!=='function'){if(dispose&&typeof dispose.then==='function')Promise.resolve(dispose).catch(()=>{});throw Error('Entry must initialize synchronously');}if(typeof dispose==='function')disposers.add(dispose);}booting=false;publishPanels();redraw();send({kind:'ready'});}

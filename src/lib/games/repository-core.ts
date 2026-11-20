@@ -302,7 +302,7 @@ function visibleMessages(context: Context): Message[] {
 export interface GameRepositoryOptions {
 	validateTransaction?: TransactionValidator;
 	runAction?: ActionRunner;
-	requestAI?: (
+	runTurn?: (
 		gameId: string,
 		sessionId: string,
 		input: {
@@ -341,7 +341,7 @@ class GameRepository {
 				const input = { text: event.payload.text, visible: event.payload.visible === true };
 				queueMicrotask(() => {
 					try {
-						this.options.requestAI?.(gameId, sessionId, input);
+						this.options.runTurn?.(gameId, sessionId, input);
 					} catch {
 						/* Post-commit invocation cannot undo its originating transaction. */
 					}

@@ -58,7 +58,7 @@ helia.defineAction({name:'rest',run({state}){return state;}});`;
 		host.remove();
 	}
 });
-function project(field: string, source = 'helia.getState().') {
+function project(field: string, source = "'use ui'; helia.getState().") {
 	const session = new MonacoProject();
 	projects.push(session);
 	session.update(
@@ -120,7 +120,7 @@ it('isolates generated state types while switching worker requests between edito
 		expect(await names(a)).not.toContain('health');
 		expect(await names(b)).toContain('health');
 		expect(await names(b)).not.toContain('gold');
-		a.setValue('helia.getState().gold.toUpperCase();');
+		a.setValue("'use ui'; helia.getState().gold.toUpperCase();");
 		expect((await proxy.getSemanticDiagnostics(a.uri.toString())).length).toBeGreaterThan(0);
 		expect(await names(b)).toContain('health');
 	} finally {
@@ -183,7 +183,7 @@ it('checks packaged imports, state completion and TSX APIs without requiring an 
 			'logic.ts': {
 				language: 'typescript',
 				source:
-					"import { amount } from './helper';\nhelia.defineAction({name:'gain',arguments:{},run({state}){state.gold=amount;return state;}});"
+					"import { amount } from './helper';\nhelia.defineAction({name:'gain',run({state}){state.gold=amount;return state;}});"
 			},
 			'helper.ts': { language: 'typescript', source: 'export const amount = "wrong";' },
 			'view.tsx': {
@@ -191,7 +191,7 @@ it('checks packaged imports, state completion and TSX APIs without requiring an 
 				source:
 					"import { registerPanel, useGameState, asset } from '@helia/ui';\nregisterPanel({id:'stats',title:'Stats',component:()=> <span>{useGameState().gold}{asset('images/test.png')}</span>});"
 			},
-			'query.ts': { language: 'typescript', source: 'helia.getState().' }
+			'query.ts': { language: 'typescript', source: "'use ui'; helia.getState()." }
 		},
 		'export type GameState = {gold:number};'
 	);
@@ -224,10 +224,13 @@ it('checks packaged imports, state completion and TSX APIs without requiring an 
 
 it('resolves helia and @helia/ui symbols to the shipped declaration file', async () => {
 	const session = project('gold', "helia.defineAction({name:'buy',run({state}){return state;}});");
-	const source =
-		"import { useGameState } from '@helia/ui';\nhelia.defineAction({name:'buy',run({state}){return state;}});\nuseGameState();";
+	const source = "helia.defineAction({name:'buy',run({state}){return state;}});";
+	const uiSource = "'use ui'; import { useGameState } from '@helia/ui';\nuseGameState();";
 	session.update(
-		{ 'main.ts': { language: 'typescript', source } },
+		{
+			'main.ts': { language: 'typescript', source },
+			'ui.tsx': { language: 'tsx', source: uiSource }
+		},
 		'export type GameState = {gold:number};'
 	);
 	const { monaco } = await session.ready();
@@ -236,10 +239,16 @@ it('resolves helia and @helia/ui symbols to the shipped declaration file', async
 	document.body.append(host);
 	const instance = monaco.editor.create(host, { model });
 	try {
-		const proxy = await (await getTypeScriptWorker())(model.uri);
-		const at = (needle: string) => source.indexOf(needle) + 2;
-		for (const needle of ['defineAction', 'useGameState']) {
-			const definitions = await proxy.getDefinitionAtPosition(model.uri.toString(), at(needle));
+		const ui = session.model('ui.tsx', uiSource, 'tsx');
+		const proxy = await (await getTypeScriptWorker())(model.uri, ui.uri);
+		for (const [target, text, needle] of [
+			[model, source, 'defineAction'],
+			[ui, uiSource, 'useGameState']
+		] as const) {
+			const definitions = await proxy.getDefinitionAtPosition(
+				target.uri.toString(),
+				text.indexOf(needle) + 2
+			);
 			expect(definitions?.[0]?.fileName).toBe(session.root + '.helia/runtime.d.ts');
 		}
 		// The opener maps that model onto the declaration tab and refuses foreign models.

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
 import { invokeSessionAI } from '#lib/games/ai/browser.js';
+import { callSessionModel } from '#lib/games/ai/model-browser.js';
 import {
 	createGame,
 	createSession,
@@ -14,8 +15,10 @@ import type { PanelInfo } from './model.js';
 import { mountGameUI, type GameUIHandle, type MountOptions } from './bridge.js';
 
 vi.mock('#lib/games/ai/browser.js', () => ({ invokeSessionAI: vi.fn() }));
+vi.mock('#lib/games/ai/model-browser.js', () => ({ callSessionModel: vi.fn() }));
 beforeEach(() => {
 	vi.mocked(invokeSessionAI).mockReset();
+	vi.mocked(callSessionModel).mockReset();
 });
 
 vi.mock('#lib/storage/transport.js', async () => {
@@ -108,7 +111,7 @@ export default function(){
  setTimeout(async()=>{
   await action('increment');
   await action('check',{label:'before-ai'});
-  await helia.ai('Inspect the room',{visible:true});
+  await helia.runTurn('Inspect the room',{visible:true});
   await action('check',{label:'after-ai:'+helia.getState().value});
  },100);
 }`);
@@ -158,9 +161,64 @@ export default function(){setTimeout(async()=>{
 	expect(invokeSessionAI).not.toHaveBeenCalled();
 }, 20_000);
 
+it('returns model results through the isolated bridge without automatically executing tools or appending chat', async () => {
+	vi.mocked(callSessionModel).mockImplementation(async (_game, _session, _input, options) => {
+		options?.onEvent?.({ type: 'activity' });
+		return {
+			content: [{ type: 'text', text: 'idea' }],
+			toolCalls: [{ id: 'call', name: 'increment', arguments: {} }]
+		};
+	});
+	const game = await setup(`import {callModel,action} from '@helia/ui';
+export default function(){setTimeout(async()=>{
+const original=globalThis.setTimeout;let timers=0;
+globalThis.setTimeout=(fn,ms,...args)=>{if(ms===600000)timers++;return original(fn,ms,...args);};
+const result=await callModel({model:'auxiliary',messages:[{role:'user',content:'Evaluate'}]});
+await action('check',{label:result.content[0].text+':'+result.toolCalls[0].name+':'+timers});
+},50);}`);
+	await mount(game.id, game.activeSessionId);
+	await expect
+		.poll(async () => (await getSessionHistory(game.id, game.activeSessionId)).progress.state, {
+			timeout: 15000
+		})
+		.toEqual({ value: 0, checks: ['idea:increment:2'] });
+	expect((await getSessionTimeline(game.id, game.activeSessionId)).messages).toEqual([]);
+	expect(callSessionModel).toHaveBeenCalledOnce();
+}, 20000);
+
+it('rejects invalid model options before invoking the model transport', async () => {
+	const game = await setup(`import {callModel,action} from '@helia/ui';
+export default function(){setTimeout(async()=>{try{await callModel({messages:[],temperature:1});}catch{await action('check',{label:'rejected'});}},50);}`);
+	await mount(game.id, game.activeSessionId);
+	await expect
+		.poll(
+			async () => (await getSessionHistory(game.id, game.activeSessionId)).progress.state.checks,
+			{ timeout: 15000 }
+		)
+		.toEqual(['rejected']);
+	expect(callSessionModel).not.toHaveBeenCalled();
+}, 20000);
+
+it('commits state through the UI API and returns a revision without legacy aliases', async () => {
+	const game = await setup(`
+import { commitState, helia } from '@helia/ui';
+export default function(){setTimeout(async()=>{
+ if ('ai' in helia || 'transaction' in helia || 'queueTurn' in helia || 'defineAction' in helia) throw Error('wrong API');
+ const result = await commitState({name:'manual',args:{}},{value:7,checks:[]});
+ await helia.action('check',{label:'revision:'+result.revision});
+},50);}
+`);
+	await mount(game.id, game.activeSessionId);
+	await expect
+		.poll(async () => (await getSessionHistory(game.id, game.activeSessionId)).progress.state, {
+			timeout: 15_000
+		})
+		.toEqual({ value: 7, checks: ['revision:1'] });
+}, 20_000);
+
 it('aborts an explicit custom UI AI request when its runtime is disposed', async () => {
 	const game = await setup(`
-export default function(){setTimeout(()=>{void helia.ai('Wait for a response').catch(()=>{});},100);}
+export default function(){setTimeout(()=>{void helia.runTurn('Wait for a response').catch(()=>{});},100);}
 `);
 	let signal: AbortSignal | undefined;
 	vi.mocked(invokeSessionAI).mockImplementation((_game, _session, _input, options) => {
@@ -238,10 +296,10 @@ export default function(){
 
 it('keeps host DOM, storage and native APIs outside the opaque UI origin and rejects invalid state', async () => {
 	const game = await setup(`
-import { action, transaction } from '@helia/ui';
+import { action, commitState } from '@helia/ui';
 export default function(){setTimeout(async()=>{
  let dom=false,storage=false;try{parent.document.body;}catch{dom=true;}try{localStorage.getItem('key');}catch{storage=true;}
- let rejected=false;try{await transaction({name:'invalid',args:{}},{value:'wrong',checks:[]});}catch{rejected=true;}
+ let rejected=false;try{await commitState({name:'invalid',args:{}},{value:'wrong',checks:[]});}catch{rejected=true;}
  await action('check',{label:[dom,storage,typeof globalThis.__TAURI_INTERNALS__,rejected,typeof port,typeof latest].join(':')});
 },50);}
 `);

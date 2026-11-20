@@ -8,6 +8,7 @@ import {
 	removeProvider,
 	removeModel,
 	selectDefaultModel,
+	selectAuxiliaryModel,
 	type ProviderSettings,
 	type ModelSettings
 } from './model.js';
@@ -25,6 +26,21 @@ const model: ModelSettings = {
 	modelId: 'org/my-model'
 };
 const configured = () => upsertModel(upsertProvider(emptyAISettings(), provider), model);
+
+describe('model role bindings', () => {
+	it('persists auxiliary selection and model output limits, and clears deleted bindings', () => {
+		const original = upsertModel(configured(), { ...model, id: 'aux', maxOutputTokens: 500 });
+		const settings = selectAuxiliaryModel(original, 'aux');
+		expect(parseAISettings(settings).auxiliaryModelId).toBe('aux');
+		expect(parseAISettings(settings).models[1].maxOutputTokens).toBe(500);
+		expect(removeModel(settings, 'aux').auxiliaryModelId).toBeNull();
+		expect(removeProvider(settings, provider.id).auxiliaryModelId).toBeNull();
+		expect(() => selectAuxiliaryModel(settings, 'missing')).toThrow();
+		for (const maxOutputTokens of [0, -1, 65537, 1.5, NaN]) {
+			expect(() => upsertModel(settings, { ...model, maxOutputTokens })).toThrow();
+		}
+	});
+});
 
 describe('provider and model settings', () => {
 	it('normalizes user-defined names and model IDs without persisting undeclared secret fields', () => {

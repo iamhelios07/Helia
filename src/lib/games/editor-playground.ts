@@ -10,6 +10,7 @@ import type { SessionTimeline } from './state/history.js';
 import type { GameUIRuntime } from './ui/runtime/bridge.js';
 
 import { invokeSessionAI } from './ai/browser.js';
+import { callSessionModel } from './ai/model-browser.js';
 import { editorContent } from './editor.js';
 import { memorySessionFiles } from './files/memory.js';
 import { parseGame, type Game } from './model.js';
@@ -261,12 +262,13 @@ class PlaygroundSession {
 		this.fingerprint = playgroundFingerprint(source);
 		this.repository = createGameRepository(playgroundStorage(this.game), {
 			runAction: this.run,
-			requestAI: (_gameId, _sessionId, input) => {
+			runTurn: (_gameId, _sessionId, input) => {
 				void this.ai(input.text, { visible: input.visible }).catch(() => {});
 			}
 		});
 		this.runtime = {
 			files: this.files,
+			callModel: callSessionModel,
 			...this.repository,
 			invokeSessionAI: (_gameId, _sessionId, input, aiOptions) =>
 				this.ai(input.text, input, aiOptions)

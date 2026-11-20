@@ -162,10 +162,10 @@ it('does not commit temporary tool changes when CBS fails before the next model 
 describe('atomic AI workspace', () => {
 	it('triggers explicit script AI requests after a successful commit even without a custom UI', async () => {
 		const storage = openStorage(':memory:'),
-			requestAI = vi.fn();
+			runTurn = vi.fn();
 		const repo = createGameRepository(async (command) => parseReply(storage.request(command)), {
 			runAction: evaluateAction,
-			requestAI
+			runTurn
 		});
 		try {
 			const game = await repo.createGame();
@@ -175,7 +175,7 @@ describe('atomic AI workspace', () => {
 				scripts: {
 					main: {
 						language: 'typescript',
-						source: `helia.defineAction({name:'ask',arguments:${args},run({state}){helia.requestAI('Describe',{visible:true});return state;}});`
+						source: `helia.defineAction({name:'ask',arguments:${args},run({state}){helia.queueTurn('Describe',{visible:true});return state;}});`
 					}
 				}
 			});
@@ -185,7 +185,7 @@ describe('atomic AI workspace', () => {
 				action: { name: 'ask', args: {} }
 			});
 			await Promise.resolve();
-			expect(requestAI).toHaveBeenCalledWith(game.id, game.activeSessionId, {
+			expect(runTurn).toHaveBeenCalledWith(game.id, game.activeSessionId, {
 				text: 'Describe',
 				visible: true
 			});
@@ -425,7 +425,7 @@ describe('Query capability boundary', () => {
 	it.each([
 		'state.gold=0;return 1;',
 		"helia.emit('event',{});return 1;",
-		"helia.requestAI('Hi');return 1;",
+		"helia.queueTurn('Hi');return 1;",
 		'return Promise.resolve(1);'
 	])('rejects side effects and non-JSON results: %s', async (body) => {
 		const { storage, timeline } = await setup(

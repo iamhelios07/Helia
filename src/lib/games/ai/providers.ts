@@ -1,6 +1,9 @@
 import { credentialRecord } from '#lib/app/settings/credential-protocol.js';
 import { parseStateValue, type StateValue } from '#lib/games/state/value.js';
 
+import type { ModelUsage } from './model-call.js';
+
+import { decodeModelContent, encodeModelContent, modelUsage } from './model-media.js';
 import {
 	aiError,
 	AI_LIMITS,
@@ -84,7 +87,7 @@ function encodeChatRequest(
 				}
 				return {
 					role: m.role,
-					content: m.content,
+					content: m.parts ? encodeModelContent(m.parts, 'openai-compatible') : m.content,
 					...(m.calls?.length
 						? {
 								tool_calls: m.calls.map((c) => ({
@@ -125,7 +128,14 @@ function encodeResponsesRequest(
 				if (m.role === 'assistant' && m.native) {
 					return m.native;
 				}
-				return [{ role: m.role, content: m.content }];
+				return [
+					{
+						role: m.role,
+						content: m.parts
+							? encodeModelContent(m.parts, 'openai-responses', m.role === 'assistant')
+							: m.content
+					}
+				];
 			}),
 			...(tools.length
 				? { tools: functions.map((f) => ({ type: 'function', ...f, strict: false })) }
@@ -159,13 +169,16 @@ function encodeAnthropicRequest(
 						content:
 							m.role === 'tool'
 								? [{ type: 'tool_result', tool_use_id: m.callId, content: m.content }]
-								: (m.native ?? [
-										{
-											type: 'text',
-											text: m.content,
-											...(m.cache ? { cache_control: { type: 'ephemeral' } } : {})
-										}
-									])
+								: (m.native ??
+									(m.parts
+										? encodeModelContent(m.parts, 'anthropic')
+										: [
+												{
+													type: 'text',
+													text: m.content,
+													...(m.cache ? { cache_control: { type: 'ephemeral' } } : {})
+												}
+											]))
 					}))
 			),
 			...(tools.length
@@ -202,11 +215,14 @@ function encodeGoogleRequest(
 										functionResponse: {
 											...googleCallId(messages, m.callId),
 											name: toolName(messages, m.callId),
-											response: { result: parseJSON(m.content) }
+											response: { result: toolResult(m.content) }
 										}
 									}
 								]
-							: (m.native ?? [{ text: m.content }])
+							: (m.native ??
+								(m.parts
+									? encodeModelContent(m.parts, request.provider.kind)
+									: [{ text: m.content }]))
 				})),
 			generationConfig: { maxOutputTokens: maxTokens },
 			...(tools.length
@@ -259,7 +275,9 @@ function encodeInteractionsRequest(
 					return [
 						{
 							type: m.role === 'assistant' ? 'model_output' : 'user_input',
-							content: [{ type: 'text', text: m.content }]
+							content: m.parts
+								? encodeModelContent(m.parts, 'google-interactions')
+								: [{ type: 'text', text: m.content }]
 						}
 					];
 				}),
@@ -275,6 +293,13 @@ function toolName(messages: AIMessage[], id?: string): string {
 		throw aiError('protocol');
 	}
 	return call.name;
+}
+function toolResult(content: string): unknown {
+	try {
+		return JSON.parse(content);
+	} catch {
+		return content;
+	}
 }
 function googleCallId(messages: AIMessage[], id?: string): { id?: string } {
 	const source = messages.find((message) => message.calls?.some((call) => call.id === id));
@@ -308,6 +333,7 @@ export class ProviderDecoder {
 	private stop = '';
 	private done = false;
 	private argumentDeltas = new Set<string>();
+	private usage: ModelUsage | undefined;
 	constructor(
 		private kind: RoundRequest['provider']['kind'],
 		private emit: (event: AgentEvent) => void
@@ -365,6 +391,7 @@ export class ProviderDecoder {
 		this.emit({ type: 'received', kind: 'tool', characters: [...text].length });
 	}
 	private accept(data: Row) {
+		this.usage = modelUsage(data, this.usage);
 		if (data.helia_nonstream) {
 			this.acceptJSON(row(data.helia_nonstream));
 			return;
@@ -590,6 +617,7 @@ export class ProviderDecoder {
 		}
 	}
 	private acceptJSON(data: Row) {
+		this.usage = modelUsage(data, this.usage);
 		if (data.error) {
 			throw aiError();
 		}
@@ -758,9 +786,16 @@ export class ProviderDecoder {
 				})
 			];
 		}
-		if (calls.length === 0 && !this.text.trim()) {
+		const content = decodeModelContent(this.native, this.text, this.kind);
+		if (calls.length === 0 && !content.some((part) => part.type !== 'text' || part.text.trim())) {
 			throw aiError('protocol');
 		}
-		return { text: this.text, calls, ...(this.native.length ? { native: this.native } : {}) };
+		return {
+			text: this.text,
+			calls,
+			...(this.native.length ? { native: this.native } : {}),
+			...(content.some((part) => part.type !== 'text') ? { content } : {}),
+			...(this.usage ? { usage: this.usage } : {})
+		};
 	}
 }

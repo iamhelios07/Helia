@@ -31,6 +31,7 @@ vi.mock('#lib/app/settings/repository.js', () => ({
 vi.mock('#lib/app/settings/prompt-repository.js', async () => ({
 	loadSelectedPromptConfig: () => undefined
 }));
+vi.mock('#lib/app/settings/persona-repository.js', () => ({ loadSessionPersona: () => undefined }));
 vi.mock('./ai/transport.js', () => ({
 	beginGeneration: async (gameId: string, sessionId: string) => {
 		generation.scopes.push({ gameId, sessionId });

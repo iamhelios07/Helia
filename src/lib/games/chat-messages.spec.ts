@@ -19,9 +19,9 @@ const action = `helia.defineAction({name:'craft',ai:true,run({state}){
 async function fixture(source = action) {
 	const store = openStorage(':memory:');
 	stores.push(store);
-	const requestAI = vi.fn();
+	const runTurn = vi.fn();
 	const transport = vi.fn(async (input: StorageRequest) => parseReply(store.request(input)));
-	const repo = createGameRepository(transport, { runAction: evaluateAction, requestAI });
+	const repo = createGameRepository(transport, { runAction: evaluateAction, runTurn });
 	const game = await repo.createGame();
 	const gameId = game.id,
 		sessionId = game.activeSessionId;
@@ -43,7 +43,7 @@ async function fixture(source = action) {
 			expectedRevision: 0,
 			action: { name: 'craft', args: {} }
 		});
-	return { repo, gameId, sessionId, store, requestAI, transport, read, run };
+	return { repo, gameId, sessionId, store, runTurn, transport, read, run };
 }
 
 it('appends both roles without AI calls, retaining HTML and whitespace in the normal timeline', async () => {
@@ -63,7 +63,7 @@ it('appends both roles without AI calls, retaining HTML and whitespace in the no
 	]);
 	expect(saved.history.progress.state).toEqual({ gold: 10 });
 	expect(saved.messages.map((message) => message.sequence)).toEqual([1, 2]);
-	expect(f.requestAI).not.toHaveBeenCalled();
+	expect(f.runTurn).not.toHaveBeenCalled();
 });
 
 it('commits Action messages and state as one event, restores branches and deletes all linked messages', async () => {

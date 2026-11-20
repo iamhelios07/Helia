@@ -38,7 +38,7 @@ export const {
 	executeSessionAgentHook
 } = createGameRepository(storageRequest, {
 	runAction: runCreatorAction,
-	requestAI: (gameId, sessionId, input) => {
+	runTurn: (gameId, sessionId, input) => {
 		void invokeSessionAI(gameId, sessionId, input).catch((error) =>
 			publishSessionAIEvent(gameId, sessionId, {
 				type: 'error',

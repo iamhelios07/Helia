@@ -5,7 +5,7 @@
 	import Icon from '#lib/components/Icon.svelte';
 
 	import ConnectionSettingsForm from './ConnectionSettingsForm.svelte';
-	import { selectDefaultModel } from './model.js';
+	import { selectDefaultModel, selectAuxiliaryModel } from './model.js';
 	import ModelPicker from './ModelPicker.svelte';
 	import PersonaSettingsPanel from './PersonaSettingsPanel.svelte';
 	import PromptSettingsPanel from './PromptSettingsPanel.svelte';
@@ -205,6 +205,24 @@
 							>
 						</div>{/if}
 				{:else}<div class="global-models">
+						<label for="auxiliary-model"><Icon name="chat" size={14} /> 보조 모델</label>
+						<select
+							id="auxiliary-model"
+							value={controller.settings.auxiliaryModelId ?? ''}
+							disabled={controller.busy}
+							onchange={(event) => {
+								const id = event.currentTarget.value;
+								void controller.persist(
+									() => selectAuxiliaryModel(controller.settings, id || null),
+									'보조 모델을 변경했어요.'
+								);
+							}}
+						>
+							<option value="">선택 안 함</option>
+							{#each controller.settings.models as model (model.id)}<option value={model.id}
+									>{model.name}</option
+								>{/each}
+						</select>
 						<ModelPicker
 							models={controller.settings.models}
 							providers={controller.settings.providers}
@@ -275,6 +293,15 @@
 				autocomplete="off"
 				spellcheck="false"
 				required
+			/>
+			<label for="model-max-tokens">최대 출력 토큰</label>
+			<input
+				id="model-max-tokens"
+				type="number"
+				min="1"
+				max="65536"
+				bind:value={controller.modelDraft.maxOutputTokens}
+				placeholder="기본 설정 사용"
 			/>
 			<p class="field-help">같은 모델도 다른 이름으로 여러 번 추가할 수 있어요.</p>
 			{#if controller.modelError}<p class="notice" role="alert">{controller.modelError}</p>{/if}

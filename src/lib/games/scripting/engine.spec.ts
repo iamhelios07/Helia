@@ -23,6 +23,21 @@ function request(
 		action: { name: 'buy', args: { price: 20 } }
 	};
 }
+
+it('queues AI through the synchronous logic API without exposing UI or removed methods', async () => {
+	const result = await evaluateAction(
+		request(
+			register(`
+		if ('runTurn' in helia || 'ai' in helia || 'getState' in helia) throw Error('wrong API');
+		helia.queueTurn('Describe the purchase', {visible:true});
+		return state;
+	`)
+		)
+	);
+	expect(result.events).toEqual([
+		{ name: '$helia.ai', payload: { text: 'Describe the purchase', visible: true } }
+	]);
+});
 describe('isolated creator Actions', () => {
 	it('executes JavaScript and TypeScript against detached state and declared arguments', async () => {
 		const input = request();

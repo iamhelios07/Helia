@@ -78,6 +78,7 @@ export const BOOTSTRAP = String.raw`
       events[events.length] = copy({name,payload});
     } catch (error) { failed = true; throw error; }
   };
+  const queueTurn = (text, options = {}) => emit('$helia.ai', {text, visible: options.visible === true});
   Object.defineProperty(globalThis, 'helia', {value: freeze({
     defineAction: definition => define('action',definition),
     defineQuery: definition => define('query',definition),
@@ -85,7 +86,7 @@ export const BOOTSTRAP = String.raw`
     defineHook: definition => define('hook',definition),
     emit,
     appendMessage: message => emit('$helia.message', message),
-    requestAI: (text, options = {}) => emit('$helia.ai', {text, visible: options.visible === true})
+    queueTurn
   }), writable: false, configurable: false});
   return freeze({
     beginScript(id) {if (sealed) throw Error('registration'); scriptId = id;},

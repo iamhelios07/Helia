@@ -70,19 +70,21 @@ Limits: 12 model rounds, 32 tool calls, two retries before provider output is re
 Game UI can explicitly invoke AI through its bridge:
 
 ```javascript
-import { ai } from '@helia/ui';
+import { runTurn } from '@helia/ui';
 
-await ai('Describe what happens after opening the door.', { visible: false });
+await runTurn('Describe what happens after opening the door.', { visible: false });
 ```
 
 UI invocation defaults to an internal event; `visible: true` creates a player message. It uses the player's default model. Generic UI actions do not automatically invoke AI.
+
+For caller-owned messages, use [`callModel`](../../../../docs/scripting.md#model-calls) instead. [Validation](./model-call.ts) and [execution](./model-browser.ts) share the configured BYOK transport without prompt assembly, regex processing, tool execution or commits. `model-media.ts` maps inline media and normalizes multimodal output; continuation data remains attached for follow-up calls. The auxiliary model binding is player-owned and validated by both storage hosts.
 
 For messages that do not need generation, use `appendMessage({ role: 'user' | 'assistant', content })` from `@helia/ui`, or `helia.appendMessage` inside Actions/Hooks. These are normal persisted chat messages, included in later conversation context. Script messages are staged with state changes and discarded if their enclosing operation fails. See [Adding chat messages](../ui/README.md#adding-chat-messages).
 
 Synchronous creator Actions and Hooks can schedule a follow-up:
 
 ```javascript
-helia.requestAI('Describe the result of this action.', { visible: true });
+helia.queueTurn('Describe the result of this action.', { visible: true });
 ```
 
 The repository starts this request only after the originating transaction commits, including games without custom UI. Failed operations discard it; Queries cannot request it. The UI bridge aborts its own pending invocation when disposed, and chat aborts its own request when unmounted. Shared activity and AI events let visible chat present requests made by custom UI or scripts.

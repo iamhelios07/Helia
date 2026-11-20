@@ -4,7 +4,7 @@ import standardLibrary from 'typescript/lib/lib.es5.d.ts?raw';
 
 import type { SourceModule } from './code-authoring.js';
 
-import { HELIA_AUTHORING_DECLARATIONS } from './authoring/runtime.js';
+import { HELIA_AUTHORING_DECLARATIONS, HELIA_AUTHORING_LIBRARIES } from './authoring/runtime.js';
 import { parseObjectSchema, type ValueSchema } from './state/schema.js';
 const root = '/helia/';
 const runtimePath = root + '.helia/runtime.d.ts';
@@ -19,6 +19,9 @@ function createProgram(
 	sources.set(root + '.helia/GameState.d.ts', stateTypes);
 	sources.set(root + '.helia/lib.es5.d.ts', standardLibrary);
 	sources.set(runtimePath, HELIA_AUTHORING_DECLARATIONS);
+	for (const [path, source] of Object.entries(HELIA_AUTHORING_LIBRARIES)) {
+		sources.set(root + path, source);
+	}
 	const options: ts.CompilerOptions = {
 		strict: true,
 		exactOptionalPropertyTypes: true,

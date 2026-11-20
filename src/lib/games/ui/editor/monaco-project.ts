@@ -2,7 +2,10 @@ import type { editor, IDisposable, IPosition, IRange } from 'monaco-editor/edito
 
 import type { CodeDiagnostic, SourceModule } from '../../code-authoring.js';
 
-import { HELIA_AUTHORING_DECLARATIONS } from '../../authoring/runtime.js';
+import {
+	HELIA_AUTHORING_DECLARATIONS,
+	HELIA_AUTHORING_LIBRARIES
+} from '../../authoring/runtime.js';
 
 type Runtime = typeof import('./monaco-runtime.js');
 type Position = { lineNumber: number; column: number };
@@ -45,6 +48,12 @@ export class MonacoProject {
 				language: 'typescript'
 			},
 			'.helia/runtime.d.ts': { source: HELIA_AUTHORING_DECLARATIONS, language: 'typescript' },
+			...Object.fromEntries(
+				Object.entries(HELIA_AUTHORING_LIBRARIES).map(([path, source]) => [
+					path,
+					{ source, language: 'typescript' }
+				])
+			),
 			...files,
 			...Object.fromEntries(
 				Object.entries(documents).map(([path, source]) => [path, { source, language: 'json' }])

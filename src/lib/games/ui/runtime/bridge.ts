@@ -1,4 +1,6 @@
 import { invokeSessionAI } from '#lib/games/ai/browser.js';
+import { callSessionModel } from '#lib/games/ai/model-browser.js';
+import { parseModelCall } from '#lib/games/ai/model-call.js';
 import { sessionFiles, type SessionFileAccess } from '#lib/games/files/client.js';
 import { memorySessionFiles } from '#lib/games/files/memory.js';
 import { parseMessageInput } from '#lib/games/model.js';
@@ -22,6 +24,7 @@ const transient = new Map<string, GameState>();
 export type GameUIHandle = (() => void) & { setViews(views: PanelView[]): void };
 export interface GameUIRuntime {
 	files?: SessionFileAccess;
+	callModel?: typeof callSessionModel;
 	getSessionHistory: typeof getSessionHistory;
 	executeSessionAction: typeof executeSessionAction;
 	commitSessionTransaction: typeof commitSessionTransaction;
@@ -231,7 +234,7 @@ class GameUIBridge {
 	}
 	private async execute(message: GameState): Promise<SessionHistory> {
 		const { runtime, gameId, sessionId } = this.context;
-		const options = { signal: this.abort.signal };
+		const options = { signal: this.abort.signal, onEvent: () => this.heartbeat(message) };
 		if (message.kind === 'message') {
 			return runtime.appendSessionMessage(
 				gameId,
@@ -243,7 +246,7 @@ class GameUIBridge {
 				options
 			);
 		}
-		if (message.kind === 'ai') {
+		if (message.kind === 'turn') {
 			if (typeof message.text !== 'string') {
 				throw Error('Invalid AI request');
 			}
@@ -280,32 +283,52 @@ class GameUIBridge {
 		// Validate action input before exposing a busy transition to the host.
 		if (message.kind === 'message') {
 			parseMessageInput(message.message);
-		} else if (message.kind !== 'ai') {
+		} else if (message.kind === 'model') {
+			parseModelCall(message.options);
+		} else if (message.kind !== 'turn') {
 			parseAction(message.action);
 		}
 		this.busy = true;
 		this.options.onbusy?.(true);
 		try {
-			const result = await this.execute(message);
-			if (this.disposed) {
-				return;
+			const result =
+				message.kind === 'model'
+					? await this.executeModel(message)
+					: await this.commitRequest(message);
+			if (!this.disposed) {
+				this.send({ kind: 'response', id: message.id, ok: true, result });
 			}
-			if (result.progress.revision >= this.history.progress.revision) {
-				this.history = result;
-			}
-			this.sendState();
-			await this.refresh();
 		} finally {
 			this.busy = false;
 			if (!this.disposed) {
 				this.options.onbusy?.(false);
 			}
 		}
-		this.send({
-			kind: 'response',
-			id: message.id,
-			ok: true,
-			result: { revision: this.history.progress.revision }
+	}
+	private heartbeat(message: GameState) {
+		if (!this.disposed) {
+			this.send({ kind: 'activity', id: message.id });
+		}
+	}
+	private async commitRequest(message: GameState) {
+		const result = await this.execute(message);
+		if (!this.disposed) {
+			if (result.progress.revision >= this.history.progress.revision) {
+				this.history = result;
+			}
+			this.sendState();
+			await this.refresh();
+		}
+		return { revision: this.history.progress.revision };
+	}
+	private executeModel(message: GameState) {
+		const { runtime, gameId, sessionId } = this.context;
+		if (this.options.runtime && !runtime.callModel) {
+			throw Error('Model calls unavailable in this preview');
+		}
+		return (runtime.callModel ?? callSessionModel)(gameId, sessionId, message.options, {
+			signal: this.abort.signal,
+			onEvent: () => this.heartbeat(message)
 		});
 	}
 	private async receive(event: MessageEvent<unknown>) {
@@ -327,7 +350,7 @@ class GameUIBridge {
 				return;
 			}
 			if (
-				!['action', 'transaction', 'ai', 'message'].includes(String(message.kind)) ||
+				!['action', 'transaction', 'turn', 'model', 'message'].includes(String(message.kind)) ||
 				typeof message.id !== 'string' ||
 				!/^\d{1,12}$/.test(message.id)
 			) {

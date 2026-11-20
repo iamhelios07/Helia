@@ -142,12 +142,20 @@ fn sanitize(value: &Value) -> Result<Value, String> {
             if !provider_ids.contains(provider_id.as_str()) {
                 return Err(INVALID.into());
             }
-            Ok(json!({
+            let mut result = json!({
                 "id": id(&model["id"])?,
                 "name": text(&model["name"], 120)?,
                 "providerId": provider_id,
                 "modelId": text(&model["modelId"], 256)?,
-            }))
+            });
+            if let Some(limit) = model.get("maxOutputTokens") {
+                let count = limit
+                    .as_u64()
+                    .filter(|value| (1..=65536).contains(value))
+                    .ok_or(INVALID)?;
+                result["maxOutputTokens"] = json!(count);
+            }
+            Ok(result)
         })
         .collect::<Result<_, String>>()?;
     let model_ids: HashSet<_> = models
@@ -168,9 +176,14 @@ fn sanitize(value: &Value) -> Result<Value, String> {
         }
         None => return Err(INVALID.into()),
     };
-    Ok(
-        json!({ "version": 1, "providers": providers, "models": models, "defaultModelId": default_model_id }),
-    )
+    let mut result = json!({ "version": 1, "providers": providers, "models": models, "defaultModelId": default_model_id });
+    if let Some(auxiliary) = value.get("auxiliaryModelId") {
+        if !auxiliary.is_null() && !model_ids.contains(id(auxiliary)?.as_str()) {
+            return Err(INVALID.into());
+        }
+        result["auxiliaryModelId"] = auxiliary.clone();
+    }
+    Ok(result)
 }
 
 fn db_error(_: rusqlite::Error) -> String {
@@ -315,6 +328,27 @@ mod tests {
         })
     }
 
+    #[test]
+    fn persists_model_roles_and_output_limits_and_rejects_invalid_references() {
+        let fixture = Fixture::new();
+        let mut configured = settings();
+        configured["auxiliaryModelId"] = json!("model");
+        configured["models"][0]["maxOutputTokens"] = json!(1200);
+        fixture
+            .execute(json!({"kind":"initialize","settings":configured}))
+            .unwrap();
+        let saved = fixture.execute(json!({"kind":"read"})).unwrap();
+        assert_eq!(saved["settings"]["auxiliaryModelId"], "model");
+        assert_eq!(saved["settings"]["models"][0]["maxOutputTokens"], 1200);
+        for bad in [json!(0), json!(65537), json!(1.5), json!("100")] {
+            let mut invalid = configured.clone();
+            invalid["models"][0]["maxOutputTokens"] = bad;
+            assert!(sanitize(&invalid).is_err());
+        }
+        configured["auxiliaryModelId"] = json!("missing");
+        assert!(sanitize(&configured).is_err());
+        assert_eq!(fixture.execute(json!({"kind":"read"})).unwrap(), saved);
+    }
     #[test]
     fn restores_settings_after_reopening_without_touching_game_schema_version() {
         let fixture = Fixture::new();

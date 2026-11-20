@@ -6,6 +6,8 @@ import {
 import { parseObjectSchema, type ObjectSchema } from '#lib/games/state/schema.js';
 import { parseStateValue, type StateValue } from '#lib/games/state/value.js';
 
+import type { ModelContent, ModelUsage } from './model-call.js';
+
 export const AI_LIMITS = Object.freeze({
 	rounds: 12,
 	calls: 32,
@@ -41,6 +43,7 @@ export interface ToolCall {
 export interface AIMessage {
 	role: 'system' | 'user' | 'assistant' | 'tool';
 	content: string;
+	parts?: ModelContent[];
 	callId?: string;
 	calls?: ToolCall[];
 	native?: StateValue[];
@@ -57,6 +60,8 @@ export interface ModelRound {
 	text: string;
 	calls: ToolCall[];
 	native?: StateValue[];
+	content?: ModelContent[];
+	usage?: ModelUsage;
 }
 export type ModelGenerator = (
 	request: RoundRequest,
@@ -84,6 +89,38 @@ export function aiError(
 	}
 	return error;
 }
+export function parseModelContent(value: unknown): ModelContent[] {
+	if (!Array.isArray(value) || value.length > 256) {
+		throw aiError('protocol');
+	}
+	return value.map((item): ModelContent => {
+		const part = credentialRecord(item);
+		if (part.type === 'text' && typeof part.text === 'string') {
+			return { type: 'text', text: part.text };
+		}
+		if (
+			!['image', 'audio', 'video', 'file'].includes(String(part.type)) ||
+			typeof part.mimeType !== 'string' ||
+			part.mimeType.length > 256 ||
+			!/^[\w.+-]+\/[\w.+-]+(?:;[\w= ."+-]+)*$/.test(part.mimeType) ||
+			typeof part.data !== 'string' ||
+			!part.data ||
+			part.data.length % 4 !== 0 ||
+			!/^[A-Za-z0-9+/]*={0,2}$/.test(part.data)
+		) {
+			throw aiError('protocol');
+		}
+		if (part.type !== 'file' && !part.mimeType.startsWith(String(part.type) + '/')) {
+			throw aiError('protocol');
+		}
+		return {
+			type: part.type as 'image' | 'audio' | 'video' | 'file',
+			mimeType: part.mimeType,
+			data: part.data
+		};
+	});
+}
+
 export function parseRoundRequest(value: unknown): RoundRequest {
 	const row = credentialRecord(value);
 	if (
@@ -119,6 +156,7 @@ export function parseRoundRequest(value: unknown): RoundRequest {
 		return {
 			role: item.role as AIMessage['role'],
 			content: item.content,
+			...(item.parts === undefined ? {} : { parts: parseModelContent(item.parts) }),
 			...(calls ? { calls } : {}),
 			...(typeof item.callId === 'string' ? { callId: item.callId } : {}),
 			...(Array.isArray(item.native)

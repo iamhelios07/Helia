@@ -14,6 +14,65 @@ const round = (kind: RoundRequest['provider']['kind']): RoundRequest => ({
 	],
 	tools: []
 });
+describe('model media adapters', () => {
+	it('supports plain-text tool results in Google continuations', () => {
+		const request = round('google');
+		request.messages.push(
+			{ role: 'assistant', content: '', calls: [{ id: 'call', name: 'inspect', arguments: {} }] },
+			{ role: 'tool', callId: 'call', content: 'Nothing found' }
+		);
+		expect(JSON.stringify(encodeProviderRequest(request).body)).toContain('Nothing found');
+	});
+	it('returns image-only Gemini output with usage instead of rejecting an empty text field', () => {
+		const decoder = new ProviderDecoder('google', () => {});
+		decoder.push(
+			event({
+				candidates: [
+					{
+						content: { parts: [{ inlineData: { mimeType: 'image/png', data: 'AA==' } }] },
+						finishReason: 'STOP'
+					}
+				],
+				usageMetadata: { promptTokenCount: 3, candidatesTokenCount: 5 }
+			})
+		);
+		expect(decoder.finish()).toMatchObject({
+			text: '',
+			calls: [],
+			content: [{ type: 'image', mimeType: 'image/png', data: 'AA==' }],
+			usage: { inputTokens: 3, outputTokens: 5 }
+		});
+	});
+	it.each([
+		'openai-compatible',
+		'openai-responses',
+		'anthropic',
+		'google',
+		'google-vertex',
+		'google-interactions'
+	] as const)(
+		'encodes inline images for %s without discarding media at the host parser',
+		(kind) => {
+			const input = round(kind);
+			if (kind === 'google-vertex') {
+				input.provider = {
+					id: 'test',
+					kind,
+					baseUrl: 'https://aiplatform.googleapis.com',
+					vertex: { projectId: 'test-project', location: 'global' }
+				};
+			}
+			input.messages[1].parts = [
+				{ type: 'text', text: 'Inspect' },
+				{ type: 'image', mimeType: 'image/png', data: 'AA==' }
+			];
+			const wire = encodeProviderRequest(parseRoundRequest(input));
+			expect(JSON.stringify(wire.body)).toContain('AA==');
+			expect(JSON.stringify(wire.body)).toContain('Inspect');
+		}
+	);
+});
+
 describe('provider stream adapters', () => {
 	it('reports Unicode text and reasoning character counts separately from buffered content', () => {
 		const events: AgentEvent[] = [];
