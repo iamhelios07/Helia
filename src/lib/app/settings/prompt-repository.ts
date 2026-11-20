@@ -3,6 +3,7 @@ import type { PromptConfig } from '#lib/games/ai/prompts.js';
 import { emptyPromptSettings, parsePromptSettings, type PromptSettings } from './prompts.js';
 
 export const PROMPT_SETTINGS_KEY = 'helia:prompt-settings';
+export const PROMPT_SETTINGS_CHANGED = 'helia:prompt-settings-changed';
 const MAX_DOCUMENT_CHARS = 4 * 1024 * 1024;
 
 /** Player-owned presets stay in the device profile, outside games and their snapshots. */
@@ -31,6 +32,9 @@ export function savePromptSettings(value: PromptSettings): PromptSettings {
 		localStorage.setItem(PROMPT_SETTINGS_KEY, document);
 	} catch {
 		throw new Error('프롬프트 설정을 저장하지 못했어요. 입력 내용은 유지되니 다시 시도해주세요.');
+	}
+	if (typeof window !== 'undefined') {
+		window.dispatchEvent(new Event(PROMPT_SETTINGS_CHANGED));
 	}
 	return settings;
 }

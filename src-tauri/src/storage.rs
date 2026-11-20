@@ -1969,8 +1969,7 @@ mod tests {
         snapshot["id"] = json!("updated-content");
         snapshot["schema"] = json!({"type":"object","properties":{"gold":{"type":"string"},"score":{"type":"integer"}},"required":["gold","score"],"additionalProperties":false});
         snapshot["initialState"] = json!({"gold":"100","score":0});
-        snapshot["migrationFrom"] = json!("snapshot");
-        snapshot["restoredStates"] = json!({});
+        let mut checkpoints = Vec::new();
         for (id, gold) in [
             ("A", "90"),
             ("B", "80"),
@@ -1979,22 +1978,19 @@ mod tests {
             ("E", "50"),
             ("F", "40"),
         ] {
-            snapshot["restoredStates"][id] = json!({"gold":gold,"score":0});
+            checkpoints.push(row("checkpoints",id,Some("session"),&json!({"schemaVersion":1,"id":id,"transactionId":id,"snapshotId":"updated-content","gameId":"game","sessionId":"session","state":{"gold":gold,"score":0}})));
         }
         let mut progress =
             rows.iter().find(|row| row["table"] == "progress").unwrap()["value"].clone();
         progress["snapshotId"] = json!("updated-content");
         progress["revision"] = json!(7);
         progress["state"] = json!({"gold":"40","score":0});
-        fixture
-            .request(commit(
-                1,
-                &[
-                    row("snapshots", "updated-content", None, &snapshot),
-                    row("progress", "session", Some("session"), &progress),
-                ],
-            ))
-            .unwrap();
+        let mut updates = vec![
+            row("snapshots", "updated-content", None, &snapshot),
+            row("progress", "session", Some("session"), &progress),
+        ];
+        updates.extend(checkpoints);
+        fixture.request(commit(1, &updates)).unwrap();
         let all = fixture
             .request(json!({"kind":"read","gameId":"game","includeHistory":true}))
             .unwrap();
@@ -2014,9 +2010,9 @@ mod tests {
         let saved = pruned["records"].as_array().unwrap();
         let progress = &saved.iter().find(|row| row["table"] == "progress").unwrap()["value"];
         assert_eq!(progress["state"], json!({"gold":"90","score":0}));
-        for snapshot in saved.iter().filter(|row| row["table"] == "snapshots") {
-            assert!(snapshot["value"]["restoredStates"].get("F").is_none());
-        }
+        let checkpoints: Vec<_> = saved.iter().filter(|row| row["table"] == "checkpoints").collect();
+        assert_eq!(checkpoints.len(),1);
+        assert_eq!(checkpoints[0]["id"],"A");
     }
     #[test]
     fn prunes_subtrees_and_restores_logged_state_and_messages_after_reopening() {

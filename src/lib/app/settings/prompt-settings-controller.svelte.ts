@@ -1,3 +1,4 @@
+import { reconcileToggleValues } from '#lib/games/ai/prompt-toggles.js';
 import { parsePromptConfig, type PromptBlock } from '#lib/games/ai/prompts.js';
 
 import { readPromptPresetFile } from './prompt-import.js';
@@ -127,6 +128,10 @@ export class PromptSettingsController {
 			return;
 		}
 		try {
+			candidate.config.toggleValues = reconcileToggleValues(
+				candidate.config.toggles,
+				candidate.config.toggleValues
+			);
 			this.settings = savePromptSettings(upsertPromptPreset(this.settings, candidate));
 			this.setDraft(this.settings.presets.find((preset) => preset.id === candidate.id)!);
 			this.status = '프롬프트 프리셋을 저장했어요.';
@@ -200,8 +205,11 @@ export class PromptSettingsController {
 		this.importError = '';
 		this.readingFile = true;
 		let candidate: PromptPreset | undefined;
+		let migrated = 0;
 		try {
-			candidate = { id: crypto.randomUUID(), ...(await readPromptPresetFile(file)) };
+			const imported = await readPromptPresetFile(file);
+			candidate = { id: crypto.randomUUID(), name: imported.name, config: imported.config };
+			migrated = imported.migrated ?? 0;
 		} catch (cause) {
 			if (!this.disposed && request === this.fileRequest) {
 				this.importError = this.readableError(
@@ -216,7 +224,12 @@ export class PromptSettingsController {
 		}
 		if (candidate && !this.disposed && request === this.fileRequest) {
 			const preset = candidate;
-			this.requestChange(() => this.setDraft(preset, true), this.draftDirty);
+			this.requestChange(() => {
+				this.setDraft(preset, true);
+				if (migrated) {
+					this.status = `CBS 구문 ${migrated}개를 자동 변환했어요. 내용을 확인한 뒤 저장해주세요.`;
+				}
+			}, this.draftDirty);
 		}
 	};
 	attachImportFile = (input: HTMLInputElement) => {

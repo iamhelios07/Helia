@@ -3,27 +3,23 @@
 
 	import Icon from '#lib/components/Icon.svelte';
 	import ItemActions from '#lib/components/ItemActions.svelte';
+	import OverlayScrollArea from '#lib/components/OverlayScrollArea.svelte';
 
 	import type { GameWorkspaceController } from './gameworkspace-controller.svelte.js';
 
 	import GameSettingsPanel from './GameSettingsPanel.svelte';
+	import PromptToggles from './PromptToggles.svelte';
 	import SessionHistoryPanel from './SessionHistoryPanel.svelte';
 	import SessionModelSelect from './SessionModelSelect.svelte';
 	import SessionPersonaSelect from './SessionPersonaSelect.svelte';
 	let { workspace }: { workspace: GameWorkspaceController } = $props();
 	let historyButton: HTMLButtonElement | undefined;
-	let sessionList: HTMLElement | undefined;
+	let sessionList = $state<HTMLDivElement>();
 	let listScroll = 0;
 	function attachHistoryButton(element: HTMLButtonElement) {
 		historyButton = element;
 		return () => {
 			historyButton = undefined;
-		};
-	}
-	function attachSessionList(element: HTMLElement) {
-		sessionList = element;
-		return () => {
-			sessionList = undefined;
 		};
 	}
 	function openHistory() {
@@ -47,101 +43,121 @@
 	hidden={workspace.sidebarCollapsed}
 >
 	<div class="sidebar-standard" hidden={workspace.chat?.showTimeline ?? false}>
-		<div class="panel-tabs" role="tablist" aria-label="사이드바 보기">
-			<button
-				id="sessions-tab"
-				onkeydown={workspace.moveTab}
-				data-tab="sessions"
-				class={{ selected: workspace.selectedTab === 'sessions' }}
-				type="button"
-				role="tab"
-				aria-selected={workspace.selectedTab === 'sessions'}
-				aria-controls="sessions-panel"
-				tabindex={workspace.selectedTab === 'sessions' ? 0 : -1}
-				onclick={() => (workspace.selectedTab = 'sessions')}>세션</button
-			>
-			<button
-				id="game-tab"
-				onkeydown={workspace.moveTab}
-				data-tab="game"
-				class={{ selected: workspace.selectedTab === 'game' }}
-				type="button"
-				role="tab"
-				aria-selected={workspace.selectedTab === 'game'}
-				aria-controls="game-panel"
-				tabindex={workspace.selectedTab === 'game' ? 0 : -1}
-				onclick={() => (workspace.selectedTab = 'game')}>게임</button
-			>
-		</div>
-		<div
-			class="panel-content"
-			id="sessions-panel"
-			role="tabpanel"
-			aria-labelledby="sessions-tab"
-			tabindex="0"
-			hidden={workspace.selectedTab !== 'sessions'}
-		>
-			<button
-				class="new-session"
-				type="button"
-				{@attach attachHistoryButton}
-				disabled={!workspace.chat ||
-					workspace.busy ||
-					workspace.chat.loading ||
-					!!workspace.chat.loadError}
-				aria-controls="sidebar-history"
-				aria-expanded={workspace.chat?.showTimeline ?? false}
-				onclick={openHistory}
-			>
-				<Icon name="branch" size={17} /><span>이력과 분기</span>
-			</button>
-			<button
-				class="new-session"
-				type="button"
-				disabled={workspace.busy}
-				onclick={workspace.addSession}><Icon name="plus" size={17} /><span>새 세션</span></button
-			>
-			<nav {@attach attachSessionList} aria-label="세션 목록" aria-busy={workspace.busy}>
-				{#each workspace.sessions as session (session.id)}
-					<div class={['session-row', { active: session.id === workspace.game?.activeSessionId }]}>
-						<button
-							class="session"
-							type="button"
-							aria-current={session.id === workspace.game?.activeSessionId ? 'true' : undefined}
-							disabled={workspace.busy}
-							aria-label={`${session.title} 열기`}
-							onclick={() => workspace.changeSession(session.id)}
-						>
-							<span class="session-prefix" aria-hidden="true">#</span><strong
-								>{session.title}</strong
-							>
-						</button>
-						<ItemActions
-							name={session.title}
-							disabled={workspace.busy}
-							onrename={() => workspace.startRename(session)}
-							ondelete={() => workspace.requestDelete(session)}
-						/>
-					</div>
-				{/each}
-			</nav>
-		</div>
-		<div
-			class="game-panel"
-			id="game-panel"
-			role="tabpanel"
-			aria-labelledby="game-tab"
-			tabindex="0"
-			hidden={workspace.selectedTab !== 'game'}
-		>
-			{#if workspace.game}<GameSettingsPanel
-					game={workspace.game}
-					onsave={workspace.saveSettings}
-					blocked={workspace.busy}
-				/>{/if}
-		</div>
-		<SessionModelSelect chat={workspace.chat} blocked={workspace.busy} />
-		<SessionPersonaSelect chat={workspace.chat} blocked={workspace.busy} />
+		<OverlayScrollArea label="사이드바 스크롤" edgeOffset={-10}>
+			<div class="sidebar-content">
+				<div class="panel-tabs" role="tablist" aria-label="사이드바 보기">
+					<button
+						id="sessions-tab"
+						onkeydown={workspace.moveTab}
+						data-tab="sessions"
+						class={{ selected: workspace.selectedTab === 'sessions' }}
+						type="button"
+						role="tab"
+						aria-selected={workspace.selectedTab === 'sessions'}
+						aria-controls="sessions-panel"
+						tabindex={workspace.selectedTab === 'sessions' ? 0 : -1}
+						onclick={() => (workspace.selectedTab = 'sessions')}>세션</button
+					>
+					<button
+						id="game-tab"
+						onkeydown={workspace.moveTab}
+						data-tab="game"
+						class={{ selected: workspace.selectedTab === 'game' }}
+						type="button"
+						role="tab"
+						aria-selected={workspace.selectedTab === 'game'}
+						aria-controls="game-panel"
+						tabindex={workspace.selectedTab === 'game' ? 0 : -1}
+						onclick={() => (workspace.selectedTab = 'game')}>게임</button
+					>
+				</div>
+				<div
+					class="panel-content"
+					id="sessions-panel"
+					role="tabpanel"
+					aria-labelledby="sessions-tab"
+					tabindex="0"
+					hidden={workspace.selectedTab !== 'sessions'}
+				>
+					<button
+						class="new-session"
+						type="button"
+						{@attach attachHistoryButton}
+						disabled={!workspace.chat ||
+							workspace.busy ||
+							workspace.chat.loading ||
+							!!workspace.chat.loadError}
+						aria-controls="sidebar-history"
+						aria-expanded={workspace.chat?.showTimeline ?? false}
+						onclick={openHistory}
+					>
+						<Icon name="branch" size={17} /><span>이력과 분기</span>
+					</button>
+					<button
+						class="new-session"
+						type="button"
+						disabled={workspace.busy}
+						onclick={workspace.addSession}
+						><Icon name="plus" size={17} /><span>새 세션</span></button
+					>
+					<OverlayScrollArea label="세션 목록 스크롤" maxHeight="40vh" bind:viewport={sessionList}>
+						<nav aria-label="세션 목록" aria-busy={workspace.busy}>
+							{#each workspace.sessions as session (session.id)}
+								<div
+									class={[
+										'session-row',
+										{ active: session.id === workspace.game?.activeSessionId }
+									]}
+								>
+									<button
+										class="session"
+										type="button"
+										aria-current={session.id === workspace.game?.activeSessionId
+											? 'true'
+											: undefined}
+										disabled={workspace.busy}
+										aria-label={`${session.title} 열기`}
+										onclick={() => workspace.changeSession(session.id)}
+									>
+										<span class="session-prefix" aria-hidden="true">#</span><strong
+											>{session.title}</strong
+										>
+									</button>
+									<ItemActions
+										name={session.title}
+										disabled={workspace.busy}
+										onrename={() => workspace.startRename(session)}
+										ondelete={() => workspace.requestDelete(session)}
+									/>
+								</div>
+							{/each}
+						</nav>
+					</OverlayScrollArea>
+				</div>
+				<div
+					class="game-panel"
+					id="game-panel"
+					role="tabpanel"
+					aria-labelledby="game-tab"
+					tabindex="0"
+					hidden={workspace.selectedTab !== 'game'}
+				>
+					<OverlayScrollArea label="게임 설정 스크롤" maxHeight="45vh">
+						{#if workspace.game}<GameSettingsPanel
+								game={workspace.game}
+								onsave={workspace.saveSettings}
+								blocked={workspace.busy}
+							/>{/if}
+					</OverlayScrollArea>
+				</div>
+				<SessionModelSelect chat={workspace.chat} blocked={workspace.busy} />
+				<SessionPersonaSelect chat={workspace.chat} blocked={workspace.busy} />
+				{#if workspace.chat}<PromptToggles
+						selection={workspace.chat.prompt}
+						blocked={workspace.busy || workspace.chat.locked}
+					/>{/if}
+			</div>
+		</OverlayScrollArea>
 	</div>
 	{#if workspace.chat?.showTimeline}
 		{@const chat = workspace.chat}
@@ -221,10 +237,7 @@
 		display: flex;
 		flex-direction: column;
 		gap: 5px;
-		flex: 1;
 		min-height: 0;
-		overflow-y: auto;
-		scrollbar-width: thin;
 	}
 	.session {
 		min-width: 0;
@@ -261,27 +274,20 @@
 		display: none;
 	}
 	.sidebar-standard,
+	.sidebar-content,
 	.panel-content {
 		display: flex;
 		flex-direction: column;
 		min-height: 0;
 	}
-	.sidebar-standard {
-		overflow-y: auto;
-		scrollbar-width: thin;
-	}
 	.panel-content {
 		flex-shrink: 0;
 	}
-	.panel-content nav {
-		flex: 0 1 auto;
-		max-height: 40vh;
-	}
 	.game-panel {
-		flex: 0 1 auto;
+		/* Long preset toggles overflow the shared scroller instead of collapsing settings. */
+		display: flex;
+		flex: 0 0 auto;
 		min-height: 0;
-		max-height: 45vh;
-		overflow-y: auto;
 	}
 	button {
 		display: inline-flex;

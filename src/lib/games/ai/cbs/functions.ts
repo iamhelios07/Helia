@@ -56,6 +56,15 @@ function arrayElement(args: string[]): string {
 	}
 	return stringify(array(args[0]).at(index));
 }
+function calc(args: string[]): string {
+	if (args.length === 1) {
+		return calculate(args[0]);
+	}
+	if (args[0] !== 'legacy') {
+		throw cbsError('calc의 두 인자 형식은 legacy 계산에만 사용할 수 있어요.');
+	}
+	return calculate(args[1], true);
+}
 const functions: Record<string, Definition> = {
 	equal: { count: 2, run: ([a, b]) => String(Number(a === b)) },
 	notequal: { count: 2, run: ([a, b]) => String(Number(a !== b)) },
@@ -66,7 +75,7 @@ const functions: Record<string, Definition> = {
 	and: { count: [2, 256], run: (args) => String(Number(args.every(truth))) },
 	or: { count: [2, 256], run: (args) => String(Number(args.some(truth))) },
 	not: { count: 1, run: ([a]) => String(Number(!truth(a))) },
-	calc: { count: 1, run: ([a]) => calculate(a) },
+	calc: { count: [1, 2], run: calc },
 	round: { count: 1, run: ([a]) => String(Math.round(numeric(a))) },
 	floor: { count: 1, run: ([a]) => String(Math.floor(numeric(a))) },
 	ceil: { count: 1, run: ([a]) => String(Math.ceil(numeric(a))) },

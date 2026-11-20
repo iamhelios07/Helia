@@ -67,10 +67,7 @@ export class CBSRenderer {
 			return node.value;
 		}
 		if (node.type === 'when') {
-			const args = node.args.map((arg) => this.nodes(arg, slot));
-			const keep = args[0] === 'keep';
-			const value = this.nodes(condition(keep ? args.slice(1) : args) ? node.yes : node.no, slot);
-			return keep ? value : trimBlankLines(value);
+			return this.when(node, slot);
 		}
 		const name = functionName(node.name);
 		if (!this.known(name)) {
@@ -79,10 +76,32 @@ export class CBSRenderer {
 		const args = node.args.map((arg) => this.nodes(arg, slot));
 		return bounded(this.call(name, args, node.source, slot));
 	}
+	private when(node: Extract<CBSNode, { type: 'when' }>, slot?: string): string {
+		const args = node.args.map((arg) => this.nodes(arg, slot));
+		const mode = args[0];
+		const hasMode = mode === 'keep' || mode === 'legacy';
+		const value = this.nodes(
+			condition(hasMode ? args.slice(1) : args, this.toggle) ? node.yes : node.no,
+			slot
+		);
+		if (mode === 'keep') {
+			return value;
+		}
+		if (mode === 'legacy') {
+			return value
+				.split('\n')
+				.map((line) => line.trimStart())
+				.join('\n')
+				.trim();
+		}
+		return trimBlankLines(value);
+	}
 	private known(name: string): boolean {
 		return (
 			[
 				'state',
+				'toggle',
+				'getglobalvar',
 				'game',
 				'user',
 				'persona',
@@ -94,6 +113,9 @@ export class CBSRenderer {
 		);
 	}
 	private call(name: string, args: string[], source: string, slot?: string): string {
+		if (name === 'toggle' || name === 'getglobalvar') {
+			return this.readToggle(name, args);
+		}
 		if (name === 'state') {
 			return stringify(
 				args.reduce<unknown>((value, key) => element(value, key), this.context.state)
@@ -119,6 +141,16 @@ export class CBSRenderer {
 		}
 		return this.reference(name as 'description' | 'authornote');
 	}
+	private readToggle(name: string, args: string[]): string {
+		if (args.length !== 1 || (name === 'getglobalvar' && !args[0].startsWith('toggle_'))) {
+			throw cbsError('프리셋 토글 식별자를 지정해주세요. getglobalvar는 toggle_ 조회만 지원해요.');
+		}
+		return this.toggle(name === 'toggle' ? args[0] : args[0].slice(7));
+	}
+
+	private toggle = (key: string): string => {
+		return Object.hasOwn(this.context.toggles ?? {}, key) ? this.context.toggles![key] : '0';
+	};
 }
 export function renderCBS(source: string, context: CBSContext): string {
 	return new CBSRenderer(context).render(source);

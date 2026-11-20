@@ -1183,7 +1183,7 @@ describe('sidebar navigation', () => {
 			create.element().getBoundingClientRect().top
 		);
 		expect(history.element().querySelector('svg')).not.toBeNull();
-		const list = sidebar.getByRole('navigation', { name: '세션 목록' }).element();
+		const list = sidebar.getByRole('region', { name: '세션 목록 스크롤', exact: true }).element();
 		const model = sidebar.getByRole('combobox', { name: '모델', exact: true });
 		expect(model.element().getBoundingClientRect().top).toBeGreaterThanOrEqual(
 			list.getBoundingClientRect().bottom

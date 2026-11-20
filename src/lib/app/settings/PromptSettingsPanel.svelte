@@ -24,6 +24,8 @@
 		(...args) => requestConfirmation(...args)
 	);
 	const uid = $props.id();
+	const toggleExample =
+		'detail=자세한 묘사\nstyle=문체=select=간결하게,서정적으로\nnote=추가 지시=text';
 	onMount(() => {
 		controller.load();
 		return controller.dispose;
@@ -182,6 +184,27 @@
 							</section>
 						</li>{:else}<li class="help">블록을 추가해 프롬프트를 구성하세요.</li>{/each}
 				</ol>
+				<details class="section-details">
+					<summary>프리셋 토글</summary>
+					<div class="section-content">
+						<label for={`${uid}-toggles`}
+							>토글 정의<textarea
+								id={`${uid}-toggles`}
+								rows="8"
+								spellcheck="false"
+								bind:value={controller.draft.config.toggles}
+								placeholder={toggleExample}></textarea></label
+						>
+						<p class="help">
+							한 줄에 식별자=표시 이름을 입력해요. 유형은 select, text, textarea를 지원해요.
+							group·groupEnd로 묶고 caption·divider로 설명과 구분선을 넣을 수 있어요.
+						</p>
+						<p class="help">
+							저장한 토글은 게임 사이드바에 표시돼요. {`{{#when::toggle::detail}}…{{/when}}`} 또는 {`{{toggle::note}}`}로
+							사용해요. 선택형 값은 첫 항목부터 0, 1, 2 순서예요.
+						</p>
+					</div>
+				</details>
 				<details class="section-details">
 					<summary>생성 옵션</summary>
 					<div class="section-content">

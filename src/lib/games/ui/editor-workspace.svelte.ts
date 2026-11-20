@@ -1,5 +1,3 @@
-import type { PathnameWithSearchOrHash } from '$app/types';
-
 import { beforeNavigate, goto } from '$app/navigation';
 import { resolve } from '$app/paths';
 import { onMount, onDestroy } from 'svelte';
@@ -1088,12 +1086,9 @@ export class EditorWorkspace {
 					if (navigation.willUnload) {
 						window.location.assign(target.href);
 					} else {
-						const root = resolve('/').replace(/\/$/, '');
-						await goto(
-							resolve(
-								`${target.pathname.slice(root.length)}${target.search}${target.hash}` as PathnameWithSearchOrHash
-							)
-						);
+						// NavigationTarget.url already includes SvelteKit's base, query and hash.
+						// eslint-disable-next-line svelte/no-navigation-without-resolve -- This URL is already resolved by SvelteKit.
+						await goto(target);
 					}
 				} catch {
 					this.navigationError = '화면을 열지 못했어요. 초안은 유지됩니다.';

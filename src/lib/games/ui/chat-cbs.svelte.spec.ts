@@ -6,6 +6,9 @@ import { page } from 'vitest/browser';
 import { emptyAISettings } from '#lib/app/settings/model.js';
 import { savePersonaSettings } from '#lib/app/settings/persona-repository.js';
 import { emptyPersonaSettings, upsertPersona } from '#lib/app/settings/personas.js';
+import { savePromptSettings } from '#lib/app/settings/prompt-repository.js';
+import { emptyPromptSettings } from '#lib/app/settings/prompts.js';
+import { parsePromptConfig } from '#lib/games/ai/prompts.js';
 
 import { createRegexRule } from '../regex.js';
 import {
@@ -61,6 +64,21 @@ async function fixture() {
 		});
 	return { game, mount };
 }
+it('refreshes preset toggle conditions in chat without changing messages, state or history', async () => {
+	const settings = emptyPromptSettings();
+	settings.presets[0].config = parsePromptConfig({ toggles: 'detail=Detailed' });
+	savePromptSettings(settings);
+	const { game, mount } = await fixture();
+	const source = '{{#when::toggle::detail}}자세한 설명{{:else}}짧은 설명{{/when}}';
+	await appendUserMessage(game.id, game.activeSessionId, source);
+	const before = await getSessionTimeline(game.id, game.activeSessionId);
+	mount();
+	await expect.element(page.getByText('짧은 설명', { exact: true })).toBeVisible();
+	settings.presets[0].config.toggleValues.detail = '1';
+	savePromptSettings(settings);
+	await expect.element(page.getByText('자세한 설명', { exact: true })).toBeVisible();
+	expect(await getSessionTimeline(game.id, game.activeSessionId)).toEqual(before);
+});
 it('renders user/assistant/opening messages and keeps saved source and composer unchanged', async () => {
 	const { game, mount } = await fixture();
 	await appendUserMessage(game.id, game.activeSessionId, '{{user}}가 해드리죠!');

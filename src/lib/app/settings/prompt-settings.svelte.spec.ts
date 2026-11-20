@@ -53,6 +53,51 @@ async function openPrompts() {
 	return { unmount: () => screen.unmount(), onclose };
 }
 
+it('imports converted CBS into an editable unsaved draft and shows the migration result', async () => {
+	await openPrompts();
+	await uploadPrompt({ name: '구형 프리셋', mainPrompt: '{{#if_pure 1}}\nPrompt\n{{/if_pure}}' });
+	await expect.element(nameInput()).toHaveValue('구형 프리셋');
+	await expect
+		.element(page.getByRole('textbox', { name: '프롬프트', exact: true }))
+		.toHaveValue('{{#when::keep::1}}\nPrompt\n{{/when}}');
+	await expect
+		.element(page.getByText('CBS 구문 1개를 자동 변환했어요. 내용을 확인한 뒤 저장해주세요.'))
+		.toBeVisible();
+	expect(loadPromptSettings().presets).toHaveLength(1);
+	await save().click();
+	expect(
+		loadPromptSettings().presets.find((preset) => preset.name === '구형 프리셋')?.config
+			.promptTemplate[0].text
+	).toContain('#when::keep');
+});
+
+it('keeps the current draft and saved settings after an ambiguous legacy import fails', async () => {
+	await openPrompts();
+	await nameInput().fill('수정 중인 프리셋');
+	await uploadPrompt({ name: '잘못된 프리셋', mainPrompt: '{{#if 1}}a{{:else}}b{{/if}}' });
+	await expect.element(page.getByRole('alert')).toHaveTextContent('1번 프롬프트 · text:');
+	await expect.element(nameInput()).toHaveValue('수정 중인 프리셋');
+	expect(localStorage.getItem(PROMPT_SETTINGS_KEY)).toBeNull();
+	await expect.element(discard()).not.toBeInTheDocument();
+});
+
+it('edits imported toggle definitions and resets selections incompatible with a new control type', async () => {
+	const settings = emptyPromptSettings();
+	settings.presets[0].config = parsePromptConfig({
+		toggles: 'detail=Detail=select=Short,Long,Full',
+		toggleValues: { detail: '2' }
+	});
+	savePromptSettings(settings);
+	await openPrompts();
+	await page.getByText('프리셋 토글', { exact: true }).click();
+	await page
+		.getByRole('textbox', { name: '토글 정의', exact: true })
+		.fill('detail=Detail\nnote=Note=text');
+	await save().click();
+	expect(loadPromptSettings().presets[0].config.toggleValues).toEqual({ detail: '0', note: '' });
+	await expect.element(save()).toBeDisabled();
+});
+
 it('uses translated single-column cards and keeps independently expanded cards clean', async () => {
 	const settings = emptyPromptSettings();
 	settings.presets[0].config = parsePromptConfig({

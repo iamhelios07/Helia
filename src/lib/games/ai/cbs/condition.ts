@@ -6,12 +6,14 @@ const operators: Record<string, { priority: number; name: string }> = {
 	and: { priority: 2, name: 'and' },
 	is: { priority: 3, name: 'equal' },
 	isnot: { priority: 3, name: 'notequal' },
+	tis: { priority: 3, name: 'equal' },
+	tisnot: { priority: 3, name: 'notequal' },
 	'>': { priority: 3, name: 'greater' },
 	'<': { priority: 3, name: 'less' },
 	'>=': { priority: 3, name: 'greaterequal' },
 	'<=': { priority: 3, name: 'lessequal' }
 };
-export function condition(args: string[]): boolean {
+export function condition(args: string[], toggle: (key: string) => string = () => '0'): boolean {
 	let position = 0;
 	function expression(minimum = 0, depth = 0): string {
 		if (depth > 32 || position >= args.length) {
@@ -20,6 +22,11 @@ export function condition(args: string[]): boolean {
 		let left = args[position++];
 		if (left === 'not') {
 			left = runFunction('not', [expression(3, depth + 1)]);
+		} else if (left === 'toggle') {
+			if (position >= args.length) {
+				throw cbsError('토글 식별자가 필요해요.');
+			}
+			left = toggle(args[position++]);
 		}
 		while (position < args.length) {
 			const token = args[position];
@@ -28,6 +35,9 @@ export function condition(args: string[]): boolean {
 				break;
 			}
 			position++;
+			if (token === 'tis' || token === 'tisnot') {
+				left = toggle(left);
+			}
 			left = runFunction(operator.name, [left, expression(operator.priority + 1, depth + 1)]);
 		}
 		return left;

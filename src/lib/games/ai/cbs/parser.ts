@@ -1,37 +1,9 @@
 import { CBS_LIMITS, cbsError, type CBSNode } from './model.js';
+import { advanceLiteral, type LiteralCursor } from './syntax.js';
 
 type Header = { name: string; args: CBSNode[][]; source: string };
 type Sequence = { nodes: CBSNode[]; ending?: 'else' | 'end' };
 type Delimiter = 'nested' | 'argument' | 'end';
-type LiteralCursor = { nesting: number; quoted: boolean; escaped: boolean };
-
-function advanceLiteral(cursor: LiteralCursor, character: string) {
-	if (cursor.quoted) {
-		if (cursor.escaped) {
-			cursor.escaped = false;
-			return;
-		}
-		if (character === '\\') {
-			cursor.escaped = true;
-			return;
-		}
-		if (character === '"') {
-			cursor.quoted = false;
-		}
-		return;
-	}
-	if (cursor.nesting && character === '"') {
-		cursor.quoted = true;
-		return;
-	}
-	if (character === '{' || character === '[') {
-		cursor.nesting++;
-	}
-	if (cursor.nesting && (character === '}' || character === ']')) {
-		cursor.nesting--;
-	}
-}
-
 export function parseCBS(source: string): CBSNode[] {
 	if (source.length > CBS_LIMITS.source) {
 		throw cbsError('입력 크기 한도를 초과했어요.');

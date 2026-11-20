@@ -3,6 +3,7 @@
 
 	import type { CBSContext } from '#lib/games/ai/cbs/index.js';
 
+	import { PromptSelection } from '#lib/app/settings/prompt-selection.svelte.js';
 	import ConfirmDialog from '#lib/components/ConfirmDialog.svelte';
 	import {
 		playgroundFingerprint,
@@ -56,7 +57,9 @@
 		gameId: current?.game.id ?? game.id,
 		sessionId: current?.game.activeSessionId ?? ''
 	}));
+	const prompt = new PromptSelection();
 	const displayContext = $derived<CBSContext>({
+		toggles: prompt.config?.toggleValues,
 		game: current?.game.title ?? game.title,
 		persona: persona.persona,
 		state: timeline?.history.progress.state ?? {},
@@ -64,6 +67,7 @@
 		authornote: timeline?.history.snapshot.settings.authorNote
 	});
 	onMount(persona.mount);
+	onMount(prompt.mount);
 	const display = new RegexDisplay(() => ({
 		messages: timeline?.messages ?? [],
 		rules: current?.game.regex

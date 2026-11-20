@@ -1,6 +1,7 @@
 import type { GameState } from '#lib/games/state/value.js';
 
 export interface CBSContext {
+	toggles?: Readonly<Record<string, string>>;
 	state: GameState;
 	game?: string;
 	persona?: { name: string; description: string };

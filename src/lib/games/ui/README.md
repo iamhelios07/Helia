@@ -6,6 +6,8 @@ Game UI is part of the session's content snapshot, alongside scripts, resources 
 
 The play sidebar keeps its **Sessions / Game** switch. **Game** provides **Open game editor** and quick name/description editing. The separate game editor page returns to the same active play session without creating another session.
 
+The sidebar, session list and game settings use `OverlayScrollArea`: native scrolling with a draggable overlay thumb that does not reserve content width. Long preset toggles remain in the shared outer scroller without collapsing game settings. History return restores the session list's native viewport position. Forced-colors mode retains native scrollbars.
+
 ## Authoring IDE
 
 The explorer has four groups: **Game** (`game.json`, `instructions.json`), **Game Data** (`state.json`, `lorebook.json`), **Assets** (actual media files and folders), and **Code** (actual .ts and .tsx source files). JSON views remain available for the metadata, instructions and data documents. Neither code nor assets expose a JSON container document. Source files open directly in the outer document tabs and occupy the central editor. Monaco provides code and JSON source editing, syntax highlighting, indentation, find/replace, folding and multiple cursors. The `.helia/` group holds read-only generated files: `GameState.d.ts` derives from the state schema and `runtime.d.ts` ships the authoring API declarations; neither is editable or part of the project files. Every project also starts with a `style.css` stylesheet entry, like `main.ts` for code: its rules apply globally to the game UI after the shared base styles, subject to the stylesheet size and load-free rules. Code errors join the bottom Problems panel, and selecting one opens its source location.

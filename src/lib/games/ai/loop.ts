@@ -86,6 +86,7 @@ class AgentWorkspace {
 		const input = transformed.pop()!.content;
 		return {
 			game: this.options.game,
+			toggles: this.ai.toggleValues,
 			persona: this.options.persona,
 			settings: history.snapshot.settings,
 			lorebook: history.snapshot.ai?.lorebook,

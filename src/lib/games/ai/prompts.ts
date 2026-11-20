@@ -6,6 +6,7 @@ import { credentialRecord } from '#lib/app/settings/credential-protocol.js';
 
 import { CBSRenderer } from './cbs/index.js';
 import { CBS_LIMITS, cbsError } from './cbs/model.js';
+import { parsePromptToggles, parseToggleValues } from './prompt-toggles.js';
 import { aiError, type AIMessage } from './protocol.js';
 
 export const PROMPT_TYPES = [
@@ -57,6 +58,8 @@ export interface LoreEntry {
 /** Player-owned configuration; never persisted with game content or history. */
 export interface PromptConfig {
 	version: 2;
+	toggles: string;
+	toggleValues: Record<string, string>;
 	promptTemplate: PromptBlock[];
 	maxTokens: number;
 	maxContextChars: number;
@@ -196,8 +199,11 @@ export function parsePromptConfig(value: unknown): PromptConfig {
 		throw aiError('protocol');
 	}
 	const settings = row.promptSettings === undefined ? {} : credentialRecord(row.promptSettings);
+	const toggles = text(row.toggles);
 	return {
 		version: 2,
+		toggles,
+		toggleValues: parseToggleValues(parsePromptToggles(toggles), row.toggleValues),
 		promptTemplate,
 		maxTokens,
 		maxContextChars,
@@ -298,10 +304,12 @@ export function importPromptPreset(value: unknown): PromptConfig {
 		version: row.version === 2 ? 2 : 1,
 		maxTokens: row.maxTokens ?? row.maxResponse,
 		jailbreakEnabled: row.jailbreakEnabled ?? row.jailbreakToggle,
-		cotEnabled: row.cotEnabled ?? row.chainOfThought
+		cotEnabled: row.cotEnabled ?? row.chainOfThought,
+		toggles: heliaConfig ? row.toggles : row.customPromptTemplateToggle
 	});
 }
 export interface PromptContext {
+	toggles?: Readonly<Record<string, string>>;
 	game?: string;
 	persona?: { name: string; description: string };
 	settings: GameSettings;
@@ -319,7 +327,8 @@ function promptRenderer(context: PromptContext): CBSRenderer {
 		game: context.game,
 		persona: context.persona,
 		description: context.settings.description,
-		authornote: context.settings.authorNote
+		authornote: context.settings.authorNote,
+		toggles: context.toggles
 	});
 }
 export function renderPromptText(source: string, context: PromptContext): string {
@@ -367,7 +376,7 @@ class PromptAssembler {
 		private ai: PromptConfig,
 		private context: PromptContext
 	) {
-		this.cbs = promptRenderer(context);
+		this.cbs = promptRenderer({ ...context, toggles: ai.toggleValues });
 		this.chat = context.messages.map((message) => ({
 			role: message.role,
 			content: message.content

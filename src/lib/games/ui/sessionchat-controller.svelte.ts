@@ -5,6 +5,7 @@ import type { AgentEvent } from '#lib/games/ai/protocol.js';
 import type { SessionTimeline } from '#lib/games/state/history.js';
 
 import { emptyAISettings, type AISettings } from '#lib/app/settings/model.js';
+import { PromptSelection } from '#lib/app/settings/prompt-selection.svelte.js';
 import { loadAISettings } from '#lib/app/settings/repository.js';
 import {
 	isSessionBusy,
@@ -86,6 +87,7 @@ export class SessionChatController {
 	externalBusy = $state(false);
 	streamedText = $state('');
 	readonly monitor = new GenerationMonitor();
+	readonly prompt = new PromptSelection();
 	readonly persona = new SessionPersonaController(() => ({
 		gameId: this.gameId,
 		sessionId: this.sessionId
@@ -137,6 +139,7 @@ export class SessionChatController {
 	refreshTimer: ReturnType<typeof setTimeout> | undefined;
 	theme = $derived(safeChatStyle(this.chatStyle));
 	displayContext = $derived<CBSContext>({
+		toggles: this.prompt.config?.toggleValues,
 		game: this.gameTitle,
 		persona: this.persona.persona,
 		state: this.timeline?.history.progress.state ?? {},
@@ -519,6 +522,7 @@ export class SessionChatController {
 	};
 	mount = () => {
 		const unsubscribePersona = this.persona.mount();
+		const unsubscribePrompt = this.prompt.mount();
 		void this.loadModels();
 		this.externalBusy = isSessionBusy(this.gameId, this.sessionId);
 		const unsubscribeActivity = subscribeSessionActivity(this.gameId, this.sessionId, () => {
@@ -553,6 +557,7 @@ export class SessionChatController {
 			this.generation?.abort();
 			this.monitor.dispose();
 			unsubscribePersona();
+			unsubscribePrompt();
 			unsubscribeActivity();
 			unsubscribeAIEvents();
 			unsubscribe();

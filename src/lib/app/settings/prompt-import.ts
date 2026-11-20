@@ -2,6 +2,8 @@ import { Unpackr } from 'msgpackr/unpack-no-eval';
 
 import { importPromptPreset, parsePromptConfig, type PromptConfig } from '#lib/games/ai/prompts.js';
 
+import { migratePromptCBS } from './prompt-migration.js';
+
 const MAX_BYTES = 4 * 1024 * 1024;
 // Byte substitution table required by the Risu .risup file format.
 // Format reference: https://github.com/kwaroran/RisuAI/tree/main/src/ts/rpack
@@ -81,7 +83,7 @@ async function decodeRisu(bytes: Uint8Array<ArrayBuffer>, packed: boolean): Prom
 /** Decode the file container before passing supported fields through the preset validators. */
 export async function readPromptPresetFile(
 	file: File
-): Promise<{ name: string; config: PromptConfig }> {
+): Promise<{ name: string; config: PromptConfig; migrated?: number }> {
 	if (file.size > MAX_BYTES) {
 		throw new Error('프롬프트 파일은 4MiB 이하여야 해요.');
 	}
@@ -99,15 +101,17 @@ export async function readPromptPresetFile(
 		throw new Error('프롬프트 파일을 읽지 못했어요. 파일 형식을 확인해주세요.');
 	}
 	const row = record(source);
+	let config: PromptConfig;
 	try {
-		return {
-			name: typeof row.name === 'string' ? row.name : '가져온 프롬프트',
-			config:
-				row.config !== undefined ? parsePromptConfig(record(row.config)) : importPromptPreset(row)
-		};
+		config =
+			row.config !== undefined ? parsePromptConfig(record(row.config)) : importPromptPreset(row);
 	} catch {
 		throw new Error('프롬프트 파일의 내용을 확인해주세요.');
 	}
+	return {
+		name: typeof row.name === 'string' ? row.name : '가져온 프롬프트',
+		...migratePromptCBS(config, row.config === undefined && row.version !== 1 && row.version !== 2)
+	};
 }
 
 function compressionFormat(bytes: Uint8Array): CompressionFormat {
