@@ -14,6 +14,11 @@ export const inspectMessageFrame = defineBrowserCommand(async ({ iframe }, toggl
 			isolated = true;
 		}
 		return {
+			images: [...root.querySelectorAll('img')].map((image) => ({
+				src: image.getAttribute('src'),
+				width: image.naturalWidth,
+				hidden: image.hidden
+			})),
 			html: root.innerHTML,
 			text: root.textContent,
 			color: getComputedStyle(root.querySelector('[data-card]') ?? root).color,
@@ -29,6 +34,7 @@ export const inspectMessageFrame = defineBrowserCommand(async ({ iframe }, toggl
 declare module 'vitest/browser' {
 	interface BrowserCommands {
 		inspectMessageFrame: (toggle?: boolean) => Promise<{
+			images: { src: string | null; width: number; hidden: boolean }[];
 			html: string;
 			text: string | null;
 			color: string;

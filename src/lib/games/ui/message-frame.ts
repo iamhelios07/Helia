@@ -1,3 +1,6 @@
+import type { SessionFileAccess } from '../files/client.js';
+
+import { displayableFile, fileRef, FILE_LIMITS } from '../files/model.js';
 import { messageFrameDocument } from './message-frame-document.js';
 
 export interface MessageAppearance {
@@ -7,6 +10,9 @@ export interface MessageAppearance {
 
 /** Presentation-only channel. No state, credentials, Actions or host executor are exposed. */
 export class MessageFrame {
+	private files: SessionFileAccess | undefined;
+	private unsubscribeFiles: (() => void) | undefined;
+	private reading = new Set<number>();
 	private readonly token = crypto.randomUUID();
 	private readonly channel = new MessageChannel();
 	private connected = false;
@@ -47,6 +53,17 @@ export class MessageFrame {
 			return;
 		}
 		const value = event.data;
+		if (
+			value &&
+			typeof value === 'object' &&
+			'kind' in value &&
+			value.kind === 'file' &&
+			'ref' in value &&
+			'id' in value
+		) {
+			void this.readFile(value.ref, value.id);
+			return;
+		}
 		if (!value || typeof value !== 'object' || !('kind' in value) || !('height' in value)) {
 			return;
 		}
@@ -64,14 +81,64 @@ export class MessageFrame {
 			this.onresize(change);
 		}
 	};
+	private async readFile(input: unknown, id: unknown) {
+		if (typeof id !== 'number' || !Number.isSafeInteger(id) || id < 1) {
+			return;
+		}
+		let ref: string;
+		try {
+			ref = fileRef(input);
+		} catch {
+			return;
+		}
+		if (this.reading.has(id)) {
+			return;
+		}
+		if (this.reading.size >= 16) {
+			this.channel.port1.postMessage({ kind: 'file', ref, id, error: true });
+			return;
+		}
+		this.reading.add(id);
+		const files = this.files;
+		try {
+			if (!files) {
+				throw Error('FILE_NOT_FOUND');
+			}
+			const blob = await files.read(ref);
+			if (blob.size > FILE_LIMITS.fileBytes || !displayableFile(blob.type)) {
+				throw Error('FILE_UNSUPPORTED_MEDIA');
+			}
+			if (!this.disposed && files === this.files) {
+				this.channel.port1.postMessage({ kind: 'file', ref, id, blob });
+			}
+		} catch {
+			if (!this.disposed && files === this.files) {
+				this.channel.port1.postMessage({ kind: 'file', ref, id, error: true });
+			}
+		} finally {
+			this.reading.delete(id);
+		}
+	}
 	private fail = () => {
 		this.dispose();
 		this.onfailure();
 	};
 	/** Accepts converted markup; the receiving frame sanitizes it before insertion. */
-	update(html: string, appearance?: MessageAppearance) {
+	update(html: string, appearance?: MessageAppearance, files?: SessionFileAccess) {
 		if (this.disposed) {
 			return;
+		}
+		if (files !== this.files) {
+			this.unsubscribeFiles?.();
+			this.files = files;
+			if (this.connected) {
+				this.channel.port1.postMessage({ kind: 'files-reset' });
+			}
+			this.unsubscribeFiles = files?.subscribe((ref) => {
+				if (this.connected && !this.disposed) {
+					this.channel.port1.postMessage({ kind: 'files-changed', ref });
+				}
+			});
 		}
 		const computed = getComputedStyle(this.frame);
 		this.pending = {
@@ -102,6 +169,7 @@ export class MessageFrame {
 			return;
 		}
 		this.disposed = true;
+		this.unsubscribeFiles?.();
 		clearTimeout(this.timeout);
 		cancelAnimationFrame(this.scheduled);
 		window.removeEventListener('message', this.connect);

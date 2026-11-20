@@ -195,6 +195,7 @@ fn open(path: &Path) -> Result<Connection, String> {
         return Err("지원하지 않는 DB 버전이에요.".into());
     }
     connection.execute_batch("CREATE TABLE IF NOT EXISTS editor_drafts (game_id TEXT PRIMARY KEY REFERENCES games(id) ON DELETE CASCADE, version INTEGER NOT NULL, value TEXT)").map_err(db_error)?;
+    connection.execute_batch(crate::session_files::SCHEMA).map_err(db_error)?;
     Ok(connection)
 }
 fn read_draft(connection: &Connection, game_id: &str) -> Result<Value, String> {
@@ -1031,6 +1032,9 @@ fn read_game(
     })
 }
 pub(crate) fn execute_request(path: &Path, input: Value) -> Result<Value, String> {
+    if input["kind"] == "files" {
+        return crate::session_files::request(&mut open(path)?, &input);
+    }
     let _lease_guard = crate::generation::guard_storage(&input)?;
     let mut input = input;
     if let Some(object) = input.as_object_mut() {
@@ -2174,6 +2178,7 @@ mod tests {
     fn commits_full_session_and_cascades_its_deletion() {
         let fixture = Fixture::new();
         fixture.create();
+        fixture.request(json!({"kind":"files","gameId":"game","sessionId":"session","operation":{"kind":"save","name":"keep.bin","mime":"application/octet-stream","size":1,"data":"AQ=="}})).unwrap();
         let now = "2026-11-02T00:00:00.000Z";
         let snapshot = json!({"schemaVersion":1,"id":"snapshot","gameId":"game","createdAt":now,"settings":game("")["settings"],"schema":{"type":"object","properties":{"gold":{"type":"integer"}},"additionalProperties":false},"initialState":{},"scripts":{}});
         let message = json!({"schemaVersion":1,"id":"message","gameId":"game","sessionId":"session","sequence":1,"role":"assistant","kind":"dialogue","content":"물약 🧪","createdAt":now});
@@ -2197,6 +2202,7 @@ mod tests {
             .unwrap();
         let saved = fixture.read();
         assert_eq!(saved["records"].as_array().unwrap().len(), 7);
+        assert_eq!(fixture.request(json!({"kind":"files","gameId":"game","sessionId":"session","operation":{"kind":"list"}})).unwrap()["files"].as_array().unwrap().len(),1);
         assert_eq!(
             saved["records"]
                 .as_array()
@@ -2222,14 +2228,15 @@ mod tests {
         );
         request["deleteSessions"] = json!(["session"]);
         fixture.request(request).unwrap();
-        assert_eq!(fixture.read()["records"].as_array().unwrap().len(), 2);
+        let remaining=fixture.request(json!({"kind":"read","gameId":"game"})).unwrap();
+        assert_eq!(remaining["records"].as_array().unwrap().len(), 2);
         let connection = open(&fixture.0).unwrap();
         for table in [
             "messages",
             "progress",
-            "snapshots",
             "transactions",
             "memories",
+            "session_files",
         ] {
             let count: i64 = connection
                 .query_row(&format!("SELECT count(*) FROM {table}"), [], |row| {

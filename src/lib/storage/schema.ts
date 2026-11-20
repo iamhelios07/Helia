@@ -1,6 +1,7 @@
 import { sql } from 'drizzle-orm';
 import {
 	check,
+	blob,
 	foreignKey,
 	index,
 	integer,
@@ -35,6 +36,29 @@ export const sessions = sqliteTable(
 		unique().on(t.id, t.gameId),
 		index('sessions_game').on(t.gameId),
 		check('sessions_json', sql`json_valid(${t.value})`)
+	]
+);
+
+/** Runtime files are session-owned and independent of state history and content snapshots. */
+export const sessionFiles = sqliteTable(
+	'session_files',
+	{
+		ref: text('ref').primaryKey(),
+		gameId: text('game_id').notNull(),
+		sessionId: text('session_id').notNull(),
+		name: text('name').notNull(),
+		mime: text('mime').notNull(),
+		size: integer('size').notNull(),
+		createdAt: text('created_at').notNull(),
+		data: blob('data', { mode: 'buffer' }).notNull()
+	},
+	(table) => [
+		foreignKey({
+			columns: [table.sessionId, table.gameId],
+			foreignColumns: [sessions.id, sessions.gameId]
+		}).onDelete('cascade'),
+		index('session_files_owner').on(table.gameId, table.sessionId, table.ref),
+		check('session_files_size', sql`${table.size} >= 0`)
 	]
 );
 

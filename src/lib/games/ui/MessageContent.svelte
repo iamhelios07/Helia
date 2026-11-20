@@ -1,4 +1,6 @@
 <script lang="ts">
+	import type { SessionFileAccess } from '#lib/games/files/client.js';
+
 	import { renderCBS, type CBSContext } from '#lib/games/ai/cbs/index.js';
 
 	import { MessageFrame, type MessageAppearance } from './message-frame.js';
@@ -9,13 +11,15 @@
 		html = true,
 		appearance,
 		onresize,
-		context
+		context,
+		files
 	}: {
 		content: string;
 		html?: boolean;
 		appearance?: MessageAppearance;
 		onresize?: (heightChange: number) => void;
 		context?: CBSContext;
+		files?: SessionFileAccess;
 	} = $props();
 	let failed = $state(false);
 	const display = $derived.by(() => {
@@ -40,7 +44,7 @@
 			(change) => onresize?.(change)
 		);
 		$effect(() => {
-			frame.update(rendered?.html ?? '', appearance);
+			frame.update(rendered?.html ?? '', appearance, files);
 		});
 		return frame.dispose;
 	}

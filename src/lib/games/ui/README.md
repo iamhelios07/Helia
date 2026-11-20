@@ -177,6 +177,8 @@ The same interface is available as global `helia` and as named exports from `@he
 
 Manual subscriptions belong in a Preact effect returning their unsubscribe function, or in entry cleanup. Hook subscriptions clean up automatically. UI requests reject on invalid input, conflicts, a busy host or cancellation; callers should handle rejection. Await a successful request before starting another. No keys, providers, model client or general host executor are exposed.
 
+`storage` and `useAssetURL` expose [session file storage](../../../../docs/scripting.md#session-file-storage). File operations use a bounded Blob channel independent of JSON state traffic. The hook creates frame-local media URLs and releases them on changes or unmount; deletion notifications invalidate live media in the current host and other tabs. In-memory preview stores are isolated from normal play. Chat resolves `helia-file:...` references only in media elements and displays a placeholder when a file is unavailable. Each message resolves at most 16 distinct files and holds at most 32 MiB of decoded file data. Message HTML cannot invoke storage writes.
+
 ## Layout and UI State
 
 - Existing creator `layout`, `chatDock` and `chatRatio` defaults are converted into a unified tree. They specify initial placement without restricting later docking across chat. A split is horizontal or vertical; its ratio is between 0.1 and 0.9. Panel IDs are unique.

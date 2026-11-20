@@ -11,6 +11,7 @@ import type { GameUIRuntime } from './ui/runtime/bridge.js';
 
 import { invokeSessionAI } from './ai/browser.js';
 import { editorContent } from './editor.js';
+import { memorySessionFiles } from './files/memory.js';
 import { parseGame, type Game } from './model.js';
 import { createGameRepository } from './repository-core.js';
 import { runCreatorAction } from './scripting/browser.js';
@@ -247,6 +248,7 @@ class PlaygroundSession {
 		}
 	};
 	private readonly runtime: GameUIRuntime;
+	private readonly files = memorySessionFiles();
 	constructor(
 		source: Game,
 		private readonly options: PlaygroundOptions
@@ -264,6 +266,7 @@ class PlaygroundSession {
 			}
 		});
 		this.runtime = {
+			files: this.files,
 			...this.repository,
 			invokeSessionAI: (_gameId, _sessionId, input, aiOptions) =>
 				this.ai(input.text, input, aiOptions)
@@ -292,6 +295,7 @@ class PlaygroundSession {
 		const readBusy = () => this.aiBusy;
 		return {
 			game: this.game,
+			files: this.files,
 			fingerprint: this.fingerprint,
 			runtime: this.runtime,
 			get timeline() {

@@ -75,6 +75,14 @@ Database transactions do not stay open across UI, AI or script work. Creator cod
 
 ## Current runtime behavior
 
+### Session files
+
+The [scripting storage API](../../../docs/scripting.md#session-file-storage) stores immutable runtime files in `session_files`, with metadata and a binary SQLite BLOB per file. Both hosts initialize the same [table definition](./session-files.sql) alongside the existing schema, including existing development databases. A composite session/game foreign key enforces ownership and cascades session or game deletion. The table is separate from normal working-set reads, content snapshots, history validation and pruning; file operations do not change game storage versions or progress revisions.
+
+There is no automatic cleanup, expiry or reference scan that deletes files. Explicit removal succeeds even when history still references the file. Trash preserves files; permanent session/game deletion removes them. Failed writes and quota exhaustion preserve all existing files. Web uploads use bounded binary request bodies; native requests pass bounded base64 through the existing private main-frame storage command. The opaque UI bridge transfers Blobs separately from JSON state messages. Creator code receives no host path, SQL connection or native token.
+
+Editor previews use separate in-memory file stores and never write runtime files to normal sessions.
+
 The [runtime model](../games/state/model.ts) and [state engine](../games/state/engine.ts) define serializable records and pure state/branch operations. Use the [game repository](../games/repository.ts) for application writes. A game owns creator content; a session is an independent playthrough. Actions carry a creator-defined name and JSON arguments, independent of whether UI, AI or scripts initiate them.
 
 The first session access resolves the game's content into a `GameSnapshot` identified by a content fingerprint: sessions playing identical authored content share one snapshot row instead of copying it. Resource bytes live in a game-owned blob store keyed by their own fingerprint; snapshots reference them through `snapshot_resources` rows that carry the creator-facing path. `checkpoints` rows hold per-event migrated states beside the snapshot instead of embedding them. This is different from the periodic game-state checkpoints proposed in the product specification.

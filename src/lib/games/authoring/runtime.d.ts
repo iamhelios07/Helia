@@ -47,7 +47,32 @@ interface RuleDefinition {
 	mode?: 'included' | 'independent';
 	run(context: ReadContext): unknown;
 }
+interface StoredFile {
+	ref: string;
+	name: string;
+	mime: string;
+	size: number;
+	createdAt: string;
+}
+interface SessionFileStorage {
+	save(blob: Blob, options?: { name?: string }): Promise<StoredFile>;
+	read(ref: string): Promise<Blob>;
+	stat(ref: string): Promise<StoredFile>;
+	list(options?: {
+		cursor?: string;
+		limit?: number;
+	}): Promise<{ files: StoredFile[]; nextCursor: string | null }>;
+	remove(ref: string): Promise<void>;
+}
 interface HeliaRuntime {
+	/** Session file access is available only in the UI runtime. */
+	readonly storage: SessionFileStorage;
+	useAssetURL(ref: string | null | undefined): {
+		url: string | null;
+		loading: boolean;
+		error: Error | null;
+	};
+
 	defineAction<TArgs extends object = Record<string, JsonValue>>(
 		definition: ActionDefinition<TArgs>
 	): void;
@@ -84,6 +109,8 @@ declare module '@helia/state' {
 	export type GameState = import('./GameState').GameState;
 }
 declare module '@helia/ui' {
+	export const storage: SessionFileStorage;
+	export const useAssetURL: HeliaRuntime['useAssetURL'];
 	export type ChatMessage = ChatMessageInput;
 	export const helia: HeliaRuntime;
 	export function useGameState(): ReadonlyState<GameState>;

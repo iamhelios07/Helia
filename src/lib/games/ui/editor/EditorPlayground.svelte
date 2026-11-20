@@ -220,11 +220,15 @@
 		<div class="messages" aria-label="테스트 대화">
 			{#each display.messages as message (message.id)}<article>
 					<small>{message.role === 'user' ? '플레이어' : '게임'}</small>
-					<MessageContent content={message.content} context={displayContext} />
+					<MessageContent
+						content={message.content}
+						context={displayContext}
+						files={current.files}
+					/>
 				</article>{/each}
 			{#if streaming}<article aria-live="polite">
 					<small>게임</small>
-					<MessageContent content={streaming} context={displayContext} />
+					<MessageContent content={streaming} context={displayContext} files={current.files} />
 				</article>{/if}
 		</div>
 		<form onsubmit={runAI}>

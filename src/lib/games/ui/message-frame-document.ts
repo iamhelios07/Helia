@@ -1,5 +1,7 @@
 import purifierSource from 'dompurify/dist/purify.min.js?raw';
 
+import { MESSAGE_FILES_BOOTSTRAP } from './message-files-bootstrap.js';
+
 const styles = `
 html,body{margin:0;padding:0;min-width:0;background:transparent;color:inherit}
 *{box-sizing:border-box}body{font:14px/1.85 sans-serif;overflow-wrap:anywhere}
@@ -20,6 +22,7 @@ p:first-child{margin-top:0}p:last-child{margin-bottom:0}summary{cursor:pointer}
 const bootstrap = String.raw`
 const content=document.getElementById('helia-message-root');
 let port,frame=0,observer,mutations;
+${MESSAGE_FILES_BOOTSTRAP}
 function measure(){
  frame=0;
  port?.postMessage({kind:'height',height:Math.ceil(Math.max(content.scrollHeight,content.getBoundingClientRect().height,20))});
@@ -28,8 +31,10 @@ function resized(){if(!frame)frame=requestAnimationFrame(measure);}
 function receive(event){
  const value=event.data;
  if(value?.kind==='dispose'){
+  for(const ref of [...fileMedia.keys()])forgetFile(ref);
   observer.disconnect();mutations.disconnect();cancelAnimationFrame(frame);port.close();return;
  }
+ if(receiveFile(value))return;
  if(value?.kind!=='content'||typeof value.html!=='string')return;
  // The document root controls the canvas. Setting only body leaves a light canvas
  // in a dark host, so Chromium paints transparent message backgrounds white.
@@ -42,6 +47,7 @@ function receive(event){
   FORBID_TAGS:['script','iframe','object','embed','base','meta','link','form'],
   FORBID_ATTR:['nonce','srcdoc','href','action','formaction','autofocus','popover','popovertarget']
  });
+ syncFiles();
  resized();
 }
 function initialize(event){
@@ -60,6 +66,6 @@ parent.postMessage({kind:'helia-message-ready',token},'*');
 export function messageFrameDocument(token: string): string {
 	const nonce = token.replace(/-/g, '');
 	const code = `${purifierSource}\n;(()=>{const token=${JSON.stringify(token)};${bootstrap}})();`;
-	const policy = `default-src 'none'; script-src 'nonce-${nonce}'; style-src 'unsafe-inline'; img-src data:; form-action 'none'; base-uri 'none'; frame-src 'none'`;
+	const policy = `default-src 'none'; script-src 'nonce-${nonce}'; style-src 'unsafe-inline'; img-src data: blob:; media-src data: blob:; form-action 'none'; base-uri 'none'; frame-src 'none'`;
 	return `<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${policy}"><meta name="referrer" content="no-referrer"><style>${styles}</style></head><body><div id="helia-message-root"></div><script nonce="${nonce}">${code.replace(/<\/script/gi, '<\\/script')}</script></body></html>`;
 }

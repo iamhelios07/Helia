@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { CBSContext } from '#lib/games/ai/cbs/index.js';
+	import type { SessionFileAccess } from '#lib/games/files/client.js';
 
 	import Icon from '#lib/components/Icon.svelte';
 
@@ -18,7 +19,8 @@
 		onstop,
 		onretry,
 		appearance,
-		context
+		context,
+		files
 	}: {
 		monitor: GenerationMonitor;
 		status: string;
@@ -30,6 +32,7 @@
 		onretry?: () => void;
 		appearance?: MessageAppearance;
 		context?: CBSContext;
+		files?: SessionFileAccess;
 	} = $props();
 	const uid = $props.id();
 	const toolLabels = { running: '실행 중', completed: '완료', failed: '실패' };
@@ -95,7 +98,7 @@
 		{#if progressText}<details>
 				<summary>중간 응답</summary>
 				<div class="text" aria-label="중간 응답 내용">
-					<MessageContent content={progressText} {appearance} {context} />
+					<MessageContent content={progressText} {appearance} {context} {files} />
 				</div>
 			</details>{/if}
 		{#if tools.length}<details>

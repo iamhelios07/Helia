@@ -16,6 +16,7 @@ import {
 	type Table
 } from '#lib/storage/protocol.js';
 import { pruneRecords } from '#lib/storage/prune.js';
+import fileSchema from '#lib/storage/session-files.sql?raw';
 import { validateStoredHistory } from '#lib/storage/validate-history.js';
 
 type PruneRequest = Extract<StorageRequest, { kind: 'prune' }>;
@@ -77,6 +78,7 @@ class Storage {
 			throw new Error('지원하지 않는 DB 버전이에요.');
 		}
 		this.db = drizzle(this.connection);
+		this.connection.exec(fileSchema);
 	}
 	private readRows(table: Table, gameId?: string, sessionId?: string): StoredRecord[] {
 		const filter = readFilter(table, gameId, sessionId);

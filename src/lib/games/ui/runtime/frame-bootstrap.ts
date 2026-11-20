@@ -1,8 +1,11 @@
 /** Trusted Preact shell, emitted inside an opaque-origin iframe alongside the packaged modules. */
+import { FILE_BOOTSTRAP } from './files-bootstrap.js';
+
 export const FRAME_BOOTSTRAP = String.raw`
 let port, preact, api, latest, uiValues, initialized=false, booting=true, nextRequest=0;
 let views=[];
 const cache=new Map(), panels=new Map(), stateListeners=new Set(), uiListeners=new Set(), eventListeners=new Map(), pending=new Map(), disposers=new Set();
+${FILE_BOOTSTRAP}
 const send=(message)=>port.postMessage(JSON.stringify(message));
 const freeze=value=>{if(value&&typeof value==='object'){Object.values(value).forEach(freeze);Object.freeze(value);}return value;};
 const copy=value=>JSON.parse(JSON.stringify(value));
@@ -29,7 +32,11 @@ function publishPanels(){if(!booting)send({kind:'panels',panels:[...panels.value
 function redraw(){if(!booting)preact.render(preact.h('div',{},views.filter(view=>panels.has(view.id)).map(view=>preact.h(Panel,{key:view.id,...view}))),document.getElementById('workbench'));}
 let hooks,Boundary;
 function receive(message){
-  if(message.kind==='views'){views=message.views;redraw();
+  if(message.kind==='files-changed'){for(const listener of [...fileListeners])listener(message.ref);
+  }else if(message.kind==='file-response'){
+    const job=pending.get(message.id);if(!job)return;pending.delete(message.id);clearTimeout(job.timer);
+    if(message.ok)job.resolve(message.result);else job.reject(Error(message.error));
+  }else if(message.kind==='views'){views=message.views;redraw();
   }else if(message.kind==='state'){
     latest=freeze(message.state);
     for(const listener of [...stateListeners]){try{listener(latest);}catch{}}
@@ -79,6 +86,7 @@ function start(initial){
   const Stats=({items=[],label='스탯'})=>h('dl',{'aria-label':label},items.map(item=>h(preact.Fragment,{},h('dt',{},item.label),h('dd',{},String(item.value)))));
   const QuestList=({items=[],renderItem=item=>String(item),label='퀘스트'})=>h(Inventory,{items,renderItem,label});
   api={asset:id=>{if(typeof id!=='string'||!Object.hasOwn(resources,id))throw Error('리소스를 찾을 수 없어요.');return resources[id];},registerPanel,subscribeState,useGameState,useUIState,useUIEvent,onEvent,onDispose:fn=>{disposers.add(fn);return ()=>disposers.delete(fn);},getState:()=>latest,action:(action,args={})=>request('action',{action:{name:action,args}}),transaction:(action,state)=>request('transaction',{action,state}),ai:(text,options={})=>request('ai',{text,visible:options.visible===true}),appendMessage:message=>request('message',{message}),Button,Text,Progress,Inventory,Stats,QuestList};
+  api.storage=storage;api.useAssetURL=useAssetURL;
   api.helia=api;Object.freeze(api);Object.defineProperty(globalThis,'helia',{value:api,writable:false,configurable:false});
   try{const module=load(entry);if(typeof module.default==='function'){const dispose=module.default(api);if(dispose!==undefined&&typeof dispose!=='function'){if(dispose&&typeof dispose.then==='function')Promise.resolve(dispose).catch(()=>{});throw Error('Entry must initialize synchronously');}if(typeof dispose==='function')disposers.add(dispose);}booting=false;publishPanels();redraw();send({kind:'ready'});}
   catch{send({kind:'error',message:'게임 UI를 시작하지 못했어요.'});}
@@ -86,7 +94,7 @@ function start(initial){
 window.addEventListener('message',function initialize(event){
   if(initialized||event.source!==parent||event.data?.token!==token||event.ports.length!==1)return;
   initialized=true;window.removeEventListener('message',initialize);port=event.ports[0];
-  port.onmessage=event=>{try{const message=JSON.parse(event.data);if(!latest&&message.kind==='init')start(message);else receive(message);}catch{send({kind:'error',message:'게임 UI 메시지를 처리하지 못했어요.'});}};
+  port.onmessage=event=>{try{const message=typeof event.data==='string'?JSON.parse(event.data):event.data;if(!latest&&message.kind==='init')start(message);else receive(message);}catch{send({kind:'error',message:'게임 UI 메시지를 처리하지 못했어요.'});}};
   port.start();
 });
 parent.postMessage({heliaUI:token},'*');

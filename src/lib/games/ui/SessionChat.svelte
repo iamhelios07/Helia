@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 
 	import Icon from '#lib/components/Icon.svelte';
+	import { sessionFiles } from '#lib/games/files/client.js';
 
 	import type { Session } from '../model.js';
 	import type { RegexRule } from '../regex.js';
@@ -48,6 +49,7 @@
 		}
 	}));
 	const display = new RegexDisplay(() => ({ messages: chat.messages, rules: regex }));
+	const files = $derived(sessionFiles({ gameId, sessionId }));
 	onMount(() => {
 		const dispose = chat.mount();
 		const detach = oncontroller?.(chat);
@@ -101,6 +103,7 @@
 							</h3>
 							<div class="message-content">
 								<MessageContent
+									{files}
 									content={message.content}
 									context={chat.displayContext}
 									appearance={chat.theme}
@@ -116,6 +119,7 @@
 	<div class="chat-controls">
 		{#if chat.attemptStatus !== 'idle'}
 			<GenerationStatus
+				{files}
 				context={chat.displayContext}
 				monitor={chat.monitor}
 				status={chat.attemptStatus}

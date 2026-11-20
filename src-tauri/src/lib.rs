@@ -40,6 +40,8 @@ mod state_schema;
 #[cfg(any(feature = "desktop", test))]
 mod storage;
 #[cfg(any(feature = "desktop", test))]
+mod session_files;
+#[cfg(any(feature = "desktop", test))]
 mod vertex;
 
 #[cfg(feature = "desktop")]

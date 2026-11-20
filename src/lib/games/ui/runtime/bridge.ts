@@ -1,4 +1,6 @@
 import { invokeSessionAI } from '#lib/games/ai/browser.js';
+import { sessionFiles, type SessionFileAccess } from '#lib/games/files/client.js';
+import { memorySessionFiles } from '#lib/games/files/memory.js';
 import { parseMessageInput } from '#lib/games/model.js';
 import {
 	getSessionHistory,
@@ -12,12 +14,14 @@ import { parseAction, type SessionHistory } from '#lib/games/state/model.js';
 import { parseGameState, type GameState } from '#lib/games/state/value.js';
 
 import { compileGameUI } from './compiler.js';
+import { FileBridge } from './files-bridge.js';
 import { UI_LIMITS, type GameUI, type PanelInfo, type PanelView } from './model.js';
 
 // UI State lasts only for this application execution, scoped to a game and session.
 const transient = new Map<string, GameState>();
 export type GameUIHandle = (() => void) & { setViews(views: PanelView[]): void };
 export interface GameUIRuntime {
+	files?: SessionFileAccess;
 	getSessionHistory: typeof getSessionHistory;
 	executeSessionAction: typeof executeSessionAction;
 	commitSessionTransaction: typeof commitSessionTransaction;
@@ -54,6 +58,7 @@ export interface MountOptions {
 }
 
 interface BridgeContext {
+	files: SessionFileAccess;
 	frame: HTMLIFrameElement;
 	gameId: string;
 	sessionId: string;
@@ -72,7 +77,9 @@ export async function mountGameUI(
 	const history = await runtime.getSessionHistory(gameId, sessionId);
 	const ui = history.snapshot.ui;
 	options.onui?.(ui);
-	const context = { frame, gameId, sessionId, options, runtime };
+	const files =
+		runtime.files ?? (options.runtime ? memorySessionFiles() : sessionFiles({ gameId, sessionId }));
+	const context = { frame, gameId, sessionId, options, runtime, files };
 	if (!ui) {
 		return watchContent(context, history);
 	}
@@ -113,6 +120,7 @@ function watchContent(context: BridgeContext, history: SessionHistory): GameUIHa
 }
 
 class GameUIBridge {
+	private readonly files: FileBridge;
 	private readonly channel = new MessageChannel();
 	private readonly abort = new AbortController();
 	private disposed = false;
@@ -133,6 +141,11 @@ class GameUIBridge {
 		private readonly token: string
 	) {
 		this.stateKey = JSON.stringify([context.gameId, context.sessionId]);
+		this.files = new FileBridge(context.files, (message) => {
+			if (this.connected && !this.disposed) {
+				this.channel.port1.postMessage(message);
+			}
+		});
 	}
 	private get options() {
 		return this.context.options;
@@ -296,6 +309,10 @@ class GameUIBridge {
 		});
 	}
 	private async receive(event: MessageEvent<unknown>) {
+		if (!this.disposed && typeof event.data === 'object' && event.data !== null) {
+			await this.files.receive(event.data);
+			return;
+		}
 		let id: string | undefined;
 		try {
 			if (
@@ -362,6 +379,7 @@ class GameUIBridge {
 		}
 		this.send({ kind: 'dispose' });
 		this.disposed = true;
+		this.files.dispose();
 		this.abort.abort();
 		clearTimeout(this.timeout);
 		this.unsubscribeChanges();

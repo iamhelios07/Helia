@@ -7,6 +7,7 @@
 
 	import ConfirmDialog from '#lib/components/ConfirmDialog.svelte';
 	import ItemActionButton from '#lib/components/ItemActionButton.svelte';
+	import { sessionFiles } from '#lib/games/files/client.js';
 
 	import type { MessageAppearance } from './message-frame.js';
 
@@ -37,6 +38,14 @@
 	let previewId = $derived(timeline?.history.progress.headId ?? null);
 	let preview = $derived(timeline?.events.find((event) => event.id === previewId));
 	let previewMessages = $derived(preview?.messages ?? (preview?.message ? [preview.message] : []));
+	const files = $derived(
+		timeline
+			? sessionFiles({
+					gameId: timeline.history.snapshot.gameId,
+					sessionId: timeline.history.progress.sessionId
+				})
+			: undefined
+	);
 	function requestDelete(event: HistoryEvent) {
 		if (!timeline) {
 			return;
@@ -163,7 +172,7 @@
 					<time datetime={preview.createdAt}>{new Date(preview.createdAt).toLocaleString()}</time>
 					{#each previewMessages as message (message.id)}
 						<div class="dialogue">
-							<MessageContent content={message.content} {appearance} {context} />
+							<MessageContent content={message.content} {appearance} {context} {files} />
 						</div>
 					{/each}
 					{#if preview.changes.length}<dl>
