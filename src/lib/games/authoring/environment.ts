@@ -78,33 +78,46 @@ function bindingNames(compiler: typeof ts, name: ts.BindingName): string[] {
 	);
 }
 
-function bindsHelia(compiler: typeof ts, file: ts.SourceFile) {
+function bindsName(compiler: typeof ts, file: ts.SourceFile, name: string) {
 	return file.statements.some((statement) => {
 		if (compiler.isImportDeclaration(statement)) {
 			const clause = statement.importClause;
 			const bindings = clause?.namedBindings;
-			if (clause?.name?.text === 'helia') {
+			if (clause?.name?.text === name) {
 				return true;
 			}
 			if (bindings && compiler.isNamespaceImport(bindings)) {
-				return bindings.name.text === 'helia';
+				return bindings.name.text === name;
 			}
 			return (
 				bindings &&
 				compiler.isNamedImports(bindings) &&
-				bindings.elements.some((item) => item.name.text === 'helia')
+				bindings.elements.some((item) => item.name.text === name)
 			);
 		}
 		if (compiler.isVariableStatement(statement)) {
 			return statement.declarationList.declarations.some((item) =>
-				bindingNames(compiler, item.name).includes('helia')
+				bindingNames(compiler, item.name).includes(name)
 			);
 		}
 		return (
 			(compiler.isFunctionDeclaration(statement) || compiler.isClassDeclaration(statement)) &&
-			statement.name?.text === 'helia'
+			statement.name?.text === name
 		);
 	});
+}
+
+function uiBindings(compiler: typeof ts, file: ts.SourceFile, shared: boolean): string {
+	let binding = '';
+	if (!bindsName(compiler, file, 'helia')) {
+		binding = shared
+			? 'declare const helia: HeliaRuntime | HeliaUIRuntime;'
+			: "import { helia } from '@helia/ui';";
+	}
+	if (!bindsName(compiler, file, 'fetch')) {
+		binding += 'declare const fetch: never;';
+	}
+	return binding ? '\n;export {}; ' + binding + '\n' : '';
 }
 
 /** Append type-only bindings in worker snapshots; authored text and source positions stay intact. */
@@ -141,19 +154,14 @@ export function authoringBindings(
 	}
 	const bindings = new Map<string, string>();
 	for (const [path, module] of modules) {
-		if (bindsHelia(compiler, module.file)) {
-			continue;
-		}
 		const found = domains.get(path);
 		if (!found?.has('ui')) {
 			continue;
 		}
-		bindings.set(
-			path,
-			found.size === 1
-				? "\n;import { helia } from '@helia/ui';\n"
-				: '\n;export {}; declare const helia: HeliaRuntime | HeliaUIRuntime;\n'
-		);
+		const binding = uiBindings(compiler, module.file, found.size > 1);
+		if (binding) {
+			bindings.set(path, binding);
+		}
 	}
 	return bindings;
 }

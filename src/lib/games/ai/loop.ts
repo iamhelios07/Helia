@@ -196,7 +196,7 @@ class AgentWorkspace {
 						? { operation: { kind: 'query' as const, name: call.name, args } }
 						: {})
 				},
-				{ signal }
+				{ signal, onActivity: () => emit({ type: 'activity' }) }
 			);
 			this.check();
 			if (tool.kind === 'action') {

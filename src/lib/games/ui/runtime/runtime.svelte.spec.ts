@@ -102,6 +102,22 @@ async function mount(gameId: string, sessionId: string, options: MountOptions = 
 	return { iframe, dispose };
 }
 
+it('exposes network IO only to logic Actions, not the UI API or global fetch', async () => {
+	const game = await setup(`
+import * as ui from '@helia/ui';
+export default function(){setTimeout(async()=>{
+ await helia.action('check',{label:[typeof helia.fetch,typeof ui.fetch,typeof globalThis.fetch,typeof fetch].join(':')});
+},50);}
+`);
+	await mount(game.id, game.activeSessionId);
+	await expect
+		.poll(
+			async () => (await getSessionHistory(game.id, game.activeSessionId)).progress.state.checks,
+			{ timeout: 15000 }
+		)
+		.toEqual(['undefined:undefined:undefined:undefined']);
+}, 25000);
+
 it('invokes AI only through the explicit custom UI API and resumes UI actions afterward', async () => {
 	const game = await setup(`
 import { action, registerPanel } from '@helia/ui';

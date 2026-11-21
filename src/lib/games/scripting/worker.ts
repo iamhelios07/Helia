@@ -1,15 +1,20 @@
+import { createFetchClient } from '#lib/games/network/fetch-client.js';
+
 import { evaluateAction } from './engine.js';
 import { boundedText, CreatorRuntimeError, parseInput, type WorkerReply } from './protocol.js';
 
 // One request per disposable worker. Neither this scope nor its APIs are exposed to QuickJS.
 globalThis.onmessage = async (event: MessageEvent<unknown>) => {
 	let reply: WorkerReply;
+	const network = createFetchClient((message, ports) =>
+		globalThis.postMessage(message, { transfer: ports })
+	);
 	try {
 		if (typeof event.data !== 'string') {
 			throw new CreatorRuntimeError('input');
 		}
 		const request = parseInput(JSON.parse(boundedText(event.data)));
-		reply = { ok: true, result: await evaluateAction(request) };
+		reply = { ok: true, result: await evaluateAction(request, { fetch: network.fetch }) };
 	} catch (error) {
 		reply =
 			error instanceof CreatorRuntimeError
@@ -21,6 +26,8 @@ globalThis.onmessage = async (event: MessageEvent<unknown>) => {
 						reason: error.reason
 					}
 				: { ok: false, code: 'execution', scriptId: null };
+	} finally {
+		network.dispose();
 	}
 	try {
 		globalThis.postMessage(boundedText(JSON.stringify(reply)));

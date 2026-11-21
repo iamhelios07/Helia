@@ -108,7 +108,7 @@ interface OperationDefinition {
 }
 interface ActionDefinition<TArgs extends object> extends OperationDefinition {
 	arguments?: never;
-	run(context: ActionContext<TArgs>): GameState;
+	run(context: ActionContext<TArgs>): GameState | Promise<GameState>;
 }
 interface QueryDefinition<TArgs extends object> extends OperationDefinition {
 	arguments?: never;
@@ -116,7 +116,7 @@ interface QueryDefinition<TArgs extends object> extends OperationDefinition {
 }
 interface SchemaActionDefinition extends OperationDefinition {
 	arguments: ArgumentSchema;
-	run(context: ActionContext<JsonObject>): GameState;
+	run(context: ActionContext<JsonObject>): GameState | Promise<GameState>;
 }
 interface SchemaQueryDefinition extends OperationDefinition {
 	arguments: ArgumentSchema;
@@ -153,8 +153,10 @@ interface HookDefinition extends RuleDefinition {
 	run(context: RuleContext): readonly GameAction[] | void;
 }
 
-/** Synchronous QuickJS API. State is supplied through each operation's context. */
+/** QuickJS logic API. Only Actions may await Web IO; state comes from each operation's context. */
 interface HeliaRuntime {
+	/** Permission-gated HTTP(S), available during Action execution. */
+	fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response>;
 	defineAction<TArgs extends object = JsonObject>(definition: ActionDefinition<TArgs>): void;
 	defineAction(definition: SchemaActionDefinition): void;
 	defineQuery<TArgs extends object = JsonObject>(definition: QueryDefinition<TArgs>): void;

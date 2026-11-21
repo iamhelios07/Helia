@@ -12,6 +12,7 @@ import {
 } from '#lib/games/repository.js';
 import { runCreatorAction } from '#lib/games/scripting/browser.js';
 
+import { generationActions, withGenerationActivity } from './action-activity.js';
 import { beginSessionActivity, publishSessionAIEvent } from './activity.js';
 import { runAgentWorkspace } from './loop.js';
 import { parsePromptConfig } from './prompts.js';
@@ -66,7 +67,7 @@ export async function invokeSessionAI(
 			const result = await runAgentWorkspace(timeline, text, {
 				connection: { provider: providerAddress(provider), model: model.modelId },
 				generate: scope.generate,
-				run: runtime.runAction,
+				run: generationActions(runtime.runAction, scope.touch),
 				signal: signal,
 				emit: emit,
 				config: prompt,
@@ -99,7 +100,8 @@ export async function invokeSessionAI(
 				hooks: result.hooks,
 				signal,
 				emit,
-				lease: scope.lease
+				lease: scope.lease,
+				touch: scope.touch
 			});
 			return await runtime.getSessionTimeline(gameId, sessionId).catch(() => committed);
 		} finally {
@@ -145,7 +147,8 @@ async function runFollowUpHooks({
 	hooks,
 	signal,
 	emit,
-	lease
+	lease,
+	touch
 }: {
 	runtime: SessionAIRuntime;
 	gameId: string;
@@ -154,16 +157,23 @@ async function runFollowUpHooks({
 	signal: AbortSignal;
 	emit: NonNullable<AgentOptions['onEvent']>;
 	lease: string;
+	touch: () => Promise<void>;
 }) {
 	for (const job of hooks) {
 		if (signal.aborted) {
 			break;
 		}
 		try {
-			await runtime.executeSessionAgentHook(gameId, sessionId, job, {
-				signal,
-				lease: lease
-			});
+			await withGenerationActivity(
+				(activity) =>
+					runtime.executeSessionAgentHook(gameId, sessionId, job, {
+						signal,
+						lease,
+						onActivity: activity
+					}),
+				touch,
+				() => emit({ type: 'activity' })
+			);
 		} catch {
 			emit({ type: 'tool', name: job.name, status: 'failed' });
 		}

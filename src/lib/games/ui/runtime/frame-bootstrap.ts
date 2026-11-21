@@ -1,11 +1,12 @@
-/** Trusted Preact shell, emitted inside an opaque-origin iframe alongside the packaged modules. */
 import { FILE_BOOTSTRAP } from './files-bootstrap.js';
 
+/** Trusted Preact shell, emitted inside an opaque-origin iframe alongside the packaged modules. */
 export const FRAME_BOOTSTRAP = String.raw`
 let port, preact, api, latest, uiValues, initialized=false, booting=true, nextRequest=0;
 let views=[];
 const cache=new Map(), panels=new Map(), stateListeners=new Set(), uiListeners=new Set(), eventListeners=new Map(), pending=new Map(), disposers=new Set();
 ${FILE_BOOTSTRAP}
+Object.defineProperty(globalThis,'fetch',{value:undefined,writable:false,configurable:false});
 const send=(message)=>port.postMessage(JSON.stringify(message));
 const freeze=value=>{if(value&&typeof value==='object'){Object.values(value).forEach(freeze);Object.freeze(value);}return value;};
 const copy=value=>JSON.parse(JSON.stringify(value));
@@ -21,7 +22,7 @@ function load(id){
 function request(kind, payload){
   if(pending.size>=16)return Promise.reject(Error('Too many requests'));
   const id=String(++nextRequest);
-  return new Promise((resolve,reject)=>{const timeout=['turn','model'].includes(kind)?600000:30000;const job={resolve,reject,timer:undefined,touch:()=>{clearTimeout(job.timer);job.timer=setTimeout(()=>{pending.delete(id);reject(Error('Request timed out'));},timeout);}};pending.set(id,job);job.touch();send({kind,id,...payload});});
+  return new Promise((resolve,reject)=>{const timeout=['action','transaction','turn','model'].includes(kind)?600000:30000;const job={resolve,reject,timer:undefined,touch:()=>{clearTimeout(job.timer);job.timer=setTimeout(()=>{pending.delete(id);reject(Error('Request timed out'));},timeout);}};pending.set(id,job);job.touch();send({kind,id,...payload});});
 }
 function setUI(key,value){
   if(typeof key!=='string'||key.length>128||['__proto__','constructor','prototype'].includes(key))throw Error('Invalid UI key');

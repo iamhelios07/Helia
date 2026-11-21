@@ -30,6 +30,10 @@ export const POST: RequestHandler = async ({ request, url }) => {
 			);
 		}
 		const lease = credentialId(input.lease);
+		if (input.kind === 'touch') {
+			hostAILeases.touch(lease, gameId, sessionId);
+			return json({}, { headers: { 'cache-control': 'no-store' } });
+		}
 		if (input.kind === 'release') {
 			hostAILeases.release(lease, gameId, sessionId);
 			return json({});

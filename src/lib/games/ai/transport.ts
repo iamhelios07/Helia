@@ -26,7 +26,7 @@ async function nativeRequest(input: unknown, onChunk?: (value: unknown) => void)
 	channel.onmessage = (value) => onChunk?.(value);
 	return host(input, channel);
 }
-async function control(scope: Scope, kind: 'begin' | 'release'): Promise<unknown> {
+async function control(scope: Scope, kind: 'begin' | 'release' | 'touch'): Promise<unknown> {
 	if (isDesktopBuild) {
 		return nativeRequest({ ...scope, kind });
 	}
@@ -34,7 +34,8 @@ async function control(scope: Scope, kind: 'begin' | 'release'): Promise<unknown
 		method: 'POST',
 		headers: { 'content-type': 'application/json' },
 		body: JSON.stringify({ ...scope, kind }),
-		keepalive: kind === 'release'
+		keepalive: kind === 'release',
+		...(kind === 'touch' ? { signal: AbortSignal.timeout(15_000) } : {})
 	});
 	const result: unknown = await response.json().catch(() => null);
 	if (!response.ok) {
@@ -49,7 +50,12 @@ async function control(scope: Scope, kind: 'begin' | 'release'): Promise<unknown
 export async function beginGeneration(
 	gameId: string,
 	sessionId: string
-): Promise<{ lease: string; generate: ModelGenerator; release: () => Promise<void> }> {
+): Promise<{
+	lease: string;
+	generate: ModelGenerator;
+	release: () => Promise<void>;
+	touch: () => Promise<void>;
+}> {
 	const scope: Scope = { gameId, sessionId };
 	const begun = credentialRecord(await control(scope, 'begin'));
 	if (typeof begun.lease !== 'string') {
@@ -58,6 +64,9 @@ export async function beginGeneration(
 	scope.lease = begun.lease;
 	return {
 		lease: begun.lease,
+		touch: async () => {
+			await control(scope, 'touch');
+		},
 		release: async () => {
 			await control(scope, 'release');
 		},

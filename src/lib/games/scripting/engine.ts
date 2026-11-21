@@ -2,6 +2,7 @@ import variant from '@jitl/quickjs-singlefile-browser-release-sync';
 import {
 	newQuickJSWASMModuleFromVariant,
 	type QuickJSContext,
+	type QuickJSRuntime,
 	type QuickJSHandle,
 	type VmCallResult
 } from 'quickjs-emscripten-core';
@@ -11,6 +12,7 @@ import { parseGameState } from '#lib/games/state/value.js';
 import { argumentSchemaCompiler } from '../argument-schema.js';
 import { generateStateTypes } from '../state/schema.js';
 import { BOOTSTRAP } from './bootstrap.js';
+import { ExecutionBudget } from './budget.js';
 import {
 	boundedText,
 	CreatorRuntimeError,
@@ -23,88 +25,157 @@ import {
 	type CreatorFailureCode
 } from './protocol.js';
 import { evaluateRules, type Definition, type RuleKind } from './rules.js';
+import { WEB_BOOTSTRAP } from './web-bootstrap.js';
+import { ScriptWebBridge } from './web-bridge.js';
 
-/** Call only in a disposable worker. The interpreter has no filesystem, network or host bridge. */
-export async function evaluateAction(value: ActionRequest): Promise<ActionResult> {
+export interface EvaluationOptions {
+	fetch?: typeof globalThis.fetch;
+	signal?: AbortSignal;
+}
+/** Call only in a disposable worker. Network access is an explicit, permission-gated capability. */
+export async function evaluateAction(
+	value: ActionRequest,
+	options: EvaluationOptions = {}
+): Promise<ActionResult> {
 	const input = parseInput(value);
 	const compiled = await compileScripts(input);
-	// A separate WASM module, runtime and context for every invocation, including different sessions.
 	const module = await newQuickJSWASMModuleFromVariant(variant);
-	const runtime = module.newRuntime();
-	runtime.setMemoryLimit(SANDBOX_LIMITS.memoryBytes);
-	runtime.setMaxStackSize(SANDBOX_LIMITS.stackBytes);
-	const deadline = performance.now() + SANDBOX_LIMITS.cpuTimeMs;
-	let interrupted = false;
-	runtime.setInterruptHandler(() => (interrupted ||= performance.now() >= deadline));
-	runtime.removeModuleLoader();
-	const vm = runtime.newContext();
-	const handles: QuickJSHandle[] = [];
-	const keep: KeepHandle = (result, code, scriptId = null, ruleId = null) =>
-		retainResult(result, { handles, interrupted, deadline }, { code, scriptId, ruleId });
-	function call(
+	const sandbox = new ActionSandbox(module.newRuntime(), options);
+	try {
+		return parseResult(await sandbox.evaluate(input, compiled), input.schema);
+	} finally {
+		sandbox.dispose();
+	}
+}
+class ActionSandbox {
+	private readonly budget = new ExecutionBudget();
+	private readonly vm: QuickJSContext;
+	private readonly web: ScriptWebBridge;
+	private readonly abort = new AbortController();
+	private readonly handles: QuickJSHandle[] = [];
+	constructor(
+		private runtime: QuickJSRuntime,
+		options: EvaluationOptions
+	) {
+		runtime.setMemoryLimit(SANDBOX_LIMITS.memoryBytes);
+		runtime.setMaxStackSize(SANDBOX_LIMITS.stackBytes);
+		runtime.setInterruptHandler(this.budget.expired);
+		runtime.removeModuleLoader();
+		this.vm = runtime.newContext();
+		const signal = AbortSignal.any([
+			this.abort.signal,
+			...(options.signal ? [options.signal] : [])
+		]);
+		this.web = new ScriptWebBridge(
+			this.vm,
+			async (input, init) => {
+				if (!options.fetch) {
+					throw new TypeError('Fetch unavailable');
+				}
+				const request = new Request(input, init);
+				return options.fetch(request, { signal: AbortSignal.any([signal, request.signal]) });
+			},
+			this.budget
+		);
+	}
+	private keep = (
+		result: VmCallResult<QuickJSHandle>,
+		code: CreatorFailureCode,
+		definition?: Definition
+	) =>
+		retainResult(
+			result,
+			{ handles: this.handles, budget: this.budget },
+			{ code, scriptId: definition?.scriptId ?? null, ruleId: definition?.name ?? null }
+		);
+	private call(
 		fn: QuickJSHandle,
 		args: string[],
 		code: CreatorFailureCode,
 		definition?: Definition
 	) {
-		const values = args.map((arg) => vm.newString(arg));
+		const values = args.map((arg) => this.vm.newString(arg));
 		try {
-			return keep(
-				vm.callFunction(fn, vm.undefined, values),
+			return this.keep(
+				this.budget.run(() => this.vm.callFunction(fn, this.vm.undefined, values)),
 				code,
-				definition?.scriptId,
-				definition?.name
+				definition
 			);
 		} finally {
 			values.forEach((value) => value.dispose());
 		}
 	}
-	try {
-		const control = keep(
-			vm.evalCode(BOOTSTRAP, 'helia-runtime.js', { type: 'global' }),
+	async evaluate(input: ActionRequest, compiled: { id: string; source: string }[]) {
+		const control = this.keep(
+			this.budget.run(() => this.vm.evalCode(BOOTSTRAP, 'helia-runtime.js', { type: 'global' })),
 			'unavailable'
 		);
-		// Capture control functions before any untrusted code can modify intrinsic objects.
-		const beginScript = vm.getProp(control, 'beginScript'),
-			list = vm.getProp(control, 'list'),
-			invoke = vm.getProp(control, 'invoke');
-		handles.push(beginScript, list, invoke);
+		const begin = this.vm.getProp(control, 'beginScript'),
+			list = this.vm.getProp(control, 'list'),
+			invoke = this.vm.getProp(control, 'invoke'),
+			install = this.vm.getProp(control, 'installWeb');
+		this.handles.push(begin, list, invoke, install);
+		const factory = this.keep(
+			this.budget.run(() => this.vm.evalCode(WEB_BOOTSTRAP, 'helia-web.js', { type: 'global' })),
+			'unavailable'
+		);
+		this.keep(
+			this.budget.run(() =>
+				this.vm.callFunction(install, this.vm.undefined, factory, ...this.web.callbacks)
+			),
+			'unavailable'
+		);
 		for (const script of compiled) {
-			call(beginScript, [script.id], 'registration');
-			keep(
-				vm.evalCode(`(function(){"use strict";\n${script.source}\n})()`, `${script.id}.js`, {
-					type: 'global'
-				}),
+			this.call(begin, [script.id], 'registration');
+			this.keep(
+				this.budget.run(() =>
+					this.vm.evalCode(`(function(){"use strict";\n${script.source}\n})()`, `${script.id}.js`, {
+						type: 'global'
+					})
+				),
 				'script',
-				script.id
+				{ name: '', scriptId: script.id }
 			);
 		}
-		const metadata: unknown = JSON.parse(readString(vm, call(list, [], 'registration')));
-		return parseResult(
-			evaluateRules(input, metadata, (kind: RuleKind, definition: Definition, context: unknown) => {
-				const response = parseGameState(
-					JSON.parse(
-						readString(
-							vm,
-							call(
-								invoke,
-								[kind, definition.name, JSON.stringify(context)],
-								kind === 'action' || kind === 'query' ? 'execution' : kind,
-								definition
-							)
-						)
-					)
-				);
-				return { value: response.value, events: parseEvents(response.events) };
-			}),
-			input.schema
+		const metadata: unknown = JSON.parse(readString(this.vm, this.call(list, [], 'registration')));
+		return evaluateRules(input, metadata, (kind, definition, context) =>
+			this.invoke(invoke, kind, definition, context)
 		);
-	} finally {
-		for (const handle of handles.reverse()) {
+	}
+	private async invoke(
+		fn: QuickJSHandle,
+		kind: RuleKind,
+		definition: Definition,
+		context: unknown
+	) {
+		try {
+			let result = this.call(
+				fn,
+				[kind, definition.name, JSON.stringify(context)],
+				kind === 'action' || kind === 'query' ? 'execution' : kind,
+				definition
+			);
+			if (kind === 'action') {
+				result = await this.web.resolve(result, this.runtime);
+				this.handles.push(result);
+			}
+			const response = parseGameState(JSON.parse(readString(this.vm, result)));
+			return { value: response.value, events: parseEvents(response.events) };
+		} catch (error) {
+			if (error instanceof CreatorRuntimeError && !error.scriptId) {
+				throw new CreatorRuntimeError(error.code, definition.scriptId, definition.name);
+			}
+			throw error;
+		}
+	}
+	dispose() {
+		this.abort.abort();
+		this.web.dispose();
+		for (const handle of this.handles.reverse()) {
 			handle.dispose();
 		}
-		vm.dispose();
-		runtime.dispose();
+		this.vm.dispose();
+		this.runtime.dispose();
 	}
 }
 function readString(vm: QuickJSContext, handle: QuickJSHandle): string {
@@ -162,11 +233,7 @@ function compareScriptIds(a: string, b: string): number {
 
 function retainResult(
 	result: VmCallResult<QuickJSHandle>,
-	{
-		handles,
-		interrupted,
-		deadline
-	}: { handles: QuickJSHandle[]; interrupted: boolean; deadline: number },
+	{ handles, budget }: { handles: QuickJSHandle[]; budget: ExecutionBudget },
 	{
 		code,
 		scriptId,
@@ -174,21 +241,13 @@ function retainResult(
 	}: { code: CreatorFailureCode; scriptId: string | null; ruleId: string | null }
 ) {
 	if (result.error) {
-		// Never dump creator-thrown values: getters and conversion hooks are untrusted too.
 		result.error.dispose();
-		throw new CreatorRuntimeError(interrupted ? 'timeout' : code, scriptId, ruleId);
+		throw new CreatorRuntimeError(budget.expired() ? 'timeout' : code, scriptId, ruleId);
 	}
-	if (interrupted || performance.now() >= deadline) {
+	if (budget.expired()) {
 		result.value.dispose();
 		throw new CreatorRuntimeError('timeout', scriptId, ruleId);
 	}
 	handles.push(result.value);
 	return result.value;
 }
-
-type KeepHandle = (
-	result: VmCallResult<QuickJSHandle>,
-	code: CreatorFailureCode,
-	scriptId?: string | null,
-	ruleId?: string | null
-) => QuickJSHandle;

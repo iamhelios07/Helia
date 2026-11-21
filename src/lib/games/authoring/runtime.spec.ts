@@ -67,6 +67,7 @@ helia.queueTurn('Continue');
 helia.getState();
 // @ts-expect-error persistent file IO is asynchronous and belongs to UI
 helia.storage.list();
+helia.defineAction({name:'remote',async run({state}){const response=await helia.fetch('https://example.com');state.gold=(await response.json()).gold;return state;}});
 // @ts-expect-error old scheduling name was removed
 helia.runTurn('Continue');
 // @ts-expect-error synchronous message buffering has no Promise
@@ -74,6 +75,12 @@ helia.appendMessage({role:'user',content:'hi'}).then(()=>{});`,
 			'ui.tsx': `'use ui'; import './helper'; import './shared';
 const done: Promise<{revision:number}> = helia.runTurn('Continue');
 const bytes: Promise<Blob> = helia.storage.read('helia-file:ref');
+// @ts-expect-error external IO belongs to logic Actions
+helia.fetch('https://example.com');
+// @ts-expect-error UI does not export fetch
+import {fetch as fetchExternal} from '@helia/ui';
+// @ts-expect-error global fetch is unavailable in UI
+fetch('https://example.com');
 helia.storage.save(new Blob(['hello'],{type:'text/plain'})).then(file=>file.ref.toUpperCase());
 helia.useAssetURL(null).loading.valueOf();
 // @ts-expect-error storage saves Blobs, not state objects
@@ -91,6 +98,8 @@ helia.transaction({name:'manual',args:{}}, {});
 helia.queueTurn('Continue');`,
 			'helper.ts': `helia.getState().gold.toFixed();`,
 			'shared.ts': `helia.appendMessage({role:'assistant',content:'Shared'});
+// @ts-expect-error IO is not a shared runtime capability
+helia.fetch('https://example.com');
 // @ts-expect-error not available in both runtimes
 helia.getState();`
 		})

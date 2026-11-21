@@ -37,10 +37,11 @@ export type RuleInvoker = (
 	kind: RuleKind,
 	definition: Definition,
 	context: unknown
-) => {
+) => RuleResult | Promise<RuleResult>;
+interface RuleResult {
 	value: unknown;
 	events: UIEvent[];
-};
+}
 function definitions(value: unknown) {
 	try {
 		const input = parseGameState(value);
@@ -120,11 +121,11 @@ function matches(rule: FilterDefinition | HookDefinition, action: Action) {
 	return rule.actions === null || rule.actions.includes(action.name);
 }
 /** Host orchestration only. Every state proposal is validated before another step may observe it. */
-export function evaluateRules(
+export async function evaluateRules(
 	input: ActionRequest,
 	metadata: unknown,
 	invoke: RuleInvoker
-): ActionResult {
+): Promise<ActionResult> {
 	const registry = definitions(metadata);
 	if (input.operation?.kind === 'catalog') {
 		return {
@@ -148,7 +149,7 @@ export function evaluateRules(
 			throw new CreatorRuntimeError('action-not-found');
 		}
 		const args = validateState(query.arguments, input.operation.args, 'arguments');
-		const result = invoke('query', query, { state: input.state, args });
+		const result = await invoke('query', query, { state: input.state, args });
 		if (result.events.length) {
 			throw new CreatorRuntimeError('protocol');
 		}
@@ -180,9 +181,9 @@ class RuleEvaluation {
 		}
 		this.events.push(...next);
 	};
-	private filters = (trigger: RuleTrigger) => {
+	private filters = async (trigger: RuleTrigger) => {
 		for (const rule of this.registry.filters.filter((rule) => matches(rule, trigger.action))) {
-			const result = this.invoke('filter', rule, {
+			const result = await this.invoke('filter', rule, {
 				...this.context(trigger),
 				state: trigger.after
 			});
@@ -204,11 +205,11 @@ class RuleEvaluation {
 			}
 		}
 	};
-	private hook = (rule: HookDefinition, trigger: RuleTrigger): Action[] => {
+	private hook = async (rule: HookDefinition, trigger: RuleTrigger): Promise<Action[]> => {
 		if (++this.hooks > SANDBOX_LIMITS.hookCount) {
 			throw new CreatorRuntimeError('chain-limit', rule.scriptId, rule.name);
 		}
-		const result = this.invoke('hook', rule, this.context(trigger));
+		const result = await this.invoke('hook', rule, this.context(trigger));
 		this.append(result.events);
 		try {
 			if (!Array.isArray(result.value) || result.value.length > SANDBOX_LIMITS.stepCount) {
@@ -219,19 +220,19 @@ class RuleEvaluation {
 			throw new CreatorRuntimeError('hook', rule.scriptId, rule.name);
 		}
 	};
-	private included = (trigger: RuleTrigger, depth: number) => {
+	private included = async (trigger: RuleTrigger, depth: number) => {
 		if (!diffState(trigger.before, trigger.after).length) {
 			return;
 		}
 		for (const rule of this.registry.hooks.filter(
 			(rule) => rule.mode === 'included' && matches(rule, trigger.action)
 		)) {
-			for (const action of this.hook(rule, trigger)) {
-				this.execute(action, depth + 1);
+			for (const action of await this.hook(rule, trigger)) {
+				await this.execute(action, depth + 1);
 			}
 		}
 	};
-	private execute = (action: Action, depth: number) => {
+	private execute = async (action: Action, depth: number) => {
 		if (depth > SANDBOX_LIMITS.depth || ++this.steps > SANDBOX_LIMITS.stepCount) {
 			throw new CreatorRuntimeError('chain-limit', null, action.name);
 		}
@@ -251,7 +252,7 @@ class RuleEvaluation {
 			} catch {
 				throw new CreatorRuntimeError('arguments', definition.scriptId, action.name);
 			}
-			const result = this.invoke('action', definition, { state: before, args });
+			const result = await this.invoke('action', definition, { state: before, args });
 			this.append(result.events);
 			let after: GameState;
 			try {
@@ -259,16 +260,16 @@ class RuleEvaluation {
 			} catch {
 				throw new CreatorRuntimeError('state', definition.scriptId, action.name);
 			}
-			this.filters({ before, after, action });
+			await this.filters({ before, after, action });
 			this.workspace.replace(after);
-			this.included({ before, after, action }, depth);
+			await this.included({ before, after, action }, depth);
 		} finally {
 			this.active.delete(action.name);
 		}
 	};
-	private runIndependentHook(
+	private async runIndependentHook(
 		operation: Extract<NonNullable<ActionRequest['operation']>, { kind: 'hook' }>
-	): string | undefined {
+	): Promise<string | undefined> {
 		const hookName = operation.name;
 		const rule = this.registry.hooks.find(
 			(item) => item.name === hookName && item.mode === 'independent'
@@ -277,13 +278,13 @@ class RuleEvaluation {
 			throw new CreatorRuntimeError('hook', null, operation.name);
 		}
 		const description = rule.description;
-		for (const action of this.hook(rule, operation.trigger)) {
-			this.execute(action, 1);
+		for (const action of await this.hook(rule, operation.trigger)) {
+			await this.execute(action, 1);
 		}
 
 		return description;
 	}
-	private applyProposal(
+	private async applyProposal(
 		operation: Extract<NonNullable<ActionRequest['operation']>, { kind: 'proposal' | 'validate' }>
 	) {
 		this.steps++;
@@ -296,32 +297,32 @@ class RuleEvaluation {
 				throw new CreatorRuntimeError('arguments', definition.scriptId, definition.name);
 			}
 		}
-		this.filters({ before: this.input.state, after, action: this.input.action });
+		await this.filters({ before: this.input.state, after, action: this.input.action });
 		this.workspace.replace(after);
 		this.active.add(this.input.action.name);
 		try {
 			if (operation.kind !== 'validate') {
-				this.included({ before: this.input.state, after, action: this.input.action }, 0);
+				await this.included({ before: this.input.state, after, action: this.input.action }, 0);
 			}
 		} finally {
 			this.active.delete(this.input.action.name);
 		}
 	}
-	evaluate(): ActionResult {
+	async evaluate(): Promise<ActionResult> {
 		let description: string | undefined;
 		try {
 			if (this.input.operation?.kind === 'hook') {
-				description = this.runIndependentHook(this.input.operation);
+				description = await this.runIndependentHook(this.input.operation);
 			} else if (
 				this.input.operation?.kind === 'proposal' ||
 				this.input.operation?.kind === 'validate'
 			) {
-				this.applyProposal(this.input.operation);
+				await this.applyProposal(this.input.operation);
 			} else {
 				description = this.registry.actions.find(
 					(item) => item.name === this.input.action.name
 				)?.description;
-				this.execute(this.input.action, 0);
+				await this.execute(this.input.action, 0);
 			}
 			const trigger = {
 				before: this.input.state,
@@ -330,7 +331,7 @@ class RuleEvaluation {
 			};
 			// Included work must also satisfy the aggregate transaction's Filters.
 			if (this.steps > 1 || this.input.operation?.kind === 'hook') {
-				this.filters(trigger);
+				await this.filters(trigger);
 			}
 			const result = this.workspace.finish(this.input.action);
 			const independentHooks = result.changes.length

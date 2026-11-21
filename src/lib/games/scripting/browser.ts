@@ -1,3 +1,7 @@
+import { FetchBridge } from '#lib/games/network/bridge.js';
+import { requestNetworkPermission } from '#lib/games/network/permission.js';
+import { NETWORK_LIMITS } from '#lib/games/network/protocol.js';
+
 import {
 	boundedText,
 	CreatorRuntimeError,
@@ -34,28 +38,42 @@ export const runCreatorAction: ActionRunner = async (input, options = {}) => {
 		}
 		active++;
 		let done = false;
+		const watchdog = new ActionWatchdog(() =>
+			finish(() => reject(new CreatorRuntimeError('timeout')))
+		);
+		const network = new FetchBridge(
+			requestNetworkPermission,
+			() => {
+				watchdog.touch();
+				options.onActivity?.();
+			},
+			(count) => {
+				watchdog.touch(count);
+			}
+		);
 		function finish(operation: () => void) {
 			if (done) {
 				return;
 			}
 			done = true;
-			clearTimeout(timer);
+			watchdog.dispose();
+			network.dispose();
 			options.signal?.removeEventListener('abort', cancel);
 			worker.terminate();
 			active--;
 			operation();
 		}
 		const cancel = () => finish(() => reject(new CreatorRuntimeError('canceled')));
-		const timer = setTimeout(
-			() => finish(() => reject(new CreatorRuntimeError('timeout'))),
-			SANDBOX_LIMITS.wallTimeMs
-		);
+		watchdog.touch();
 		worker.onerror = (event) => {
 			event.preventDefault();
 			finish(() => reject(new CreatorRuntimeError('unavailable')));
 		};
 		worker.onmessageerror = () => finish(() => reject(new CreatorRuntimeError('protocol')));
-		worker.onmessage = (event) =>
+		worker.onmessage = (event) => {
+			if (done || network.receive(event)) {
+				return;
+			}
 			finish(() => {
 				try {
 					resolve(decodeWorkerReply(event.data, schema));
@@ -65,6 +83,7 @@ export const runCreatorAction: ActionRunner = async (input, options = {}) => {
 					);
 				}
 			});
+		};
 		options.signal?.addEventListener('abort', cancel, { once: true });
 		if (options.signal?.aborted) {
 			cancel();
@@ -77,6 +96,27 @@ export const runCreatorAction: ActionRunner = async (input, options = {}) => {
 		}
 	});
 };
+
+class ActionWatchdog {
+	private waiting = 0;
+	private timer?: ReturnType<typeof setTimeout>;
+	private disposed = false;
+	constructor(private expire: () => void) {}
+	touch(waiting = this.waiting) {
+		clearTimeout(this.timer);
+		this.waiting = waiting;
+		if (!this.disposed) {
+			this.timer = setTimeout(
+				this.expire,
+				waiting ? NETWORK_LIMITS.idleMs : SANDBOX_LIMITS.wallTimeMs
+			);
+		}
+	}
+	dispose() {
+		this.disposed = true;
+		clearTimeout(this.timer);
+	}
+}
 
 function decodeWorkerReply(
 	data: unknown,

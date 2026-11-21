@@ -35,6 +35,30 @@ function event(lease: string) {
 		})
 	} as Parameters<typeof POST>[0];
 }
+it('renews the owning generation lease during tool IO and rejects another session', async () => {
+	vi.useFakeTimers();
+	vi.stubEnv('HELIA_ORIGIN', 'http://localhost');
+	const lease = hostAILeases.begin('test-game', 'test-session');
+	const touch = (sessionId: string) =>
+		POST({
+			...event(lease),
+			request: new Request('http://localhost/api/ai', {
+				method: 'POST',
+				headers: { origin: 'http://localhost', 'content-type': 'application/json' },
+				body: JSON.stringify({ kind: 'touch', gameId: 'test-game', sessionId, lease })
+			})
+		});
+	try {
+		for (let i = 0; i < 3; i++) {
+			vi.advanceTimersByTime(AI_LIMITS.streamIdleMs - 1);
+			expect((await touch('test-session')).status).toBe(200);
+		}
+		expect((await touch('other-session')).status).toBe(400);
+		expect(() => hostAILeases.require(lease, 'test-game', 'test-session')).not.toThrow();
+	} finally {
+		hostAILeases.release(lease, 'test-game', 'test-session');
+	}
+});
 
 it('forwards real provider activity, renews the lease, and retains it for the final commit', async () => {
 	vi.useFakeTimers();

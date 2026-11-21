@@ -89,6 +89,8 @@ export interface ActionResult {
 export interface RunOptions {
 	signal?: AbortSignal;
 	lease?: string;
+	/** Trusted host notification while an Action waits for external IO. */
+	onActivity?: () => void;
 }
 export type ActionRunner = (input: ActionRequest, options?: RunOptions) => Promise<ActionResult>;
 export type WorkerReply =

@@ -1,5 +1,5 @@
 /** Runs inside QuickJS only. The returned control handle is never exposed to creator scripts.
- * No host functions or host object references enter the VM. */
+ * Web RPC callbacks exchange only JSON and byte buffers, never host object references. */
 export const BOOTSTRAP = String.raw`
 (() => {
   'use strict';
@@ -10,11 +10,15 @@ export const BOOTSTRAP = String.raw`
   const descriptor = Object.getOwnPropertyDescriptor, isArray = Array.isArray;
   const objectPrototype = Object.prototype, finite = Number.isFinite;
   const apply = Reflect.apply;
+  const resolvePromise = Promise.resolve.bind(Promise), then = Promise.prototype.then;
   const definitions = new Map();
   const put = Map.prototype.set.bind(definitions), get = Map.prototype.get.bind(definitions);
   const has = Map.prototype.has.bind(definitions);
   const metadata = {actions:[],queries:[],filters:[],hooks:[]};
   let sealed = false, failed = false, scriptId = null, phase = null, events = [];
+  let webFetch;
+  const checkWeb = () => {if(phase !== 'action'){failed=true;throw Error('Web IO requires an Action');}};
+  const fetch = (...args) => {checkWeb();return webFetch(...args);};
 
   // Validate before encoding: JSON.stringify alone silently changes NaN, undefined and accessors.
   function copy(value, ancestors = [], depth = 0) {
@@ -86,9 +90,15 @@ export const BOOTSTRAP = String.raw`
     defineHook: definition => define('hook',definition),
     emit,
     appendMessage: message => emit('$helia.message', message),
-    queueTurn
+    queueTurn,
+    fetch
   }), writable: false, configurable: false});
   return freeze({
+    installWeb(factory,sync,async,encode,decode) {
+      if(sealed || webFetch)throw Error('Web registration');
+      webFetch=apply(factory,undefined,[sync,async,encode,decode,checkWeb]);
+      Object.defineProperty(globalThis,'fetch',{value:fetch,writable:false,configurable:false});
+    },
     beginScript(id) {if (sealed) throw Error('registration'); scriptId = id;},
     list() {
       sealed = true;
@@ -104,10 +114,16 @@ export const BOOTSTRAP = String.raw`
       phase = kind; events = [];
       try {
         let value = apply(get(key), undefined, [context]);
+        if (kind === 'action') {
+          return apply(then,resolvePromise(value),[value => {
+            try {if(failed)throw Error('invocation');return stringify(copy({value,events}));}
+            finally {phase=null;events=[];}
+          }, error=>{phase=null;events=[];throw error;}]);
+        }
         if (kind === 'hook' && value === undefined) value = [];
         if (failed) throw Error('invocation');
         return stringify(copy({value, events}));
-      } finally {phase = null; events = [];}
+      } finally {if(kind !== 'action'){phase = null; events = [];}}
     }
   });
 })()

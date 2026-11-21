@@ -331,6 +331,10 @@ fn execute_with_auth(
         return begin_lease(game, session);
     }
     let id = field(input, "lease")?;
+    if kind == "touch" {
+        touch(id, game, session)?;
+        return Ok(json!({}));
+    }
     if kind == "release" {
         return release_lease(id, game, session);
     }

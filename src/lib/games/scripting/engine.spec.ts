@@ -60,7 +60,6 @@ describe('isolated creator Actions', () => {
 
 describe('isolated creator Actions', () => {
 	it.each([
-		'fetch',
 		'XMLHttpRequest',
 		'WebSocket',
 		'Worker',
@@ -92,7 +91,7 @@ describe('isolated creator Actions', () => {
 			evaluateAction(request(`import x from 'https://example.com/x.js';`))
 		).rejects.toMatchObject({ code: 'script' });
 		const source = register(
-			`const root = ({}).constructor.constructor('return globalThis')(); if (root.process || root.fetch || root.__TAURI_INTERNALS__) throw Error('escape'); return state;`
+			`const root = ({}).constructor.constructor('return globalThis')(); if (root.process || root.__TAURI_INTERNALS__ || root.fetch !== helia.fetch) throw Error('escape'); return state;`
 		);
 		expect((await evaluateAction(request(source))).state).toEqual({ gold: 100 });
 	});
@@ -112,7 +111,6 @@ describe('isolated creator Actions', () => {
 		'return {gold:80,extra:true};',
 		'return {gold:NaN};',
 		'return {gold:undefined};',
-		'return Promise.resolve(state);',
 		'return new Date();',
 		`return Object.defineProperty({},'gold',{enumerable:true,get(){return 80;}});`,
 		`return {gold:100, toJSON(){return {gold:80};}};`

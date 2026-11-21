@@ -22,7 +22,8 @@ pub fn run() {
             storage::storage_request,
             ai_settings::ai_settings_request,
             credentials::credential_request,
-            generation::ai_request
+            generation::ai_request,
+            network::network_request
         ])
         .run(tauri::generate_context!())
         .expect("error while running Helia");
@@ -35,6 +36,8 @@ mod credential_store;
 mod credentials;
 #[cfg(any(feature = "desktop", test))]
 mod generation;
+#[cfg(any(feature = "desktop", test))]
+mod network;
 #[cfg(any(feature = "desktop", test))]
 mod state_schema;
 #[cfg(any(feature = "desktop", test))]

@@ -40,11 +40,16 @@ it('captures the ready native invoker for storage, settings, credentials and AI 
 	await (window.__HELIA_STORAGE__ as (request: unknown) => Promise<unknown>)(request);
 	await (window.__HELIA_AI_SETTINGS__ as (request: unknown) => Promise<unknown>)(request);
 	await (window.__HELIA_AI__ as (request: unknown, chunk: unknown) => Promise<unknown>)(request, 1);
+	await (window.__HELIA_NETWORK__ as (request: unknown, chunk: unknown) => Promise<unknown>)(
+		request,
+		2
+	);
 	expect(invoke.mock.calls).toEqual([
 		['credential_request', { request: { kind: 'status', providers: [] }, token }],
 		['storage_request', { request, token }],
 		['ai_settings_request', { request, token }],
-		['ai_request', { request, onChunk: 1, token }]
+		['ai_request', { request, onChunk: 1, token }],
+		['network_request', { request, onChunk: 2, token }]
 	]);
 	expect(window.token).toBeUndefined();
 	expect(Object.getOwnPropertyDescriptor(window, '__HELIA_CREDENTIALS__')).toMatchObject({
@@ -59,4 +64,5 @@ it('never installs native bridges in a child frame', () => {
 	expect(window.__HELIA_AI_SETTINGS__).toBeUndefined();
 	expect(window.__HELIA_CREDENTIALS__).toBeUndefined();
 	expect(window.__HELIA_AI__).toBeUndefined();
+	expect(window.__HELIA_NETWORK__).toBeUndefined();
 });

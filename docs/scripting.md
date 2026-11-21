@@ -2,7 +2,7 @@
 
 Helia's scripting API lets creators define game rules, interact with chat and AI, and build custom game panels in TypeScript. Scripts access the API through the global `helia` object.
 
-Logic scripts run synchronously in QuickJS. UI scripts run in an isolated Preact frame and can also import APIs from `@helia/ui`. Each scripting runtime exposes its own API subset.
+Logic scripts run in QuickJS. Actions may be asynchronous; Queries, Filters, Hooks and registration stay synchronous. UI scripts run in an isolated Preact frame and can also import APIs from `@helia/ui`. Each scripting runtime exposes its own API subset.
 
 The editor provides completion and types through the generated `.helia/runtime.d.ts`. See the [authoring declarations](../src/lib/games/authoring/runtime.d.ts), [game UI guide](../src/lib/games/ui/README.md) and [AI execution guide](../src/lib/games/ai/README.md) for implementation details.
 
@@ -19,6 +19,7 @@ Logic scripts register Actions, Queries, Filters and Hooks in `main.ts` or its i
 | `helia.emit(name, payload?)`             | Buffer a UI event for delivery after a successful commit. Available inside Actions and Hooks. Payload defaults to `{}` and must be a JSON object. |
 | `helia.appendMessage({ role, content })` | Buffer a chat message with the current Action or Hook. Returns synchronously; failure discards the message with the state changes.                |
 | `helia.queueTurn(text, { visible }?)`    | Schedule an AI request after the Action or Hook commits. `visible` defaults to `false`.                                                           |
+| `helia.fetch(input, init?)`              | Call an external HTTP(S) service inside an Action. Returns a Promise with a Fetch Response; global `fetch` is the same function.                  |
 
 Actions and Queries accept these definition fields:
 
@@ -28,11 +29,29 @@ Actions and Queries accept these definition fields:
 | `description?` | Describe the operation, including its purpose for AI tool use.                                                                                                                  |
 | `arguments?`   | Explicit object JSON Schema. Alternatively, provide an `Args` type to generate validation and tool schemas. The two forms cannot be combined. Omitting both means no arguments. |
 | `ai?`          | Expose the operation as an AI tool when `true`. Defaults to `false`.                                                                                                            |
-| `run(context)` | Synchronous implementation. An Action must return valid Game State; a Query must return a finite JSON value.                                                                    |
+| `run(context)` | An Action returns valid Game State or a Promise of it. A Query synchronously returns a finite JSON value.                                                                       |
 
 Filters and Hooks accept `name`, `run`, optional `description`, `priority` and `actions`. Lower priorities run first; the default is `0`. Omit `actions` to match all action names, or provide a list to restrict matches.
 
 Their read-only context contains `state`, `before`, `after`, `action` and `changes`. Filters inspect proposed state. Hooks enqueue Actions instead of mutating their context. Hooks also accept `mode`: `included` (default) shares the originating transaction; `independent` runs separately after it commits. Hooks run when state actually changes.
+
+External work belongs in an Action. The UI only needs to call `action('loadReward')`; the same Action can be exposed as an AI tool.
+
+```ts
+helia.defineAction({
+	name: 'loadReward',
+	async run({ state }) {
+		const response = await helia.fetch('https://api.example.com/reward');
+		if (!response.ok) throw new Error(`HTTP ${response.status}`);
+		const reward = await response.json();
+		if (!Number.isSafeInteger(reward.gold)) throw new Error('Invalid reward');
+		state.gold += reward.gold;
+		return state;
+	}
+});
+```
+
+State, messages and events remain provisional across `await`. Filters and included Hook Actions finish before committing. A rejection, cancellation, invalid result or revision conflict discards those provisional changes. A Hook may enqueue an asynchronous Action, but its own `run` stays synchronous. Fetch is forbidden during registration, Queries, Filters and Hooks. Await external work before returning; unfinished Web operations reject the Action. An external service's side effects cannot be rolled back by a rejected game transaction.
 
 ## UI scripts
 
@@ -137,10 +156,40 @@ const file = await storage.save(imageBlob, { name: 'sword.webp' });
 await action('setEquipmentImage', { image: file.ref });
 ```
 
-Use asynchronous storage calls inside an event handler or effect; top-level `await` is unavailable. Synchronous logic scripts receive file references through arguments and cannot call the storage API directly.
+Use asynchronous storage calls inside a UI event handler or effect; top-level `await` is unavailable. File storage remains a UI API; logic receives file references through arguments.
+
+### HTTP requests
+
+Actions call `helia.fetch(input, init?)` or global `fetch`; the aliases are identical. The Web Fetch signature accepts an absolute HTTP(S) URL, `URL` or `Request` and returns a Promise of a Response. Logic uses isolated Web facades backed by the trusted Worker. UI has no Fetch API or network bridge; it invokes Actions instead.
+
+```ts
+// Inside an Action's async run().
+const response = await helia.fetch('https://api.example.com/images', {
+	method: 'POST',
+	headers: {
+		'content-type': 'application/json',
+		authorization: `Bearer ${serviceKey}`
+	},
+	body: JSON.stringify({ prompt }),
+	signal: abortController.signal
+});
+if (!response.ok) throw new Error(`HTTP ${response.status}`);
+const image = await response.blob();
+// Process the transient Blob here; it cannot be stored directly in Game State.
+```
+
+Helia asks the player before connecting to a new **origin** (scheme, domain and port). Consent lasts for the current Action transaction, including included Hook Actions, and does not enter game data or history. Concurrent requests share the confirmation. Cancelling all requests waiting for it closes the dialog. A redirect to another origin requires its own permission and strips `Authorization` before proceeding.
+
+The host sends requests through the web server or private desktop bridge, so destination CORS rules do not apply. It never attaches Helia cookies or stored model-provider credentials. Scripts must supply their own service authorization; avoid storing secrets in shared source or Game State. Cookie headers, `Set-Cookie`, browser credential forwarding and privileged transport headers are unavailable. Public network addresses are supported; loopback, private networks, link-local/cloud metadata and special address ranges are blocked, including after DNS resolution. Redirect destinations are checked again, and resolved addresses are pinned for each connection.
+
+JSON, text, `Blob`, `ArrayBuffer`, `URLSearchParams` and `FormData` request bodies use normal `Request` serialization. Uploads are buffered up to **8 MiB**. Responses stream after headers, up to **32 MiB**, with `text()`, `json()`, `blob()`, `arrayBuffer()`, `body`, `clone()`, `url` and `redirected`. HTTP error statuses resolve normally; permission, network and limit failures reject or error the body stream. `AbortSignal` cancels uploads, pending consent and response reads. Cancelling an Action or closing its UI cancels its requests. Each logic execution permits 16 concurrent requests and ten minutes of network inactivity.
+
+Logic also provides `Headers`, `Request`, `Response`, `Blob`, `File`, `FormData`, `URL`, `URLSearchParams`, `AbortController`, `AbortSignal`, `TextEncoder` and `TextDecoder`. Response streams support ordinary readers, cancellation, teeing and asynchronous iteration. Browser callback APIs, custom stream construction and BYOB readers are unavailable. Web objects remain transient and cannot enter JSON Game State. Materializing text or byte buffers still obeys QuickJS's 16 MiB memory limit; stream large bodies or retain Blob handles. Web RPC is bounded to 512 objects, 4,096 operations and 64 MiB of retained Blob data per execution. Native body constructors enforce size limits before allocating. The 500 ms CPU budget counts interpreter work, including resumed continuations, but excludes host IO waits.
+
+This is a host Fetch bridge, not a browser cookie/cache context. `credentials: 'include'`, `mode: 'no-cors' | 'same-origin'`, integrity checks and `keepalive` reject explicitly. Browser referrer, cache and priority hints are not forwarded. Redirect defaults to `follow`; `error` rejects redirects, and `manual` returns the HTTP redirect response.
 
 ## Runtime boundaries
 
 Logic scripts receive state through their execution context. UI scripts read committed state and request changes through the host bridge. Authoring types distinguish the two scripting runtimes. The editor resolves global `helia` for each module, including inherited UI helpers; modules shared by both runtimes can only use their common APIs.
 
-The scripting API does not expose API credentials, a provider client, the host filesystem or a general network bridge. `helia.fetch` is not implemented. UI frames restrict network access through CSP; logic scripts have no host network access. External packages, dynamic imports and top-level `await` are unavailable.
+The scripting API does not expose stored API credentials, a provider client or the host filesystem. UI frames have no Fetch API or host network bridge and keep direct network access blocked by CSP. Logic runs in QuickJS and receives only bounded Web RPC callbacks, never host object references. Its HTTP requests pass through the permission-gated host bridge. External packages, dynamic imports and top-level `await` are unavailable.

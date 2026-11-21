@@ -83,6 +83,7 @@ vi.mock('./transport.js', async () => {
 			const lease = hostAILeases.begin(gameId, sessionId);
 			return {
 				lease,
+				touch: async () => hostAILeases.touch(lease, gameId, sessionId),
 				release: async () => hostAILeases.release(lease, gameId, sessionId),
 				generate: async (
 					request: RoundRequest,

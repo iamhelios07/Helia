@@ -234,7 +234,11 @@ class GameUIBridge {
 	}
 	private async execute(message: GameState): Promise<SessionHistory> {
 		const { runtime, gameId, sessionId } = this.context;
-		const options = { signal: this.abort.signal, onEvent: () => this.heartbeat(message) };
+		const options = {
+			signal: this.abort.signal,
+			onEvent: () => this.heartbeat(message),
+			onActivity: () => this.heartbeat(message)
+		};
 		if (message.kind === 'message') {
 			return runtime.appendSessionMessage(
 				gameId,

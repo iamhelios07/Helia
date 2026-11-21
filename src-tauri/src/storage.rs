@@ -50,6 +50,10 @@ impl StorageAccess {
                 value: (request, onChunk) => invoke('ai_request', {{ request, onChunk, token }}),
                 writable: false, configurable: false
             }});
+            Object.defineProperty(window, '__HELIA_NETWORK__', {{
+                value: (request, onChunk) => invoke('network_request', {{ request, onChunk, token }}),
+                writable: false, configurable: false
+            }});
         }})();"#,
             self.token
         )
