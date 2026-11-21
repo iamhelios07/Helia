@@ -12,8 +12,11 @@
 	import EditorDocumentWorkspace from './editor/EditorDocumentWorkspace.svelte';
 	import EditorInspectorPanel from './editor/EditorInspectorPanel.svelte';
 	import EditorPlayground from './editor/EditorPlayground.svelte';
-	let { gameId }: { gameId: string } = $props();
-	const editor = new EditorWorkspace(() => gameId);
+	let { gameId, documentRoute }: { gameId: string; documentRoute?: string } = $props();
+	const editor = new EditorWorkspace(
+		() => gameId,
+		() => documentRoute
+	);
 </script>
 
 <svelte:head><title>{editor.game?.title ?? '게임'} 편집기 · Helia</title></svelte:head>
@@ -93,6 +96,7 @@
 	{#if editor.navigationError}<div class="error-banner" role="alert">
 			{editor.navigationError}
 		</div>{/if}
+	{#if editor.routing.error}<div class="error-banner" role="alert">{editor.routing.error}</div>{/if}
 	{#if editor.loading}<div class="load-state" role="status">게임을 불러오는 중…</div>
 	{:else if editor.loadError}<div class="load-state">
 			<p role="alert">{editor.loadError}</p>

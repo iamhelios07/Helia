@@ -393,7 +393,7 @@ it('flushes edits before intercepted internal navigation and retains the destina
 	});
 	expect(cancel).toHaveBeenCalledOnce();
 	await expect.poll(() => vi.mocked(goto).mock.calls.length).toBe(1);
-	expect(goto).toHaveBeenCalledWith('/?from=editor#latest');
+	expect(goto).toHaveBeenCalledWith(new URL('http://localhost/?from=editor#latest'));
 	expect(durableDrafts.get(game.id)?.draft?.documents.info).toContain('이동하기 전 보존');
 });
 

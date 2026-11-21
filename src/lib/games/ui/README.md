@@ -6,6 +6,10 @@ Game UI is part of the session's content snapshot, alongside scripts, resources 
 
 The play sidebar keeps its **Sessions / Game** switch. **Game** provides **Open game editor** and quick name/description editing. The separate game editor page returns to the same active play session without creating another session.
 
+Editor documents have individual routes below `/games/[id]/edit`: `game.json`, `instructions.json`, `state.json`, `lorebook.json`, `regex.json`, `code/<project path>`, `assets/<resource filename>` and `.helia/<declaration filename>`. The root opens `game.json` using a replacement navigation. The shared editor layout stays mounted between document routes, preserving open tabs, Monaco models, view state and pending drafts. Direct URLs resolve against the recovered draft, including files that have not been applied yet. Unknown/deleted files show guidance inside the editor instead of silently opening a different file.
+
+`EditorRouting` synchronizes the selected document and SvelteKit's route parameter. Normal selection adds history; closing the current tab or renaming/moving it replaces the current address. Asset routes use visible paths while tabs retain stable resource IDs. Same-editor navigation bypasses the departure save guard; leaving the editor still flushes pending edits and stays put on save failure. Route paths encode filenames per segment, including spaces, Unicode and literal percent signs.
+
 The sidebar, session list and game settings use `OverlayScrollArea`: native scrolling with a draggable overlay thumb that does not reserve content width. Long preset toggles remain in the shared outer scroller without collapsing game settings. History return restores the session list's native viewport position. Forced-colors mode retains native scrollbars.
 
 ## Authoring IDE

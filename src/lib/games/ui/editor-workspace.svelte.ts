@@ -26,6 +26,7 @@ import {
 import { getGameWorkspace, applyGameDraft } from '../repository.js';
 import { loadSettingsDraft, clearSettingsDraft } from '../settings-draft.js';
 import { generateStateTypes } from '../state/schema.js';
+import { EditorRouting } from './editor-routing.svelte.js';
 import { MonacoProject } from './editor/monaco-project.js';
 export type DocumentId =
 	| Exclude<EditorDocumentId, 'code' | 'assets'>
@@ -371,7 +372,11 @@ export class EditorWorkspace {
 			this.codeSelection = after + this.codeSelection.slice(before.length);
 		}
 		if (this.activeDocument) {
-			this.activeDocument = move(this.activeDocument);
+			const next = move(this.activeDocument);
+			if (next !== this.activeDocument) {
+				this.routing.replaceSelection();
+			}
+			this.activeDocument = next;
 		}
 		this.secondaryDocument = move(this.secondaryDocument);
 	};
@@ -735,6 +740,7 @@ export class EditorWorkspace {
 		const index = this.openDocuments.indexOf(id as DocumentId);
 		this.openDocuments = this.openDocuments.filter((document) => document !== id);
 		if (this.activeDocument === id) {
+			this.routing.replaceSelection();
 			this.activeDocument =
 				this.openDocuments[Math.min(index, this.openDocuments.length - 1)] ?? null;
 		}
@@ -1001,7 +1007,12 @@ export class EditorWorkspace {
 	get gameId() {
 		return this.readGameId();
 	}
-	constructor(private readonly readGameId: () => string) {
+	readonly routing: EditorRouting;
+	constructor(
+		private readonly readGameId: () => string,
+		readRoute: () => string | undefined = () => undefined
+	) {
+		this.routing = new EditorRouting(this, readRoute);
 		this.initialize();
 	}
 	initialize() {
@@ -1060,6 +1071,9 @@ export class EditorWorkspace {
 	}
 	watchNavigation() {
 		beforeNavigate((navigation) => {
+			if (!navigation.willUnload && this.routing.contains(navigation.to?.url)) {
+				return;
+			}
 			if (this.allowNavigation) {
 				this.allowNavigation = false;
 				return;
