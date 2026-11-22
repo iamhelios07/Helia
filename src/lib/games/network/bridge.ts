@@ -6,6 +6,8 @@ import {
 import { NetworkPermissions } from '#lib/games/network/permissions.js';
 import { encodeBytes, NETWORK_LIMITS, type NetworkRequest } from '#lib/games/network/protocol.js';
 
+import { networkHop } from './transport.js';
+
 /** One dedicated port per response keeps binary streams outside the JSON state channel. */
 class FetchJob {
 	readonly abort = new AbortController();
@@ -102,7 +104,8 @@ export class FetchBridge {
 	constructor(
 		permission: NetworkPermission,
 		private activity = () => {},
-		private change: (pending: number) => void = () => {}
+		private change: (pending: number) => void = () => {},
+		private send = networkHop
 	) {
 		this.permissions = new NetworkPermissions(permission);
 	}
@@ -164,7 +167,8 @@ export class FetchBridge {
 								: encodeBytes(new Uint8Array(await request.body.arrayBuffer()))
 					},
 					job.abort.signal,
-					this.permissions.allow
+					this.permissions.allow,
+					this.send
 				)
 			);
 		} catch {

@@ -6,12 +6,13 @@ import { decodeBytes, NETWORK_LIMITS, type NetworkEvent, type NetworkRequest } f
 
 async function* webEvents(
 	request: NetworkRequest,
-	signal: AbortSignal
+	signal: AbortSignal,
+	gameId?: string
 ): AsyncGenerator<NetworkEvent, void> {
 	const response = await fetch('/api/network', {
 		method: 'POST',
 		headers: { 'content-type': 'application/json' },
-		body: JSON.stringify(request),
+		body: JSON.stringify({ ...request, ...(gameId ? { gameId } : {}) }),
 		signal
 	});
 	if (!response.ok || !response.body) {
@@ -42,7 +43,8 @@ async function* webEvents(
 }
 async function* nativeEvents(
 	request: NetworkRequest,
-	signal: AbortSignal
+	signal: AbortSignal,
+	gameId?: string
 ): AsyncGenerator<NetworkEvent, void> {
 	if (!isTauri() || window !== window.top) {
 		throw new TypeError('Fetch unavailable');
@@ -66,7 +68,7 @@ async function* nativeEvents(
 	signal.addEventListener('abort', cancel, { once: true });
 	try {
 		signal.throwIfAborted();
-		await host({ kind: 'fetch', id, request }, channel);
+		await host({ kind: 'fetch', id, request, ...(gameId ? { gameId } : {}) }, channel);
 		for (;;) {
 			signal.throwIfAborted();
 			if (!queue.length) {
@@ -86,8 +88,14 @@ async function* nativeEvents(
 		cancel();
 	}
 }
-export async function networkHop(request: NetworkRequest, signal: AbortSignal): Promise<Response> {
-	const events = isDesktopBuild ? nativeEvents(request, signal) : webEvents(request, signal);
+export async function networkHop(
+	request: NetworkRequest,
+	signal: AbortSignal,
+	gameId?: string
+): Promise<Response> {
+	const events = isDesktopBuild
+		? nativeEvents(request, signal, gameId)
+		: webEvents(request, signal, gameId);
 	const first = await events.next();
 	if (first.done || first.value.kind !== 'head') {
 		await events.return(undefined);

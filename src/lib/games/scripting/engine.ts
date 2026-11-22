@@ -29,6 +29,7 @@ import { WEB_BOOTSTRAP } from './web-bootstrap.js';
 import { ScriptWebBridge } from './web-bridge.js';
 
 export interface EvaluationOptions {
+	secrets?: import('../secrets/protocol.js').SecretReadAccess;
 	fetch?: typeof globalThis.fetch;
 	signal?: AbortSignal;
 }
@@ -75,7 +76,8 @@ class ActionSandbox {
 				const request = new Request(input, init);
 				return options.fetch(request, { signal: AbortSignal.any([signal, request.signal]) });
 			},
-			this.budget
+			this.budget,
+			options.secrets
 		);
 	}
 	private keep = (

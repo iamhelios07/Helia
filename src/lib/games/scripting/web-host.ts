@@ -1,5 +1,7 @@
 import { decodeBytes, encodeBytes, NETWORK_LIMITS } from '#lib/games/network/protocol.js';
 
+import type { SecretReadAccess } from '../secrets/protocol.js';
+
 import { WEB_TYPES, type WebType } from './web-api.js';
 import { validateWebConstruction } from './web-limits.js';
 
@@ -19,7 +21,10 @@ export class ScriptWebHost {
 	private nextId = 0;
 	private calls = 0;
 	private blobBytes = 0;
-	constructor(private send: typeof fetch) {}
+	constructor(
+		private send: typeof fetch,
+		private secrets?: SecretReadAccess
+	) {}
 	sync(json: string): string {
 		try {
 			return JSON.stringify({ ok: true, value: this.pack(this.execute(this.input(json), false)) });
@@ -30,12 +35,31 @@ export class ScriptWebHost {
 	async async(json: string): Promise<string> {
 		try {
 			const input = this.input(json);
-			const result =
-				input.op === 'fetch' ? await this.fetch(input) : await this.execute(input, true);
+			let result: unknown;
+			if (input.op === 'secret') {
+				result = await this.secret(input);
+			} else if (input.op === 'fetch') {
+				result = await this.fetch(input);
+			} else {
+				result = await this.execute(input, true);
+			}
 			return JSON.stringify({ ok: true, value: this.pack(result) });
 		} catch (error) {
 			return this.failure(error);
 		}
+	}
+	private async secret(input: Call) {
+		const args = this.unpack(input.args) as unknown[];
+		if (!this.secrets || !Array.isArray(args) || typeof args[0] !== 'string') {
+			throw new TypeError('Secret unavailable');
+		}
+		if (input.name === 'has') {
+			return this.secrets.has(args[0]);
+		}
+		if (input.name === 'ref') {
+			return this.secrets.ref(args[0]);
+		}
+		throw new TypeError('Secret unavailable');
 	}
 	private input(json: string): Call {
 		if (json.length > NETWORK_LIMITS.requestBytes * 1.4 + 32768 || ++this.calls > 4096) {

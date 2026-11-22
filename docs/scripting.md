@@ -130,6 +130,38 @@ Use `useUIState` for presentation state such as selected tabs. Store game progre
 
 These are presentation helpers; they do not define inventory rules, statistics or quest progression. Ordinary Preact elements are also available. Packaged imports support `preact`, `preact/hooks`, `@helia/ui` and relative project modules. Import the generated state type with `import type { GameState } from '@helia/state'`.
 
+### Game secrets
+
+Game secrets are private player configuration shared by every session of the current game. They are separate from Game State, messages, branches and exported game content. The current Helia profile owns the store. Model API keys and service accounts live in a separate credential domain and are never accessible through these methods. Creators cannot choose a credential ID, storage path, user or game scope; the host supplies the current game.
+
+| Context     | API                                 | Behavior                                                                     |
+| ----------- | ----------------------------------- | ---------------------------------------------------------------------------- |
+| UI          | `secrets.set(name, value, { url })` | Register or replace a secret for an exact HTTPS destination.                 |
+| UI / Action | `secrets.has(name)`                 | Check whether this game has the named secret.                                |
+| UI          | `secrets.remove(name)`              | Delete the current game's secret.                                            |
+| Action      | `helia.secrets.ref(name)`           | Get an opaque reference for use in request headers. Never returns the value. |
+
+UI imports `secrets` from `@helia/ui` or uses `helia.secrets`. Logic uses `helia.secrets` inside Actions. All methods return Promises. There is no plaintext `get`, enumeration, encryption or decryption interface. Names contain 1–64 letters, digits, dots, underscores or hyphens and start with a letter. Registration and deletion are immediate private operations; they do not create a game transaction and are not undone by branch checkout.
+
+```ts
+// UI event handler: keep the input out of state, Action arguments and chat.
+await secrets.set('novelai', tokenInput, {
+	url: 'https://image.novelai.net/ai/generate-image'
+});
+
+// Action: the host substitutes the value only for the saved HTTPS URL.
+const reference = await helia.secrets.ref('novelai');
+const response = await helia.fetch('https://image.novelai.net/ai/generate-image', {
+	method: 'POST',
+	headers: { authorization: `Bearer ${reference}` },
+	body: JSON.stringify(payload)
+});
+```
+
+References are bound to the game, name, value and exact destination, including query parameters. They cannot authorize another game's request or a redirect to another URL. Changed values/destinations invalidate old references. Use references only in headers; do not store them in state or chat. Reflected credential bytes in response headers or bodies cause the request to fail. Network consent and private-address restrictions still apply.
+
+The web host uses its own encrypted database and key; desktop uses its own OS credential service. Neither exposes provider credentials. Secrets remain outside export/import and must be registered by each player. Editor previews have no persistent secret access (`has` returns false); normal play shares values across sessions and reloads. Failures report `Game secret unavailable` without including input values.
+
 ### Session file storage
 
 `storage` is available as `helia.storage` and as an export from `@helia/ui`. It stores immutable files for the current session, separately from Game State, chat history and packaged assets.

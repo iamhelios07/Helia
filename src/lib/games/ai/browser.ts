@@ -11,6 +11,7 @@ import {
 	executeSessionAgentHook
 } from '#lib/games/repository.js';
 import { runCreatorAction } from '#lib/games/scripting/browser.js';
+import { gameActions } from '#lib/games/scripting/game-scope.js';
 
 import { generationActions, withGenerationActivity } from './action-activity.js';
 import { beginSessionActivity, publishSessionAIEvent } from './activity.js';
@@ -67,7 +68,7 @@ export async function invokeSessionAI(
 			const result = await runAgentWorkspace(timeline, text, {
 				connection: { provider: providerAddress(provider), model: model.modelId },
 				generate: scope.generate,
-				run: generationActions(runtime.runAction, scope.touch),
+				run: generationActions(gameActions(runtime.runAction, gameId), scope.touch),
 				signal: signal,
 				emit: emit,
 				config: prompt,

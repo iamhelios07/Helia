@@ -17,6 +17,7 @@ import { parseGame, type Game } from './model.js';
 import { createGameRepository } from './repository-core.js';
 import { runCreatorAction } from './scripting/browser.js';
 import { CreatorRuntimeError, type ActionRunner } from './scripting/protocol.js';
+import { unavailableSecrets } from './secrets/protocol.js';
 import { parseAction, type SessionHistory } from './state/model.js';
 import { parseGameState, type GameState } from './state/value.js';
 
@@ -142,6 +143,8 @@ class PlaygroundSession {
 		try {
 			const result = await (this.options.runAction ?? runCreatorAction)(input, {
 				...runOptions,
+				gameId: undefined,
+				secrets: unavailableSecrets,
 				signal: AbortSignal.any([
 					this.abort.signal,
 					...(runOptions.signal ? [runOptions.signal] : [])

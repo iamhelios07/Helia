@@ -9,6 +9,7 @@ import {
 } from '#lib/games/network/protocol.js';
 
 import { networkAddresses } from './network-policy.js';
+import { SecretResponseGuard } from './secret-response.js';
 
 /** A single hop: redirect destinations must return to the trusted permission gate. */
 export async function sendNetworkRequest(
@@ -59,12 +60,15 @@ export async function sendNetworkRequest(
 }
 async function* networkEvents(
 	input: unknown,
-	signal: AbortSignal
+	signal: AbortSignal,
+	values: string[]
 ): AsyncGenerator<NetworkEvent, void> {
 	const { response, close } = await sendNetworkRequest(input, signal);
+	const guard = new SecretResponseGuard(values);
 	const reader = response.body?.getReader();
 	try {
 		const headers = [...response.headers].filter(([name]) => name !== 'set-cookie');
+		guard.headers(headers);
 		if (JSON.stringify(headers).length > NETWORK_LIMITS.headerBytes) {
 			throw new TypeError('Fetch headers too large');
 		}
@@ -82,7 +86,14 @@ async function* networkEvents(
 			if (bytes > NETWORK_LIMITS.responseBytes) {
 				throw new TypeError('Fetch response too large');
 			}
-			yield { kind: 'chunk', data: encodeBytes(part.value) };
+			const safe = guard.push(part.value);
+			if (safe.length) {
+				yield { kind: 'chunk', data: encodeBytes(safe) };
+			}
+		}
+		const tail = guard.push(new Uint8Array(), true);
+		if (tail.length) {
+			yield { kind: 'chunk', data: encodeBytes(tail) };
 		}
 		yield { kind: 'end' };
 	} finally {
@@ -90,9 +101,13 @@ async function* networkEvents(
 		await close();
 	}
 }
-export function networkResponse(input: unknown, parent: AbortSignal): Response {
+export function networkResponse(
+	input: unknown,
+	parent: AbortSignal,
+	values: string[] = []
+): Response {
 	const abort = new AbortController();
-	const events = networkEvents(input, AbortSignal.any([parent, abort.signal]));
+	const events = networkEvents(input, AbortSignal.any([parent, abort.signal]), values);
 	const encoder = new TextEncoder();
 	let closed = false;
 	const stream = new ReadableStream<Uint8Array>({

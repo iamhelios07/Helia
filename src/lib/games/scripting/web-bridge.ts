@@ -22,9 +22,10 @@ export class ScriptWebBridge {
 	constructor(
 		private vm: QuickJSContext,
 		send: typeof fetch,
-		private budget: ExecutionBudget
+		private budget: ExecutionBudget,
+		secrets?: import('../secrets/protocol.js').SecretReadAccess
 	) {
-		this.host = new ScriptWebHost(send);
+		this.host = new ScriptWebHost(send, secrets);
 		this.callbacks = [
 			vm.newFunction('webSync', (json) => vm.newString(this.host.sync(vm.getString(json)))),
 			vm.newFunction('webAsync', (json) => this.request(vm.getString(json))),

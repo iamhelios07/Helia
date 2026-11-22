@@ -91,7 +91,8 @@ export const BOOTSTRAP = String.raw`
     emit,
     appendMessage: message => emit('$helia.message', message),
     queueTurn,
-    fetch
+    fetch,
+    secrets:freeze({has:name=>{checkWeb();return webFetch.secrets.has(name);},ref:name=>{checkWeb();return webFetch.secrets.ref(name);}})
   }), writable: false, configurable: false});
   return freeze({
     installWeb(factory,sync,async,encode,decode) {

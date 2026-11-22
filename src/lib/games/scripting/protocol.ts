@@ -87,6 +87,10 @@ export interface ActionResult {
 	independentHooks?: string[];
 }
 export interface RunOptions {
+	/** Trusted host scope; creator arguments never select credential scope. */
+	gameId?: string;
+	/** Isolated host overrides, used by previews and tests. */
+	secrets?: import('../secrets/protocol.js').SecretReadAccess;
 	signal?: AbortSignal;
 	lease?: string;
 	/** Trusted host notification while an Action waits for external IO. */

@@ -1,4 +1,5 @@
 import { createFetchClient } from '#lib/games/network/fetch-client.js';
+import { createSecretClient } from '#lib/games/secrets/worker-client.js';
 
 import { evaluateAction } from './engine.js';
 import { boundedText, CreatorRuntimeError, parseInput, type WorkerReply } from './protocol.js';
@@ -6,6 +7,9 @@ import { boundedText, CreatorRuntimeError, parseInput, type WorkerReply } from '
 // One request per disposable worker. Neither this scope nor its APIs are exposed to QuickJS.
 globalThis.onmessage = async (event: MessageEvent<unknown>) => {
 	let reply: WorkerReply;
+	const secrets = createSecretClient((message, ports) =>
+		globalThis.postMessage(message, { transfer: ports })
+	);
 	const network = createFetchClient((message, ports) =>
 		globalThis.postMessage(message, { transfer: ports })
 	);
@@ -14,7 +18,10 @@ globalThis.onmessage = async (event: MessageEvent<unknown>) => {
 			throw new CreatorRuntimeError('input');
 		}
 		const request = parseInput(JSON.parse(boundedText(event.data)));
-		reply = { ok: true, result: await evaluateAction(request, { fetch: network.fetch }) };
+		reply = {
+			ok: true,
+			result: await evaluateAction(request, { fetch: network.fetch, secrets: secrets.access })
+		};
 	} catch (error) {
 		reply =
 			error instanceof CreatorRuntimeError
@@ -28,6 +35,7 @@ globalThis.onmessage = async (event: MessageEvent<unknown>) => {
 				: { ok: false, code: 'execution', scriptId: null };
 	} finally {
 		network.dispose();
+		secrets.dispose();
 	}
 	try {
 		globalThis.postMessage(boundedText(JSON.stringify(reply)));

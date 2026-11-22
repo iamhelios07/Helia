@@ -133,8 +133,19 @@ fn validate(input: &FetchInput) -> Result<(Url, Method, Vec<u8>), String> {
     }
     Ok((url, method, body))
 }
-async fn execute(input: FetchInput, channel: &Channel<Value>) -> Result<(), String> {
+async fn execute(
+    input: FetchInput,
+    channel: &Channel<Value>,
+    game_id: Option<String>,
+) -> Result<(), String> {
     let (url, method, body) = validate(&input)?;
+    let target_url = url.to_string();
+    let authorized = tauri::async_runtime::spawn_blocking(move || {
+        crate::game_secrets::authorize(game_id.as_deref(), &target_url, input.headers)
+    })
+    .await
+    .map_err(|_| ERROR)??;
+    let mut guard = crate::secret_response::SecretResponseGuard::new(authorized.values);
     let destination = url.clone();
     let addresses = tauri::async_runtime::spawn_blocking(move || addresses(&destination))
         .await
@@ -154,7 +165,7 @@ async fn execute(input: FetchInput, channel: &Channel<Value>) -> Result<(), Stri
         .request(method, url)
         .header("accept-encoding", "identity")
         .body(body);
-    for (name, value) in input.headers {
+    for (name, value) in authorized.headers {
         let name = HeaderName::from_bytes(name.as_bytes()).map_err(|_| ERROR)?;
         if !header_allowed(name.as_str()) {
             return Err(ERROR.into());
@@ -168,6 +179,10 @@ async fn execute(input: FetchInput, channel: &Channel<Value>) -> Result<(), Stri
         .filter(|(name, _)| name.as_str() != "set-cookie")
         .map(|(name, value)| (name.as_str(), value.to_str().unwrap_or_default()))
         .collect();
+    for (name, value) in &headers {
+        guard.header(name)?;
+        guard.header(value)?;
+    }
     if serde_json::to_vec(&headers).map_err(|_| ERROR)?.len() > 16384 {
         return Err(ERROR.into());
     }
@@ -178,8 +193,17 @@ async fn execute(input: FetchInput, channel: &Channel<Value>) -> Result<(), Stri
         if size > RESPONSE_BYTES {
             return Err(ERROR.into());
         }
+        let safe = guard.push(&chunk, false)?;
+        if !safe.is_empty() {
+            channel
+                .send(json!({"kind":"chunk","data":STANDARD.encode(safe)}))
+                .map_err(|_| ERROR)?;
+        }
+    }
+    let tail = guard.push(&[], true)?;
+    if !tail.is_empty() {
         channel
-            .send(json!({"kind":"chunk","data":STANDARD.encode(chunk)}))
+            .send(json!({"kind":"chunk","data":STANDARD.encode(tail)}))
             .map_err(|_| ERROR)?;
     }
     channel.send(json!({"kind":"end"})).map_err(|_| ERROR)?;
@@ -207,9 +231,14 @@ fn dispatch(request: Value, channel: Channel<Value>) -> Result<(), String> {
     let input: FetchInput =
         serde_json::from_value(request["request"].clone()).map_err(|_| ERROR)?;
     validate(&input)?;
+    let game_id = match request.get("gameId") {
+        Some(Value::String(id)) => Some(crate::game_secrets::scope(id)?.to_owned()),
+        None => None,
+        _ => return Err(ERROR.into()),
+    };
     let key = id.clone();
     let job = tauri::async_runtime::spawn(async move {
-        if execute(input, &channel).await.is_err() {
+        if execute(input, &channel, game_id).await.is_err() {
             let _ = channel.send(json!({"kind":"error"}));
         }
         if let Ok(mut jobs) = JOBS.get().unwrap().lock() {

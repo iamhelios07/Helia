@@ -1,6 +1,7 @@
 import { json } from '@sveltejs/kit';
 
 import { NETWORK_LIMITS, parseNetworkRequest } from '#lib/games/network/protocol.js';
+import { serverGameSecrets } from '#lib/server/game-secrets.js';
 import { networkResponse } from '#lib/server/network.js';
 
 import type { RequestHandler } from './$types';
@@ -33,8 +34,15 @@ export const POST: RequestHandler = async ({ request, url }) => {
 			}
 			chunks.push(part.value);
 		}
-		const input = parseNetworkRequest(JSON.parse(await new Blob(chunks).text()));
-		return networkResponse(input, request.signal);
+		const raw: unknown = JSON.parse(await new Blob(chunks).text());
+		const input = parseNetworkRequest(raw);
+		const gameId = raw && typeof raw === 'object' && 'gameId' in raw ? raw.gameId : undefined;
+		const authorized = serverGameSecrets().authorize(gameId, input.url, input.headers);
+		return networkResponse(
+			{ ...input, headers: authorized.headers },
+			request.signal,
+			authorized.values
+		);
 	} catch {
 		return json(
 			{ error: 'Invalid fetch request' },

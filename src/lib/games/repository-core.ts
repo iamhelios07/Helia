@@ -65,6 +65,7 @@ import {
 	type GameMetadata,
 	type UpdateGameSettings
 } from './model.js';
+import { gameActions } from './scripting/game-scope.js';
 import { migrateState } from './state/migration.js';
 import { parseGameUI } from './ui/runtime/model.js';
 function makeSession(gameId: string): Session {
@@ -498,7 +499,7 @@ class GameRepository {
 			context.history,
 			input,
 			{
-				run: this.options.runAction,
+				run: gameActions(this.options.runAction, gameId),
 				read: () => this.withHistory(gameId, sessionId, (_unit, next) => next.history),
 				commit: (proposal, snapshotId) =>
 					this.withHistory(

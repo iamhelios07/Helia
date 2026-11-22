@@ -4,6 +4,23 @@ import type { ActionRequest } from './protocol.js';
 
 import { evaluateAction } from './engine.js';
 
+it('exposes only scoped has/ref capabilities during Actions and never accepts arbitrary secret operations', async () => {
+	const has = vi.fn(async (name: string) => name === 'novelai'),
+		ref = vi.fn(async () => 'helia-secret:v1:novelai:' + 'a'.repeat(64));
+	const result = await evaluateAction(
+		input(
+			`if(typeof helia.secrets.get!=='undefined'||typeof helia.secrets.set!=='undefined'||typeof helia.secrets.remove!=='undefined')throw Error('write access');if(!await helia.secrets.has('novelai'))throw Error('missing');const value=await helia.secrets.ref('novelai');if(!value.startsWith('helia-secret:'))throw Error('reference');return state;`
+		),
+		{ secrets: { has, ref } }
+	);
+	expect(result.state).toEqual({ gold: 100 });
+	expect(has).toHaveBeenCalledWith('novelai');
+	expect(ref).toHaveBeenCalledWith('novelai');
+	await expect(
+		evaluateAction(input('await helia.secrets.ref("novelai");return state;'))
+	).rejects.toMatchObject({ code: 'execution' });
+});
+
 function input(body: string, extra = ''): ActionRequest {
 	return {
 		scripts: {

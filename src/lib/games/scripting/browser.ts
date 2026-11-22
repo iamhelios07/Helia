@@ -1,6 +1,10 @@
 import { FetchBridge } from '#lib/games/network/bridge.js';
 import { requestNetworkPermission } from '#lib/games/network/permission.js';
 import { NETWORK_LIMITS } from '#lib/games/network/protocol.js';
+import { networkHop } from '#lib/games/network/transport.js';
+import { SecretWorkerBridge } from '#lib/games/secrets/bridge.js';
+import { gameSecrets } from '#lib/games/secrets/client.js';
+import { unavailableSecrets } from '#lib/games/secrets/protocol.js';
 
 import {
 	boundedText,
@@ -18,84 +22,99 @@ let active = 0;
 /** The Worker supplies termination and UI responsiveness; QuickJS supplies the capability boundary. */
 export const runCreatorAction: ActionRunner = async (input, options = {}) => {
 	if (options.signal?.aborted) {
-		return Promise.reject(new CreatorRuntimeError('canceled'));
+		throw new CreatorRuntimeError('canceled');
 	}
 	if (typeof Worker === 'undefined') {
-		return Promise.reject(new CreatorRuntimeError('unavailable'));
+		throw new CreatorRuntimeError('unavailable');
 	}
 	if (active >= 4) {
-		return Promise.reject(new CreatorRuntimeError('busy'));
+		throw new CreatorRuntimeError('busy');
 	}
-	const request = encodeInput(input);
-	const schema = parseInput(JSON.parse(request)).schema;
-	return new Promise((resolve, reject) => {
-		let worker: Worker;
-		try {
-			worker = new Worker(new URL('./worker.ts', import.meta.url), { type: 'module' });
-		} catch {
-			reject(new CreatorRuntimeError('unavailable'));
+	const request = encodeInput(input),
+		schema = parseInput(JSON.parse(request)).schema;
+	let worker: Worker;
+	try {
+		worker = new Worker(new URL('./worker.ts', import.meta.url), { type: 'module' });
+	} catch {
+		throw new CreatorRuntimeError('unavailable');
+	}
+	active++;
+	const execution = new WorkerExecution(worker, options);
+	try {
+		return decodeWorkerReply(await execution.run(request), schema);
+	} catch (error) {
+		throw error instanceof CreatorRuntimeError ? error : new CreatorRuntimeError('protocol');
+	}
+};
+class WorkerExecution {
+	private done = false;
+	private reject: (error: CreatorRuntimeError) => void = () => {};
+	private readonly watchdog = new ActionWatchdog(() => this.fail('timeout'));
+	private readonly network: FetchBridge;
+	private readonly secrets: SecretWorkerBridge;
+	constructor(
+		private worker: Worker,
+		private options: import('./protocol.js').RunOptions
+	) {
+		this.network = new FetchBridge(
+			requestNetworkPermission,
+			this.activity,
+			(count) => this.watchdog.touch(count),
+			(request, signal) => networkHop(request, signal, options.gameId)
+		);
+		const access =
+			options.secrets ?? (options.gameId ? gameSecrets(options.gameId) : unavailableSecrets);
+		this.secrets = new SecretWorkerBridge(access, this.activity);
+	}
+	private activity = () => {
+		this.watchdog.touch();
+		this.options.onActivity?.();
+	};
+	private cancel = () => this.fail('canceled');
+	private fail(code: CreatorFailureCode) {
+		this.finish(() => this.reject(new CreatorRuntimeError(code)));
+	}
+	run(request: string): Promise<unknown> {
+		return new Promise((resolve, reject) => {
+			this.reject = reject;
+			this.watchdog.touch();
+			this.worker.onerror = (event) => {
+				event.preventDefault();
+				this.fail('unavailable');
+			};
+			this.worker.onmessageerror = () => this.fail('protocol');
+			this.worker.onmessage = (event) => {
+				if (this.done || this.network.receive(event) || this.secrets.receive(event)) {
+					return;
+				}
+				this.finish(() => resolve(event.data));
+			};
+			this.options.signal?.addEventListener('abort', this.cancel, { once: true });
+			if (this.options.signal?.aborted) {
+				this.cancel();
+				return;
+			}
+			try {
+				this.worker.postMessage(request);
+			} catch {
+				this.fail('protocol');
+			}
+		});
+	}
+	private finish(operation: () => void) {
+		if (this.done) {
 			return;
 		}
-		active++;
-		let done = false;
-		const watchdog = new ActionWatchdog(() =>
-			finish(() => reject(new CreatorRuntimeError('timeout')))
-		);
-		const network = new FetchBridge(
-			requestNetworkPermission,
-			() => {
-				watchdog.touch();
-				options.onActivity?.();
-			},
-			(count) => {
-				watchdog.touch(count);
-			}
-		);
-		function finish(operation: () => void) {
-			if (done) {
-				return;
-			}
-			done = true;
-			watchdog.dispose();
-			network.dispose();
-			options.signal?.removeEventListener('abort', cancel);
-			worker.terminate();
-			active--;
-			operation();
-		}
-		const cancel = () => finish(() => reject(new CreatorRuntimeError('canceled')));
-		watchdog.touch();
-		worker.onerror = (event) => {
-			event.preventDefault();
-			finish(() => reject(new CreatorRuntimeError('unavailable')));
-		};
-		worker.onmessageerror = () => finish(() => reject(new CreatorRuntimeError('protocol')));
-		worker.onmessage = (event) => {
-			if (done || network.receive(event)) {
-				return;
-			}
-			finish(() => {
-				try {
-					resolve(decodeWorkerReply(event.data, schema));
-				} catch (error) {
-					reject(
-						error instanceof CreatorRuntimeError ? error : new CreatorRuntimeError('protocol')
-					);
-				}
-			});
-		};
-		options.signal?.addEventListener('abort', cancel, { once: true });
-		if (options.signal?.aborted) {
-			cancel();
-		} else {
-			try {
-				worker.postMessage(request);
-			} catch {
-				finish(() => reject(new CreatorRuntimeError('protocol')));
-			}
-		}
-	});
-};
+		this.done = true;
+		this.watchdog.dispose();
+		this.network.dispose();
+		this.secrets.dispose();
+		this.options.signal?.removeEventListener('abort', this.cancel);
+		this.worker.terminate();
+		active--;
+		operation();
+	}
+}
 
 class ActionWatchdog {
 	private waiting = 0;

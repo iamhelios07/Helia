@@ -51,6 +51,6 @@ export const WEB_BOOTSTRAP = String.raw`
  Object.setPrototypeOf(classes.File.prototype,classes.Blob.prototype);
  define(classes.ReadableStream.prototype,Symbol.asyncIterator,{value:async function*(){const reader=this.getReader();let done=false;try{for(;;){const part=await reader.read();if(part.done){done=true;return;}yield part.value;}}finally{if(!done)await reader.cancel();reader.releaseLock();}}});
  const fetch=function(input,init){canFetch();return wait({op:'fetch',args:[input,init]});};
- return fetch;
+ return Object.assign(fetch,{secrets:Object.freeze({has:name=>wait({op:'secret',name:'has',args:[name]}),ref:name=>wait({op:'secret',name:'ref',args:[name]})})});
 })
 `;

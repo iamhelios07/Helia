@@ -155,6 +155,11 @@ interface HookDefinition extends RuleDefinition {
 
 /** QuickJS logic API. Only Actions may await Web IO; state comes from each operation's context. */
 interface HeliaRuntime {
+	/** Scoped to this game. References can only be used in headers for their saved HTTPS URL. */
+	readonly secrets: {
+		has(name: string): Promise<boolean>;
+		ref(name: string): Promise<string>;
+	};
 	/** Permission-gated HTTP(S), available during Action execution. */
 	fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response>;
 	defineAction<TArgs extends object = JsonObject>(definition: ActionDefinition<TArgs>): void;
@@ -208,6 +213,11 @@ interface StatsProps {
 }
 /** Preact frame API. Writes resolve after the host commits. */
 interface HeliaUIRuntime {
+	readonly secrets: {
+		set(name: string, value: string, options: { url: string }): Promise<void>;
+		has(name: string): Promise<boolean>;
+		remove(name: string): Promise<void>;
+	};
 	readonly storage: SessionFileStorage;
 	useAssetURL(ref: string | null | undefined): {
 		url: string | null;
@@ -258,6 +268,7 @@ declare module '@helia/ui' {
 	export type ModelResponse = globalThis.ModelResponse;
 	export const callModel: HeliaUIRuntime['callModel'];
 	export const storage: HeliaUIRuntime['storage'];
+	export const secrets: HeliaUIRuntime['secrets'];
 	export const useAssetURL: HeliaUIRuntime['useAssetURL'];
 	export type ChatMessage = ChatMessageInput;
 	export const helia: HeliaUIRuntime;

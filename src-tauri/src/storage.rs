@@ -46,6 +46,10 @@ impl StorageAccess {
                 value: request => invoke('credential_request', {{ request, token }}),
                 writable: false, configurable: false
             }});
+            Object.defineProperty(window, '__HELIA_GAME_SECRETS__', {{
+                value: (gameId, request) => invoke('game_secrets_request', {{ gameId, request, token }}),
+                writable: false, configurable: false
+            }});
             Object.defineProperty(window, '__HELIA_AI__', {{
                 value: (request, onChunk) => invoke('ai_request', {{ request, onChunk, token }}),
                 writable: false, configurable: false

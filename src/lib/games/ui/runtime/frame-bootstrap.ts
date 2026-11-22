@@ -1,4 +1,5 @@
 import { FILE_BOOTSTRAP } from './files-bootstrap.js';
+import { SECRET_BOOTSTRAP } from './secrets-bootstrap.js';
 
 /** Trusted Preact shell, emitted inside an opaque-origin iframe alongside the packaged modules. */
 export const FRAME_BOOTSTRAP = String.raw`
@@ -6,6 +7,7 @@ let port, preact, api, latest, uiValues, initialized=false, booting=true, nextRe
 let views=[];
 const cache=new Map(), panels=new Map(), stateListeners=new Set(), uiListeners=new Set(), eventListeners=new Map(), pending=new Map(), disposers=new Set();
 ${FILE_BOOTSTRAP}
+${SECRET_BOOTSTRAP}
 Object.defineProperty(globalThis,'fetch',{value:undefined,writable:false,configurable:false});
 const send=(message)=>port.postMessage(JSON.stringify(message));
 const freeze=value=>{if(value&&typeof value==='object'){Object.values(value).forEach(freeze);Object.freeze(value);}return value;};
@@ -34,7 +36,7 @@ function redraw(){if(!booting)preact.render(preact.h('div',{},views.filter(view=
 let hooks,Boundary;
 function receive(message){
   if(message.kind==='files-changed'){for(const listener of [...fileListeners])listener(message.ref);
-  }else if(message.kind==='file-response'){
+  }else if(message.kind==='file-response'||message.kind==='secret-response'){
     const job=pending.get(message.id);if(!job)return;pending.delete(message.id);clearTimeout(job.timer);
     if(message.ok)job.resolve(message.result);else job.reject(Error(message.error));
   }else if(message.kind==='views'){views=message.views;redraw();
@@ -88,7 +90,7 @@ function start(initial){
   const Stats=({items=[],label='스탯'})=>h('dl',{'aria-label':label},items.map(item=>h(preact.Fragment,{},h('dt',{},item.label),h('dd',{},String(item.value)))));
   const QuestList=({items=[],renderItem=item=>String(item),label='퀘스트'})=>h(Inventory,{items,renderItem,label});
   api={asset:id=>{if(typeof id!=='string'||!Object.hasOwn(resources,id))throw Error('리소스를 찾을 수 없어요.');return resources[id];},registerPanel,subscribeState,useGameState,useUIState,useUIEvent,onEvent,onDispose:fn=>{disposers.add(fn);return ()=>disposers.delete(fn);},getState:()=>latest,action:(action,args={})=>request('action',{action:{name:action,args}}),commitState:(action,state)=>request('transaction',{action,state}),callModel:options=>request('model',{options}),runTurn:(text,options={})=>request('turn',{text,visible:options.visible===true}),appendMessage:message=>request('message',{message}),Button,Text,Progress,Inventory,Stats,QuestList};
-  api.storage=storage;api.useAssetURL=useAssetURL;
+  api.storage=storage;api.useAssetURL=useAssetURL;api.secrets=secrets;
   api.helia=api;Object.freeze(api);Object.defineProperty(globalThis,'helia',{value:api,writable:false,configurable:false});
   try{const module=load(entry);if(typeof module.default==='function'){const dispose=module.default(api);if(dispose!==undefined&&typeof dispose!=='function'){if(dispose&&typeof dispose.then==='function')Promise.resolve(dispose).catch(()=>{});throw Error('Entry must initialize synchronously');}if(typeof dispose==='function')disposers.add(dispose);}booting=false;publishPanels();redraw();send({kind:'ready'});}
   catch{send({kind:'error',message:'게임 UI를 시작하지 못했어요.'});}

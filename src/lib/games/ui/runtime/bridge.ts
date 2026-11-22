@@ -15,6 +15,9 @@ import {
 import { parseAction, type SessionHistory } from '#lib/games/state/model.js';
 import { parseGameState, type GameState } from '#lib/games/state/value.js';
 
+import { SecretBridge } from '../../secrets/bridge.js';
+import { gameSecrets } from '../../secrets/client.js';
+import { unavailableSecrets } from '../../secrets/protocol.js';
 import { compileGameUI } from './compiler.js';
 import { FileBridge } from './files-bridge.js';
 import { UI_LIMITS, type GameUI, type PanelInfo, type PanelView } from './model.js';
@@ -23,6 +26,7 @@ import { UI_LIMITS, type GameUI, type PanelInfo, type PanelView } from './model.
 const transient = new Map<string, GameState>();
 export type GameUIHandle = (() => void) & { setViews(views: PanelView[]): void };
 export interface GameUIRuntime {
+	secrets?: import('../../secrets/protocol.js').SecretAccess;
 	files?: SessionFileAccess;
 	callModel?: typeof callSessionModel;
 	getSessionHistory: typeof getSessionHistory;
@@ -124,6 +128,7 @@ function watchContent(context: BridgeContext, history: SessionHistory): GameUIHa
 
 class GameUIBridge {
 	private readonly files: FileBridge;
+	private readonly secrets: SecretBridge;
 	private readonly channel = new MessageChannel();
 	private readonly abort = new AbortController();
 	private disposed = false;
@@ -144,6 +149,15 @@ class GameUIBridge {
 		private readonly token: string
 	) {
 		this.stateKey = JSON.stringify([context.gameId, context.sessionId]);
+		this.secrets = new SecretBridge(
+			context.runtime.secrets ??
+				(context.options.runtime ? unavailableSecrets : gameSecrets(context.gameId)),
+			(message) => {
+				if (this.connected && !this.disposed) {
+					this.channel.port1.postMessage(message);
+				}
+			}
+		);
 		this.files = new FileBridge(context.files, (message) => {
 			if (this.connected && !this.disposed) {
 				this.channel.port1.postMessage(message);
@@ -338,6 +352,7 @@ class GameUIBridge {
 	private async receive(event: MessageEvent<unknown>) {
 		if (!this.disposed && typeof event.data === 'object' && event.data !== null) {
 			await this.files.receive(event.data);
+			await this.secrets.receive(event.data);
 			return;
 		}
 		let id: string | undefined;
@@ -407,6 +422,7 @@ class GameUIBridge {
 		this.send({ kind: 'dispose' });
 		this.disposed = true;
 		this.files.dispose();
+		this.secrets.dispose();
 		this.abort.abort();
 		clearTimeout(this.timeout);
 		this.unsubscribeChanges();
