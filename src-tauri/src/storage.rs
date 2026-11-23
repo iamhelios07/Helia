@@ -617,6 +617,12 @@ fn code_project(value: Option<&Value>) -> bool {
     if !value.is_object() || value["version"] != 1 {
         return false;
     }
+    // Validate the typed form TS `parseCodeProject` produces, so legacy `.js` files behind a
+    // canonical `.ts` entry are judged the same way on both hosts.
+    let Ok(normalized) = releases::normalize_code(value) else {
+        return false;
+    };
+    let value = &normalized;
     let Some(files) = value["files"].as_object() else {
         return false;
     };
@@ -858,16 +864,17 @@ fn transaction_message_ids(value: &Value) -> Vec<&str> {
 fn valid_value(table: Table, value: &Value) -> bool {
     match table {
         Table::Games => {
-            id(&value["title"])
-                && value["title"]
-                    .as_str()
-                    .is_some_and(|v| v.trim().encode_utf16().count() <= 120)
+            // TS validateGameMetadata: limits apply after `String.prototype.trim`.
+            value["title"]
+                .as_str()
+                .map(releases::js_trim)
+                .is_some_and(|v| !v.is_empty() && v.encode_utf16().count() <= 120)
                 && value["genre"]
                     .as_str()
-                    .is_some_and(|v| v.trim().encode_utf16().count() <= 80)
+                    .is_some_and(|v| releases::js_trim(v).encode_utf16().count() <= 80)
                 && value["description"]
                     .as_str()
-                    .is_some_and(|v| v.trim().encode_utf16().count() <= 2000)
+                    .is_some_and(|v| releases::js_trim(v).encode_utf16().count() <= 2000)
                 && timestamp(&value["createdAt"])
                 && timestamp(&value["updatedAt"])
                 && settings(&value["settings"])

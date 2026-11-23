@@ -288,7 +288,7 @@ fn ai_content(value: &Value) -> Result<Value, String> {
         let folders = folders.as_array().filter(|v| v.len() <= 128).ok_or(ERROR)?;
         let mut names = vec![];
         for folder in folders {
-            let name = folder.as_str().ok_or(ERROR)?.trim();
+            let name = js_trim(folder.as_str().ok_or(ERROR)?);
             if name.is_empty() || name.encode_utf16().count() > 80 {
                 return Err(ERROR.into());
             }
@@ -367,6 +367,27 @@ fn typed_path(path: &str) -> String {
     }
     path.to_owned()
 }
+/// ECMAScript WhiteSpace + LineTerminator (`\s`, `String.prototype.trim`); unlike
+/// `char::is_whitespace` it includes U+FEFF and excludes U+0085.
+fn js_whitespace(character: char) -> bool {
+    matches!(
+        character,
+        '\u{0009}'..='\u{000d}'
+            | '\u{0020}'
+            | '\u{00a0}'
+            | '\u{1680}'
+            | '\u{2000}'..='\u{200a}'
+            | '\u{2028}'
+            | '\u{2029}'
+            | '\u{202f}'
+            | '\u{205f}'
+            | '\u{3000}'
+            | '\u{feff}'
+    )
+}
+pub(super) fn js_trim(value: &str) -> &str {
+    value.trim_matches(js_whitespace)
+}
 fn normalize_layout(layout: &Value) -> Result<Value, String> {
     if layout["kind"] == "panel" {
         return Ok(pick(layout, &["kind", "id"]));
@@ -378,6 +399,10 @@ fn normalize_layout(layout: &Value) -> Result<Value, String> {
 }
 fn normalize_presentation(value: &mut Value) -> Result<(), String> {
     if let Some(layout) = value.get("layout") {
+        // Bounded validation first: normalize_layout recurses without a depth limit.
+        if !super::panel_layout(layout, 0, &mut std::collections::HashSet::new()) {
+            return Err(ERROR.into());
+        }
         value["layout"] = normalize_layout(layout)?;
     }
     Ok(())
@@ -397,10 +422,9 @@ fn import_quote(source: &str, start: usize) -> Option<usize> {
         return None;
     };
     let rest = &tail[offset..];
-    let rest = rest.trim_start_matches(|c: char| c.is_whitespace() || c == '\u{feff}');
+    let rest = rest.trim_start_matches(js_whitespace);
     let rest = if offset == 6 {
-        rest.strip_prefix('(')?
-            .trim_start_matches(|c: char| c.is_whitespace() || c == '\u{feff}')
+        rest.strip_prefix('(')?.trim_start_matches(js_whitespace)
     } else {
         rest
     };
@@ -437,6 +461,10 @@ fn retarget_imports(source: &str) -> String {
         else {
             continue;
         };
+        // TS `\.{1,2}\/[^'"]+\.jsx?` needs a name before the extension: './.js' stays as is.
+        if path == "./" || path == "../" {
+            continue;
+        }
         result.push_str(&source[copied..path_start]);
         result.push_str(path);
         result.push(source.as_bytes()[quote] as char);
@@ -445,20 +473,31 @@ fn retarget_imports(source: &str) -> String {
     result.push_str(&source[copied..]);
     result
 }
-fn normalize_code(code: &Value) -> Result<Value, String> {
+/// Mirrors TS `parseCodeProject` normalization and limits (code-project.ts `parseFiles`,
+/// `stylesheetSize`, `parseFolders`, `parsePresentation`). Sizes are UTF-8 bytes of the raw source.
+pub(super) fn normalize_code(code: &Value) -> Result<Value, String> {
+    let raw_files = code["files"].as_object().ok_or(ERROR)?;
+    if raw_files.len() > 64 {
+        return Err(ERROR.into());
+    }
     let mut files = Map::new();
-    for (path, file) in code["files"].as_object().ok_or(ERROR)? {
+    let mut bytes = 0;
+    for (path, file) in raw_files {
         let target = typed_path(path);
         if files.contains_key(&target) {
             return Err(ERROR.into());
         }
-        let language = file["language"].as_str().ok_or(ERROR)?;
-        let language = match language {
+        let language = match file["language"].as_str().ok_or(ERROR)? {
             "jsx" | "tsx" => "tsx",
             "css" => "css",
-            _ => "typescript",
+            "javascript" | "typescript" => "typescript",
+            _ => return Err(ERROR.into()),
         };
         let source = file["source"].as_str().ok_or(ERROR)?;
+        bytes += source.len();
+        if bytes > 512 * 1024 || (language == "css" && source.len() > 64 * 1024) {
+            return Err(ERROR.into());
+        }
         let source = if language == "css" {
             source.to_owned()
         } else {
@@ -472,8 +511,12 @@ fn normalize_code(code: &Value) -> Result<Value, String> {
     }
     let mut result = json!({"version":1,"entry":entry,"files":files});
     if let Some(folders) = code.get("folders") {
+        let folders = folders.as_array().ok_or(ERROR)?;
+        if folders.len() > 128 {
+            return Err(ERROR.into());
+        }
         let mut unique = vec![];
-        for folder in folders.as_array().ok_or(ERROR)? {
+        for folder in folders {
             if !unique.contains(folder) {
                 unique.push(folder.clone());
             }
@@ -481,6 +524,14 @@ fn normalize_code(code: &Value) -> Result<Value, String> {
         result["folders"] = json!(unique);
     }
     if let Some(presentation) = code.get("presentation") {
+        if presentation
+            .as_object()
+            .ok_or(ERROR)?
+            .keys()
+            .any(|key| !["layout", "chatDock", "chatRatio", "chatStyle"].contains(&key.as_str()))
+        {
+            return Err(ERROR.into());
+        }
         let mut presentation = pick(
             presentation,
             &["layout", "chatDock", "chatRatio", "chatStyle"],
@@ -510,7 +561,7 @@ fn content(connection: &Connection, game: &Value) -> Result<Value, String> {
         ],
     );
     for key in ["title", "genre", "description"] {
-        result[key] = json!(game[key].as_str().ok_or(ERROR)?.trim());
+        result[key] = json!(js_trim(game[key].as_str().ok_or(ERROR)?));
     }
     result["settings"] = pick(
         &game["settings"],
@@ -1014,6 +1065,211 @@ mod tests {
         save(&db, &game);
         assert_eq!(release(&mut db, "two", "1.0.0")["kind"], "released");
         assert!(get_release(&db, "two", original["id"].as_str().unwrap()).is_err());
+    }
+
+    fn legacy_code() -> Value {
+        fixtures()[2]["game"]["code"].clone()
+    }
+
+    #[test]
+    fn trims_and_parses_imports_with_javascript_whitespace_semantics() {
+        assert!(js_whitespace('\u{feff}') && js_whitespace('\u{3000}') && js_whitespace('\n'));
+        assert!(!js_whitespace('\u{0085}') && !js_whitespace('\u{200b}'));
+        let db = connection();
+        let mut game = fixtures()[0]["game"].clone();
+        game["title"] = json!("\u{feff}\u{3000} Title\u{0085}\u{2029}");
+        game["genre"] = json!("\u{0085}Genre\u{feff}");
+        game["description"] = json!("\u{205f}Desc\u{00a0}");
+        let frozen = content(&db, &game).unwrap();
+        assert_eq!(frozen["title"], "Title\u{0085}");
+        assert_eq!(frozen["genre"], "\u{0085}Genre");
+        assert_eq!(frozen["description"], "Desc");
+        // A title made only of JS whitespace (incl. U+FEFF) is empty after TS `trim()` and rejected.
+        game["title"] = json!("\u{feff}\u{3000}");
+        assert!(content(&db, &game).is_err());
+        // U+0085 survives TS `trim()`, so it counts toward the 120-character limit.
+        game["title"] = json!(format!("{}\u{0085}", "a".repeat(119)));
+        assert!(content(&db, &game).is_ok());
+        game["title"] = json!(format!("{}\u{0085}", "a".repeat(120)));
+        assert!(content(&db, &game).is_err());
+        assert_eq!(
+            retarget_imports("import x from\u{feff}'./a.js';import(\u{3000}'./b.jsx')"),
+            "import x from\u{feff}'./a';import(\u{3000}'./b')"
+        );
+        assert_eq!(
+            retarget_imports("import x from\u{0085}'./a.js'"),
+            "import x from\u{0085}'./a.js'"
+        );
+        let mut ai = json!({"version":1,"lorebook":[],"folders":["\u{feff}Lore\u{0085}"]});
+        assert_eq!(ai_content(&ai).unwrap()["folders"], json!(["Lore\u{0085}"]));
+        ai["folders"] = json!(["\u{feff}"]);
+        assert!(ai_content(&ai).is_err());
+    }
+
+    #[test]
+    fn storage_game_metadata_uses_javascript_trim_boundaries() {
+        let valid = |title: String, genre: &str, description: String| {
+            let mut game = fixtures()[0]["game"].clone();
+            game["title"] = json!(title);
+            game["genre"] = json!(genre);
+            game["description"] = json!(description);
+            super::super::valid_value(super::super::Table::Games, &game)
+        };
+        let plain = || "Description".to_owned();
+        assert!(valid("Title".into(), "Genre", plain()));
+        // BOM-only: empty after TS `trim()` (Rust `str::trim` keeps U+FEFF).
+        assert!(!valid("\u{feff}".into(), "Genre", plain()));
+        assert!(!valid("\u{feff}\u{3000} \n".into(), "Genre", plain()));
+        // U+0085-only: not JS whitespace, so the title is non-empty.
+        assert!(valid("\u{0085}".into(), "Genre", plain()));
+        // U+0085 survives trimming and counts toward the 120-character limit.
+        assert!(valid(
+            format!("{}\u{0085}", "a".repeat(119)),
+            "Genre",
+            plain()
+        ));
+        assert!(!valid(
+            format!("{}\u{0085}", "a".repeat(120)),
+            "Genre",
+            plain()
+        ));
+        // U+FEFF padding is trimmed before measuring.
+        assert!(valid(
+            format!("\u{feff}{}\u{feff}", "a".repeat(120)),
+            "Genre",
+            plain()
+        ));
+        assert!(valid(
+            "Title".into(),
+            &format!("{}\u{feff}", "g".repeat(80)),
+            plain()
+        ));
+        assert!(!valid(
+            "Title".into(),
+            &format!("{}\u{0085}", "g".repeat(80)),
+            plain()
+        ));
+        assert!(valid(
+            "Title".into(),
+            "Genre",
+            format!("\u{feff}{}", "d".repeat(2000))
+        ));
+        assert!(!valid(
+            "Title".into(),
+            "Genre",
+            format!("\u{0085}{}", "d".repeat(2000))
+        ));
+    }
+
+    #[test]
+    fn leaves_bare_relative_directory_imports_untouched() {
+        let source = "import a from './.js';import b from \"../.jsx\";import('./.jsx');export * from './..js';import c from './c.js';";
+        assert_eq!(
+            retarget_imports(source),
+            "import a from './.js';import b from \"../.jsx\";import('./.jsx');export * from './.';import c from './c';"
+        );
+    }
+
+    #[test]
+    fn code_normalization_enforces_typescript_project_limits() {
+        assert!(normalize_code(&legacy_code()).is_ok());
+        let mut code = legacy_code();
+        let files = code["files"].as_object_mut().unwrap();
+        while files.len() < 64 {
+            let index = files.len();
+            files.insert(
+                format!("extra-{index}.ts"),
+                json!({"language":"typescript","source":""}),
+            );
+        }
+        assert!(normalize_code(&code).is_ok());
+        code["files"]["one-too-many.ts"] = json!({"language":"typescript","source":""});
+        assert!(normalize_code(&code).is_err());
+
+        let mut code = legacy_code();
+        code["files"]["big.ts"] = json!({"language":"typescript","source":"a".repeat(512 * 1024)});
+        assert!(normalize_code(&code).is_err());
+        code["files"]["big.ts"]["source"] = json!("a".repeat(400 * 1024));
+        assert!(normalize_code(&code).is_ok());
+        // Multi-byte sources count UTF-8 bytes, like TS TextEncoder.
+        code["files"]["big.ts"]["source"] = json!("가".repeat(180 * 1024));
+        assert!(normalize_code(&code).is_err());
+
+        let mut code = legacy_code();
+        code["files"]["style.css"]["source"] = json!("a".repeat(64 * 1024));
+        assert!(normalize_code(&code).is_ok());
+        code["files"]["style.css"]["source"] = json!("a".repeat(64 * 1024 + 1));
+        assert!(normalize_code(&code).is_err());
+
+        let mut code = legacy_code();
+        code["folders"] = json!(vec!["same"; 128]);
+        assert_eq!(normalize_code(&code).unwrap()["folders"], json!(["same"]));
+        code["folders"] = json!(vec!["same"; 129]);
+        assert!(normalize_code(&code).is_err());
+
+        let mut code = legacy_code();
+        code["files"]["other.js"]["language"] = json!("python");
+        assert!(normalize_code(&code).is_err());
+        code["files"]["other.js"]["language"] = json!("javascript");
+        assert_eq!(
+            normalize_code(&code).unwrap()["files"]["other.ts"]["language"],
+            "typescript"
+        );
+    }
+
+    #[test]
+    fn presentation_layout_is_validated_before_normalization() {
+        let mut code = legacy_code();
+        // Previously this recursed through `null` children without bound.
+        code["presentation"]["layout"] = json!({"kind":"bogus"});
+        assert!(normalize_code(&code).is_err());
+        let mut deep = json!({"kind":"panel","id":"leaf"});
+        for index in 0..9 {
+            deep = json!({"kind":"split","axis":"vertical","ratio":0.5,"first":deep,"second":{"kind":"panel","id":format!("p{index}")}});
+        }
+        assert!(super::super::panel_layout(
+            &deep["first"],
+            0,
+            &mut Default::default()
+        ));
+        code["presentation"]["layout"] = deep;
+        assert!(normalize_code(&code).is_err());
+        code["presentation"]["layout"] = json!({"kind":"split","axis":"horizontal","ratio":0.5,"first":{"kind":"panel","id":"a"},"second":{"kind":"panel","id":"a"}});
+        assert!(normalize_code(&code).is_err());
+        let mut ui = json!({"layout":{"kind":"bogus"}});
+        assert!(normalize_presentation(&mut ui).is_err());
+    }
+
+    #[test]
+    fn presentation_rejects_unknown_keys_instead_of_dropping_them() {
+        let mut code = legacy_code();
+        code["presentation"]["theme"] = json!("dark");
+        assert!(normalize_code(&code).is_err());
+        code["presentation"] = json!("left");
+        assert!(normalize_code(&code).is_err());
+    }
+
+    #[test]
+    fn storage_validates_the_normalized_code_project() {
+        let mut code = legacy_code();
+        assert!(super::super::code_project(Some(&code)));
+        // A canonical entry may point at a legacy `.js` file, as in TS parseCodeProject.
+        code["entry"] = json!("main.tsx");
+        assert!(super::super::code_project(Some(&code)));
+        code["entry"] = json!("missing.ts");
+        assert!(!super::super::code_project(Some(&code)));
+        let mut code = legacy_code();
+        code["files"]["main.tsx"] = code["files"]["main.jsx"].clone();
+        assert!(!super::super::code_project(Some(&code)));
+        let mut code = legacy_code();
+        code["folders"] = json!(vec!["same"; 129]);
+        assert!(!super::super::code_project(Some(&code)));
+        let mut code = legacy_code();
+        code["presentation"]["theme"] = json!("dark");
+        assert!(!super::super::code_project(Some(&code)));
+        let mut code = legacy_code();
+        code["version"] = json!(2);
+        assert!(!super::super::code_project(Some(&code)));
     }
 
     #[test]
