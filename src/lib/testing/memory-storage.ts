@@ -12,6 +12,8 @@ import {
 } from '#lib/storage/protocol.js';
 import { pruneRecords } from '#lib/storage/prune.js';
 
+import { MemoryVersioning } from './memory-versioning.js';
+
 /** Rows are keyed by table + game + id: shared content rows collide across games otherwise. */
 function keyOf(row: StoredRecord): string {
 	return `${row.table}:${row.gameId}:${row.id}`;
@@ -20,6 +22,7 @@ function keyOf(row: StoredRecord): string {
 class MemoryStorage {
 	private rows = new Map<string, StoredRecord>();
 	private versions = new Map<string, number>();
+	private versioning = new MemoryVersioning(() => this.rows.values());
 	private prune(request: Extract<StorageRequest, { kind: 'prune' }>) {
 		const plan = pruneRecords([...this.rows.values()], request);
 		const next = new Map(this.rows);
@@ -174,6 +177,9 @@ class MemoryStorage {
 	}
 	request = async (input: unknown): Promise<StorageReply> => {
 		const request = parseRequest(structuredClone(input));
+		if (request.kind === 'versioning') {
+			return this.versioning.request(request, this.versions.get(request.gameId) ?? 0);
+		}
 		if (request.kind === 'prune') {
 			return this.prune(request);
 		}

@@ -62,9 +62,10 @@ export class EditorWorkspace {
 	applyError = $state('');
 	navigationError = $state('');
 	applying = $state(false);
+	releasing = $state(false);
 	discarding = $state(false);
 	leaving = $state(false);
-	editingBlocked = $derived(this.applying || this.discarding || this.leaving);
+	editingBlocked = $derived(this.applying || this.releasing || this.discarding || this.leaving);
 	saving = $state(false);
 	savedLocally = $state(false);
 	explorerOpen = $state(true);
@@ -1078,7 +1079,7 @@ export class EditorWorkspace {
 				this.allowNavigation = false;
 				return;
 			}
-			if (this.applying || this.discarding) {
+			if (this.applying || this.releasing || this.discarding) {
 				navigation.cancel();
 				return;
 			}

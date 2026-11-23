@@ -9,6 +9,9 @@ use std::{
 const MIGRATION: &str = include_str!("../../src/lib/storage/migrations/0000_initial.sql");
 const CONFLICT: &str = "STORAGE_CONFLICT";
 
+#[path = "game_releases.rs"]
+mod releases;
+
 pub struct StoragePath(pub PathBuf);
 
 /// A per-process credential injected into a main-frame-only JavaScript closure.
@@ -208,6 +211,7 @@ pub(crate) fn open(path: &Path) -> Result<Connection, String> {
     connection.execute_batch("CREATE TABLE IF NOT EXISTS editor_drafts (game_id TEXT PRIMARY KEY REFERENCES games(id) ON DELETE CASCADE, version INTEGER NOT NULL, value TEXT)").map_err(db_error)?;
     connection.execute_batch(crate::session_files::SCHEMA).map_err(db_error)?;
     connection.execute_batch(crate::runtime_content::SCHEMA).map_err(db_error)?;
+    releases::initialize(&mut connection)?;
     Ok(connection)
 }
 fn read_draft(connection: &Connection, game_id: &str) -> Result<Value, String> {
@@ -585,6 +589,9 @@ fn chat_style(value: Option<&Value>) -> bool {
     true
 }
 fn code_path(path: &str, folder: bool) -> bool {
+    if path == "style.css" {
+        return true;
+    }
     !path.is_empty()
         && path.len() <= 128
         && path
@@ -616,7 +623,11 @@ fn code_project(value: Option<&Value>) -> bool {
     let Some(entry) = value["entry"].as_str() else {
         return false;
     };
-    if !code_path(entry, false) || !files.contains_key(entry) || files.len() > 64 {
+    if !code_path(entry, false)
+        || entry == "style.css"
+        || !files.contains_key(entry)
+        || files.len() > 64
+    {
         return false;
     }
     let mut bytes = 0;
@@ -624,7 +635,7 @@ fn code_project(value: Option<&Value>) -> bool {
         if !code_path(path, false)
             || !matches!(
                 file["language"].as_str(),
-                Some("javascript" | "typescript" | "jsx" | "tsx")
+                Some("javascript" | "typescript" | "jsx" | "tsx" | "css")
             )
         {
             return false;
@@ -632,6 +643,11 @@ fn code_project(value: Option<&Value>) -> bool {
         let Some(source) = file["source"].as_str() else {
             return false;
         };
+        if (file["language"] == "css") != (path == "style.css")
+            || (path == "style.css" && source.len() > 64 * 1024)
+        {
+            return false;
+        }
         bytes += source.len();
         if bytes > 512 * 1024
             || files
@@ -907,7 +923,11 @@ fn write_row(connection: &Connection, row: &StoredRecord, create: bool) -> Resul
         row.table,
         Table::Snapshots | Table::Blobs | Table::SnapshotResources
     );
-    let value = row.value.to_string();
+    let value = if row.table == Table::Games {
+        releases::preserve_identity(connection, &row.id, &row.value)?.to_string()
+    } else {
+        row.value.to_string()
+    };
     let count = if row.table == Table::Games {
         if create {
             connection.execute(
@@ -1055,6 +1075,9 @@ fn read_game(
     })
 }
 pub(crate) fn execute_request(path: &Path, input: Value) -> Result<Value, String> {
+    if input["kind"] == "versioning" {
+        return releases::request(&mut open(path)?, input);
+    }
     if input["kind"] == "artifact" { return crate::runtime_content::read_artifact(path,&input); }
     if matches!(input["kind"].as_str(), Some("sync" | "asset")) {
         return crate::storage_sync::execute(path, input);

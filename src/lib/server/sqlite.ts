@@ -21,6 +21,8 @@ import { pruneRecords } from '#lib/storage/prune.js';
 import fileSchema from '#lib/storage/session-files.sql?raw';
 import { validateStoredHistory } from '#lib/storage/validate-history.js';
 
+import { gameReleases, initializeGameReleases, preserveOriginalGameId } from './game-releases.js';
+
 type PruneRequest = Extract<StorageRequest, { kind: 'prune' }>;
 type ReadRequest = Extract<StorageRequest, { kind: 'read' }>;
 type WriteRequest = Extract<StorageRequest, { kind: 'commit' | 'create' }>;
@@ -90,6 +92,7 @@ class Storage {
 		}
 		this.db = drizzle(this.connection);
 		this.connection.exec(fileSchema);
+		initializeGameReleases(this.connection);
 	}
 	private readRows(table: Table, gameId?: string, sessionId?: string): StoredRecord[] {
 		const filter = readFilter(table, gameId, sessionId);
@@ -156,6 +159,7 @@ class Storage {
 		}
 	}
 	private writeGamesRow(row: StoredRecord, create: boolean, value: string) {
+		value = JSON.stringify(preserveOriginalGameId(this.connection, row.id, JSON.parse(value)));
 		if (create) {
 			this.db.run(sql`insert into games (id, value) values (${row.id}, ${value})`);
 			return;
@@ -342,6 +346,9 @@ class Storage {
 		return { version: command.kind === 'create' ? 0 : command.version + 1, records: [] };
 	}
 	private execute(command: StorageRequest): StorageReply {
+		if (command.kind === 'versioning') {
+			return gameReleases(this.connection, command);
+		}
 		if (command.kind === 'prune') {
 			return this.prune(command);
 		}

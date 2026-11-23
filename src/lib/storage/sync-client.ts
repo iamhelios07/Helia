@@ -1,4 +1,5 @@
 import {
+	parseReply,
 	type StorageRequest,
 	type StorageReply,
 	type StorageTransport,
@@ -103,6 +104,9 @@ class StorageSynchronization {
 		return new Map([...values].filter(([hash]) => view.hashes.has(hash)));
 	}
 	request: StorageTransport = async (request) => {
+		if (request.kind === 'versioning') {
+			return parseReply(await this.send(request));
+		}
 		if (request.kind !== 'read' && request.kind !== 'list') {
 			this.pending.clear();
 			try {

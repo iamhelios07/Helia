@@ -1,0 +1,755 @@
+[
+	{
+		"name": "legacy Unicode keys, floats, signed zero and media",
+		"game": {
+			"schemaVersion": 2,
+			"id": "fixture-installation",
+			"originalGameId": "12345678-1234-4234-8234-123456789abc",
+			"activeSessionId": "fixture-session",
+			"title": "별빛 이야기 🌌",
+			"genre": "Adventure",
+			"description": "Public description",
+			"createdAt": "2026-11-23T00:00:00.000Z",
+			"updatedAt": "2026-11-23T00:00:00.000Z",
+			"settings": {
+				"description": "Authored instructions\n",
+				"firstMessage": "Welcome",
+				"authorNote": "Stay in character"
+			},
+			"schema": {
+				"type": "object",
+				"properties": {
+					"": {
+						"type": "number"
+					},
+					"tiny": {
+						"type": "number"
+					},
+					"large": {
+						"type": "number"
+					},
+					"label": {
+						"type": "string"
+					},
+					"😀": {
+						"type": "number"
+					}
+				},
+				"additionalProperties": false
+			},
+			"initialState": {
+				"": 1.25,
+				"tiny": 1e-7,
+				"large": 1e21,
+				"label": "é 한글  ",
+				"😀": 0
+			},
+			"scripts": {
+				"rules": {
+					"language": "typescript",
+					"source": "export const rules = {};",
+					"compiled": "derived output",
+					"compiledFor": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+					"artifact": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+				}
+			},
+			"ui": {
+				"version": 1,
+				"entry": "main.tsx",
+				"modules": {
+					"main.tsx": {
+						"language": "tsx",
+						"source": "export default () => <p>Hello</p>;"
+					}
+				},
+				"styles": "p { color: red; }",
+				"layout": {
+					"kind": "panel",
+					"id": "main"
+				},
+				"chatDock": "right",
+				"chatRatio": 0.3,
+				"chatStyle": {
+					"color": "white"
+				},
+				"compiled": {
+					"version": 1,
+					"sourceHash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+					"entry": "main.tsx",
+					"factories": "generated factories",
+					"dependencies": {}
+				},
+				"artifact": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+			},
+			"ai": {
+				"version": 1,
+				"lorebook": [
+					{
+						"id": "lore-1",
+						"name": "World",
+						"keys": ["forest"],
+						"content": "Ancient forest",
+						"order": 0,
+						"always": true,
+						"enabled": true,
+						"caseSensitive": false
+					}
+				],
+				"folders": ["World"]
+			},
+			"regex": [
+				{
+					"id": "rule-1",
+					"name": "Display",
+					"enabled": true,
+					"stage": "display",
+					"roles": ["assistant"],
+					"pattern": "forest",
+					"replacement": "woods",
+					"flags": "g"
+				}
+			],
+			"resources": {
+				"portrait": {
+					"name": "images/portrait.png",
+					"mime": "image/png",
+					"data": "data:image/png;base64,AAEC/w=="
+				},
+				"music": {
+					"name": "audio/theme.ogg",
+					"mime": "audio/ogg",
+					"data": "data:audio/ogg;base64,AQID"
+				}
+			}
+		},
+		"content": {
+			"title": "별빛 이야기 🌌",
+			"genre": "Adventure",
+			"description": "Public description",
+			"settings": {
+				"description": "Authored instructions\n",
+				"firstMessage": "Welcome",
+				"authorNote": "Stay in character"
+			},
+			"schema": {
+				"type": "object",
+				"properties": {
+					"": {
+						"type": "number"
+					},
+					"tiny": {
+						"type": "number"
+					},
+					"large": {
+						"type": "number"
+					},
+					"label": {
+						"type": "string"
+					},
+					"😀": {
+						"type": "number"
+					}
+				},
+				"additionalProperties": false
+			},
+			"initialState": {
+				"": 1.25,
+				"tiny": 1e-7,
+				"large": 1e21,
+				"label": "é 한글  ",
+				"😀": 0
+			},
+			"ai": {
+				"version": 1,
+				"lorebook": [
+					{
+						"id": "lore-1",
+						"name": "World",
+						"keys": ["forest"],
+						"content": "Ancient forest",
+						"order": 0,
+						"always": true,
+						"enabled": true,
+						"caseSensitive": false
+					}
+				],
+				"folders": ["World"]
+			},
+			"regex": [
+				{
+					"id": "rule-1",
+					"name": "Display",
+					"enabled": true,
+					"stage": "display",
+					"roles": ["assistant"],
+					"pattern": "forest",
+					"replacement": "woods",
+					"flags": "g"
+				}
+			],
+			"resources": {
+				"portrait": {
+					"name": "images/portrait.png",
+					"mime": "image/png",
+					"data": "data:image/png;base64,AAEC/w=="
+				},
+				"music": {
+					"name": "audio/theme.ogg",
+					"mime": "audio/ogg",
+					"data": "data:audio/ogg;base64,AQID"
+				}
+			},
+			"scripts": {
+				"rules": {
+					"language": "typescript",
+					"source": "export const rules = {};"
+				}
+			},
+			"ui": {
+				"version": 1,
+				"entry": "main.tsx",
+				"modules": {
+					"main.tsx": {
+						"language": "tsx",
+						"source": "export default () => <p>Hello</p>;"
+					}
+				},
+				"styles": "p { color: red; }",
+				"layout": {
+					"kind": "panel",
+					"id": "main"
+				},
+				"chatDock": "right",
+				"chatRatio": 0.3,
+				"chatStyle": {
+					"color": "white"
+				}
+			}
+		},
+		"hash": "e0e130a69d6e44a2c983d33299293923f89183752210221c78b192b9a3cf8fa8"
+	},
+	{
+		"name": "source project overrides derived scripts and UI",
+		"game": {
+			"schemaVersion": 2,
+			"id": "fixture-installation",
+			"originalGameId": "12345678-1234-4234-8234-123456789abc",
+			"activeSessionId": "fixture-session",
+			"title": "별빛 이야기 🌌",
+			"genre": "Adventure",
+			"description": "Public description",
+			"createdAt": "2026-11-23T00:00:00.000Z",
+			"updatedAt": "2026-11-23T00:00:00.000Z",
+			"settings": {
+				"description": "Authored instructions\n",
+				"firstMessage": "Welcome",
+				"authorNote": "Stay in character"
+			},
+			"schema": {
+				"type": "object",
+				"properties": {
+					"": {
+						"type": "number"
+					},
+					"tiny": {
+						"type": "number"
+					},
+					"large": {
+						"type": "number"
+					},
+					"label": {
+						"type": "string"
+					},
+					"😀": {
+						"type": "number"
+					}
+				},
+				"additionalProperties": false
+			},
+			"initialState": {
+				"": 1.25,
+				"tiny": 1e-7,
+				"large": 1e21,
+				"label": "é 한글  ",
+				"😀": 0
+			},
+			"scripts": {
+				"rules": {
+					"language": "typescript",
+					"source": "export const rules = {};",
+					"compiled": "derived output",
+					"compiledFor": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+					"artifact": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+				}
+			},
+			"ui": {
+				"version": 1,
+				"entry": "main.tsx",
+				"modules": {
+					"main.tsx": {
+						"language": "tsx",
+						"source": "export default () => <p>Hello</p>;"
+					}
+				},
+				"styles": "p { color: red; }",
+				"layout": {
+					"kind": "panel",
+					"id": "main"
+				},
+				"chatDock": "right",
+				"chatRatio": 0.3,
+				"chatStyle": {
+					"color": "white"
+				},
+				"compiled": {
+					"version": 1,
+					"sourceHash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+					"entry": "main.tsx",
+					"factories": "generated factories",
+					"dependencies": {}
+				},
+				"artifact": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+			},
+			"ai": {
+				"version": 1,
+				"lorebook": [
+					{
+						"id": "lore-1",
+						"name": "World",
+						"keys": ["forest"],
+						"content": "Ancient forest",
+						"order": 0,
+						"always": true,
+						"enabled": true,
+						"caseSensitive": false
+					}
+				],
+				"folders": ["World"]
+			},
+			"regex": [
+				{
+					"id": "rule-1",
+					"name": "Display",
+					"enabled": true,
+					"stage": "display",
+					"roles": ["assistant"],
+					"pattern": "forest",
+					"replacement": "woods",
+					"flags": "g"
+				}
+			],
+			"resources": {
+				"portrait": {
+					"name": "images/portrait.png",
+					"mime": "image/png",
+					"data": "data:image/png;base64,AAEC/w=="
+				},
+				"music": {
+					"name": "audio/theme.ogg",
+					"mime": "audio/ogg",
+					"data": "data:audio/ogg;base64,AQID"
+				}
+			},
+			"code": {
+				"version": 1,
+				"entry": "main.ts",
+				"files": {
+					"main.ts": {
+						"language": "typescript",
+						"source": "export {};"
+					},
+					"style.css": {
+						"language": "css",
+						"source": "body { color: white; }"
+					}
+				},
+				"folders": ["empty"],
+				"presentation": {
+					"chatDock": "left",
+					"chatRatio": 0.4,
+					"chatStyle": {
+						"color": "white"
+					}
+				}
+			}
+		},
+		"content": {
+			"title": "별빛 이야기 🌌",
+			"genre": "Adventure",
+			"description": "Public description",
+			"settings": {
+				"description": "Authored instructions\n",
+				"firstMessage": "Welcome",
+				"authorNote": "Stay in character"
+			},
+			"schema": {
+				"type": "object",
+				"properties": {
+					"": {
+						"type": "number"
+					},
+					"tiny": {
+						"type": "number"
+					},
+					"large": {
+						"type": "number"
+					},
+					"label": {
+						"type": "string"
+					},
+					"😀": {
+						"type": "number"
+					}
+				},
+				"additionalProperties": false
+			},
+			"initialState": {
+				"": 1.25,
+				"tiny": 1e-7,
+				"large": 1e21,
+				"label": "é 한글  ",
+				"😀": 0
+			},
+			"ai": {
+				"version": 1,
+				"lorebook": [
+					{
+						"id": "lore-1",
+						"name": "World",
+						"keys": ["forest"],
+						"content": "Ancient forest",
+						"order": 0,
+						"always": true,
+						"enabled": true,
+						"caseSensitive": false
+					}
+				],
+				"folders": ["World"]
+			},
+			"regex": [
+				{
+					"id": "rule-1",
+					"name": "Display",
+					"enabled": true,
+					"stage": "display",
+					"roles": ["assistant"],
+					"pattern": "forest",
+					"replacement": "woods",
+					"flags": "g"
+				}
+			],
+			"resources": {
+				"portrait": {
+					"name": "images/portrait.png",
+					"mime": "image/png",
+					"data": "data:image/png;base64,AAEC/w=="
+				},
+				"music": {
+					"name": "audio/theme.ogg",
+					"mime": "audio/ogg",
+					"data": "data:audio/ogg;base64,AQID"
+				}
+			},
+			"code": {
+				"version": 1,
+				"entry": "main.ts",
+				"files": {
+					"main.ts": {
+						"language": "typescript",
+						"source": "export {};"
+					},
+					"style.css": {
+						"language": "css",
+						"source": "body { color: white; }"
+					}
+				},
+				"folders": ["empty"],
+				"presentation": {
+					"chatDock": "left",
+					"chatRatio": 0.4,
+					"chatStyle": {
+						"color": "white"
+					}
+				}
+			}
+		},
+		"hash": "3d5f53003cfcbb05ae386d0dda41a8cdcb03471991af284d8cc4c809544cefc8"
+	},
+	{
+		"name": "legacy JS/JSX project normalization and unknown field removal",
+		"game": {
+			"schemaVersion": 2,
+			"id": "fixture-installation",
+			"originalGameId": "12345678-1234-4234-8234-123456789abc",
+			"activeSessionId": "fixture-session",
+			"title": "별빛 이야기 🌌",
+			"genre": "Adventure",
+			"description": "Public description",
+			"createdAt": "2026-11-23T00:00:00.000Z",
+			"updatedAt": "2026-11-23T00:00:00.000Z",
+			"settings": {
+				"description": "Authored instructions\n",
+				"firstMessage": "Welcome",
+				"authorNote": "Stay in character"
+			},
+			"schema": {
+				"type": "object",
+				"properties": {
+					"": {
+						"type": "number"
+					},
+					"tiny": {
+						"type": "number"
+					},
+					"large": {
+						"type": "number"
+					},
+					"label": {
+						"type": "string"
+					},
+					"😀": {
+						"type": "number"
+					}
+				},
+				"additionalProperties": false
+			},
+			"initialState": {
+				"": 1.25,
+				"tiny": 1e-7,
+				"large": 1e21,
+				"label": "é 한글  ",
+				"😀": 0
+			},
+			"scripts": {
+				"rules": {
+					"language": "typescript",
+					"source": "export const rules = {};",
+					"compiled": "derived output",
+					"compiledFor": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+					"artifact": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+				}
+			},
+			"ui": {
+				"version": 1,
+				"entry": "main.tsx",
+				"modules": {
+					"main.tsx": {
+						"language": "tsx",
+						"source": "export default () => <p>Hello</p>;"
+					}
+				},
+				"styles": "p { color: red; }",
+				"layout": {
+					"kind": "panel",
+					"id": "main"
+				},
+				"chatDock": "right",
+				"chatRatio": 0.3,
+				"chatStyle": {
+					"color": "white"
+				},
+				"compiled": {
+					"version": 1,
+					"sourceHash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+					"entry": "main.tsx",
+					"factories": "generated factories",
+					"dependencies": {}
+				},
+				"artifact": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+			},
+			"ai": {
+				"version": 1,
+				"lorebook": [
+					{
+						"id": "lore-1",
+						"name": "World",
+						"keys": ["forest"],
+						"content": "Ancient forest",
+						"order": 0,
+						"always": true,
+						"enabled": true,
+						"caseSensitive": false
+					}
+				],
+				"folders": ["World"]
+			},
+			"regex": [
+				{
+					"id": "rule-1",
+					"name": "Display",
+					"enabled": true,
+					"stage": "display",
+					"roles": ["assistant"],
+					"pattern": "forest",
+					"replacement": "woods",
+					"flags": "g"
+				}
+			],
+			"resources": {
+				"portrait": {
+					"name": "images/portrait.png",
+					"mime": "image/png",
+					"data": "data:image/png;base64,AAEC/w=="
+				},
+				"music": {
+					"name": "audio/theme.ogg",
+					"mime": "audio/ogg",
+					"data": "data:audio/ogg;base64,AQID"
+				}
+			},
+			"code": {
+				"version": 1,
+				"entry": "main.jsx",
+				"files": {
+					"main.jsx": {
+						"language": "jsx",
+						"source": "import View from \"./view.jsx\";\nconst load = import(\"./other.js\");\nexport {x} from \"../shared.js\";\nconst unchanged = \"./other.js\";",
+						"compiled": "private derived cache",
+						"artifact": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+					},
+					"view.jsx": {
+						"language": "jsx",
+						"source": "export default () => <p>Hello</p>;",
+						"unknown": "discard"
+					},
+					"other.js": {
+						"language": "javascript",
+						"source": "export const other = 1;",
+						"unknown": "discard"
+					},
+					"style.css": {
+						"language": "css",
+						"source": "p { color: white; }",
+						"compiled": "discard"
+					}
+				},
+				"folders": ["empty", "empty", "nested"],
+				"presentation": {
+					"layout": {
+						"kind": "panel",
+						"id": "main",
+						"unknown": "discard"
+					},
+					"chatDock": "left",
+					"chatRatio": 0.4,
+					"chatStyle": {
+						"color": "white"
+					}
+				}
+			}
+		},
+		"content": {
+			"title": "별빛 이야기 🌌",
+			"genre": "Adventure",
+			"description": "Public description",
+			"settings": {
+				"description": "Authored instructions\n",
+				"firstMessage": "Welcome",
+				"authorNote": "Stay in character"
+			},
+			"schema": {
+				"type": "object",
+				"properties": {
+					"": {
+						"type": "number"
+					},
+					"tiny": {
+						"type": "number"
+					},
+					"large": {
+						"type": "number"
+					},
+					"label": {
+						"type": "string"
+					},
+					"😀": {
+						"type": "number"
+					}
+				},
+				"additionalProperties": false
+			},
+			"initialState": {
+				"": 1.25,
+				"tiny": 1e-7,
+				"large": 1e21,
+				"label": "é 한글  ",
+				"😀": 0
+			},
+			"ai": {
+				"version": 1,
+				"lorebook": [
+					{
+						"id": "lore-1",
+						"name": "World",
+						"keys": ["forest"],
+						"content": "Ancient forest",
+						"order": 0,
+						"always": true,
+						"enabled": true,
+						"caseSensitive": false
+					}
+				],
+				"folders": ["World"]
+			},
+			"regex": [
+				{
+					"id": "rule-1",
+					"name": "Display",
+					"enabled": true,
+					"stage": "display",
+					"roles": ["assistant"],
+					"pattern": "forest",
+					"replacement": "woods",
+					"flags": "g"
+				}
+			],
+			"resources": {
+				"portrait": {
+					"name": "images/portrait.png",
+					"mime": "image/png",
+					"data": "data:image/png;base64,AAEC/w=="
+				},
+				"music": {
+					"name": "audio/theme.ogg",
+					"mime": "audio/ogg",
+					"data": "data:audio/ogg;base64,AQID"
+				}
+			},
+			"code": {
+				"version": 1,
+				"entry": "main.tsx",
+				"files": {
+					"main.tsx": {
+						"language": "tsx",
+						"source": "import View from \"./view\";\nconst load = import(\"./other\");\nexport {x} from \"../shared\";\nconst unchanged = \"./other.js\";"
+					},
+					"view.tsx": {
+						"language": "tsx",
+						"source": "export default () => <p>Hello</p>;"
+					},
+					"other.ts": {
+						"language": "typescript",
+						"source": "export const other = 1;"
+					},
+					"style.css": {
+						"language": "css",
+						"source": "p { color: white; }"
+					}
+				},
+				"folders": ["empty", "nested"],
+				"presentation": {
+					"layout": {
+						"kind": "panel",
+						"id": "main"
+					},
+					"chatDock": "left",
+					"chatRatio": 0.4,
+					"chatStyle": {
+						"color": "white"
+					}
+				}
+			}
+		},
+		"hash": "8d117adf5603c2c7843734c4230004fc05956d2273c411a8feba80d6d9e79b17"
+	}
+]

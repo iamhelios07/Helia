@@ -33,6 +33,18 @@ The identity of an individual installation, used in its game-screen route. Separ
 **Content Version**:
 The SemVer version of the game content released by its creator. It is separate from Helia's internal storage format version and Session Revision.
 
+**Game Release**:
+A creator-confirmed, immutable edition of a game's applied distributable content, identified by its original game identity, content version and content digest. A Game Package carries a release; editing the installation does not change an existing release.
+
+**Release Content Digest**:
+The identity of the exact portable content in a Game Release. Different content may carry the same Content Version only after a user explicitly acknowledges a Version Conflict.
+
+**Version Conflict**:
+Different release content carrying the same Original Game Identifier and Content Version. It is distinct from a concurrent storage-write conflict.
+
+**Locally Modified Installation**:
+An installation whose applied distributable content differs from its selected Game Release. Saved but unapplied authoring edits are a separate Draft.
+
 **Library**:
 The application area for listing, searching, sorting and opening installed games.
 

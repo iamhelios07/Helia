@@ -6,6 +6,7 @@
 
 	import AssetEditor from './AssetEditor.svelte';
 	import EditorTabs from './EditorTabs.svelte';
+	import GameVersionPanel from './GameVersionPanel.svelte';
 	import LorebookEditor from './LorebookEditor.svelte';
 	import RegexEditor from './RegexEditor.svelte';
 	import SourceEditor from './SourceEditor.svelte';
@@ -119,6 +120,14 @@
 								>초안은 자동 저장되며, 적용을 눌러야 게임에 반영돼요.</span
 							>
 						</div>
+						{#if editor.game}
+							<GameVersionPanel
+								game={editor.game}
+								unapplied={editor.changed}
+								disabled={editor.editingBlocked}
+								onpending={(pending) => (editor.releasing = pending)}
+							/>
+						{/if}
 					</div>
 				{:else if editor.activeDocument === 'instructions' && !editor.sourceDocuments.includes('instructions') && editor.instructions}<div
 						class="form-document"

@@ -17,6 +17,19 @@ import {
 	parseSnapshotResource,
 	parseTransaction
 } from '#lib/games/state/model.js';
+import {
+	contentVersion,
+	releaseHash,
+	parseGameVersioning,
+	parseGameRelease,
+	parseCreateGameReleaseResult
+} from '#lib/games/versioning-validation.js';
+import {
+	type GameVersioning,
+	type GameRelease,
+	type CreateGameReleaseResult,
+	type GameReleaseOptions
+} from '#lib/games/versioning.js';
 
 export const tables = [
 	'games',
@@ -47,6 +60,14 @@ export interface GamePatch {
 	remove: string[];
 }
 export type StorageRequest =
+	| { kind: 'versioning'; gameId: string; action: 'read' }
+	| { kind: 'versioning'; gameId: string; action: 'getRelease'; releaseId: string }
+	| ({
+			kind: 'versioning';
+			gameId: string;
+			action: 'release';
+			contentVersion: string;
+	  } & GameReleaseOptions)
 	| { kind: 'list'; includeTrashed?: boolean }
 	| { kind: 'read'; gameId: string; sessionId?: string; includeHistory?: boolean; play?: boolean }
 	| { kind: 'create'; gameId: string; records: StoredRecord[] }
@@ -67,6 +88,9 @@ export interface StorageReply {
 	version: number;
 	records: StoredRecord[];
 	games?: GameSummary[];
+	versioning?: GameVersioning;
+	release?: GameRelease;
+	releaseResult?: CreateGameReleaseResult;
 }
 export type StorageTransport = (request: StorageRequest) => Promise<StorageReply>;
 export const CONFLICT = 'STORAGE_CONFLICT';
@@ -227,6 +251,9 @@ export function parseRequest(value: unknown): StorageRequest {
 		return { kind: 'list', ...(input.includeTrashed === true ? { includeTrashed: true } : {}) };
 	}
 	const gameId = identifier(input.gameId);
+	if (input.kind === 'versioning') {
+		return parseVersioningRequest(gameId, input);
+	}
 	if (['trash', 'restore', 'purge'].includes(String(input.kind))) {
 		return parseGameScopedRequest(String(input.kind), gameId);
 	}
@@ -260,6 +287,47 @@ export function parseReply(value: unknown): StorageReply {
 	return {
 		version: counter(input.version),
 		records: parseRecords(input.records),
-		...(Array.isArray(input.games) ? { games: input.games.map(gameSummary) } : {})
+		...(Array.isArray(input.games) ? { games: input.games.map(gameSummary) } : {}),
+		...(input.versioning === undefined
+			? {}
+			: { versioning: parseGameVersioning(input.versioning) }),
+		...(input.release === undefined ? {} : { release: parseGameRelease(input.release) }),
+		...(input.releaseResult === undefined
+			? {}
+			: { releaseResult: parseCreateGameReleaseResult(input.releaseResult) })
+	};
+}
+
+function parseVersioningRequest(gameId: string, input: Record<string, unknown>): StorageRequest {
+	if (input.action === 'read') {
+		return { kind: 'versioning', gameId, action: 'read' };
+	}
+	if (input.action === 'getRelease') {
+		return {
+			kind: 'versioning',
+			gameId,
+			action: 'getRelease',
+			releaseId: identifier(input.releaseId)
+		};
+	}
+	if (input.action !== 'release' || typeof input.contentVersion !== 'string') {
+		throw Error('Invalid release request');
+	}
+	contentVersion(input.contentVersion);
+	if (input.ignoreConflict !== undefined && typeof input.ignoreConflict !== 'boolean') {
+		throw Error('Invalid conflict override');
+	}
+	if (input.ignoreConflict === true && input.expectedContentHash === undefined) {
+		throw Error('Conflict override requires expected content hash');
+	}
+	const expectedContentHash =
+		input.expectedContentHash === undefined ? undefined : releaseHash(input.expectedContentHash);
+	return {
+		kind: 'versioning',
+		gameId,
+		action: 'release',
+		contentVersion: input.contentVersion,
+		...(input.ignoreConflict === undefined ? {} : { ignoreConflict: input.ignoreConflict }),
+		...(expectedContentHash === undefined ? {} : { expectedContentHash })
 	};
 }

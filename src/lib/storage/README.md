@@ -82,6 +82,16 @@ Snapshots, transaction results and memories are insert-only during normal commit
 
 Database transactions do not stay open across UI, AI or script work. Creator code receives no database connection or raw SQL executor.
 
+## Game releases and content versions
+
+Each installation has a persisted `originalGameId` independent of its local route identifier. `getGameVersioning` returns the currently applied content digest, the selected release and release summaries. An installation starts unreleased. Saving a draft or applying edits does not create a release or advance a version; applied edits show as modified only when their portable content differs from the selected release.
+
+`createGameRelease` explicitly freezes applied content under a creator-selected SemVer label. SemVer validation covers syntax and ordering, not an inference of gameplay compatibility. The SHA-256 digest covers canonical authored metadata, instructions, schema and initial state, source, regex, presentation and actual media bytes. It excludes installation/session identity, dates, player data and derived compilation caches. A source project is authoritative when present. Both hosts use the same digest fixtures, including Unicode keys, floating-point values and legacy source normalization.
+
+Both hosts initialize the shared [release tables](./game-releases.sql). Immutable portable content lives in `game_releases`; `game_release_selection` retains the installation's selected release. Release histories are excluded from ordinary game/session reads and library listings; `getGameRelease` explicitly retrieves a frozen release, including its media. Subsequent edits and application restarts preserve old releases. Trash retains them, and permanent installation deletion cascades to them. Selecting a release does not apply its content to sessions or change their revisions/history.
+
+A same-origin, same-version release with different content produces a conflict result. The UI offers changing the version, ignoring the conflict or canceling. Ignoring requires the confirmed content hash and preserves both variants. Hosts recheck content and active-installation conflicts inside the write transaction; stale confirmations fail without changing the selection or adding a release. Reconfirming an existing version/hash reuses it. Release summaries are bounded to 10,000 entries per installation, with capacity checked before inserting a new release. Package export/import is a separate feature.
+
 ## Current runtime behavior
 
 ### Session files

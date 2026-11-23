@@ -23,6 +23,45 @@ export const games = sqliteTable(
 	(t) => [check('games_json', sql`json_valid(${t.value})`)]
 );
 
+/** Frozen portable content is fetched explicitly; ordinary game reads never load releases. */
+export const gameReleases = sqliteTable(
+	'game_releases',
+	{
+		id: text('id').primaryKey(),
+		gameId: text('game_id')
+			.notNull()
+			.references(() => games.id, { onDelete: 'cascade' }),
+		originalGameId: text('original_game_id').notNull(),
+		contentVersion: text('content_version').notNull(),
+		contentHash: text('content_hash').notNull(),
+		createdAt: text('created_at').notNull(),
+		content: text('content').notNull()
+	},
+	(t) => [
+		unique().on(t.gameId, t.id),
+		unique().on(t.gameId, t.contentVersion, t.contentHash),
+		index('game_releases_identity').on(t.originalGameId, t.contentVersion),
+		index('game_releases_owner').on(t.gameId),
+		check('game_releases_json', sql`json_valid(${t.content})`)
+	]
+);
+
+export const gameReleaseSelection = sqliteTable(
+	'game_release_selection',
+	{
+		gameId: text('game_id')
+			.primaryKey()
+			.references(() => games.id, { onDelete: 'cascade' }),
+		releaseId: text('release_id').notNull()
+	},
+	(t) => [
+		foreignKey({
+			columns: [t.gameId, t.releaseId],
+			foreignColumns: [gameReleases.gameId, gameReleases.id]
+		})
+	]
+);
+
 export const sessions = sqliteTable(
 	'sessions',
 	{

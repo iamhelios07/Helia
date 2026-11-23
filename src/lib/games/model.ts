@@ -6,6 +6,7 @@ import { parseCodeProject, type CodeProject } from './code-project.js';
 import { parseRegexRules, type RegexRule } from './regex.js';
 import { parseResources, type GameResources } from './resources.js';
 import { parseGameUI, type GameUI } from './ui/runtime/model.js';
+import { originalGameId } from './versioning.js';
 
 export const GAME_TITLE_MAX_LENGTH = 120;
 export const GAME_GENRE_MAX_LENGTH = 80;
@@ -33,6 +34,7 @@ export interface UpdateGameSettings extends GameSettings {
 export interface Game extends GameMetadata {
 	schemaVersion: 2;
 	id: string;
+	originalGameId?: string;
 	activeSessionId: string;
 	createdAt: string;
 	updatedAt: string;
@@ -229,6 +231,9 @@ export function parseGame(value: unknown): Game {
 		...validateGameMetadata(value),
 		schemaVersion: 2,
 		id: value.id,
+		...(value.originalGameId === undefined
+			? {}
+			: { originalGameId: originalGameId(value.originalGameId) }),
 		activeSessionId: value.activeSessionId,
 		createdAt: value.createdAt,
 		updatedAt: value.updatedAt,

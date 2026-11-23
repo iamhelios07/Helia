@@ -41,6 +41,12 @@ import { useStorage, type StorageUnit } from '#lib/storage/unit.js';
 import type { AgentWorkspaceResult } from './ai/loop.js';
 import type { GameResources } from './resources.js';
 import type { RuleTrigger } from './scripting/protocol.js';
+import type {
+	GameVersioning,
+	GameRelease,
+	GameReleaseOptions,
+	CreateGameReleaseResult
+} from './versioning.js';
 
 import { isSessionBusy } from './ai/activity.js';
 import { agentMessages } from './ai/message-echo.js';
@@ -702,6 +708,7 @@ class GameRepository {
 			...metadata,
 			schemaVersion: 2,
 			id: gameId,
+			originalGameId: crypto.randomUUID(),
 			activeSessionId: session.id,
 			createdAt: now,
 			updatedAt: now,
@@ -715,6 +722,42 @@ class GameRepository {
 			records: [storedRecord('games', game), storedRecord('sessions', session)]
 		});
 		return game;
+	};
+	getGameVersioning = async (gameId: string): Promise<GameVersioning> => {
+		const reply = await this.transport({ kind: 'versioning', action: 'read', gameId });
+		if (!reply.versioning) {
+			throw Error('Missing game versioning');
+		}
+		return reply.versioning;
+	};
+	createGameRelease = async (
+		gameId: string,
+		contentVersion: string,
+		options: GameReleaseOptions = {}
+	): Promise<CreateGameReleaseResult> => {
+		const reply = await this.transport({
+			kind: 'versioning',
+			action: 'release',
+			gameId,
+			contentVersion,
+			...options
+		});
+		if (!reply.releaseResult) {
+			throw Error('Missing release result');
+		}
+		return reply.releaseResult;
+	};
+	getGameRelease = async (gameId: string, releaseId: string): Promise<GameRelease> => {
+		const reply = await this.transport({
+			kind: 'versioning',
+			action: 'getRelease',
+			gameId,
+			releaseId
+		});
+		if (!reply.release) {
+			throw Error('Missing game release');
+		}
+		return reply.release;
 	};
 	getGameWorkspace = (gameId: string) => {
 		return this.withGame(gameId, (unit) => {
