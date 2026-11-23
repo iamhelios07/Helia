@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
+import { buildGameUI } from './build.js';
 import { compileGameUI } from './compiler.js';
 import { dockPanel, panelIds, reconcileLayout, removePanel } from './layout.js';
 import { parseGameUI, parsePanelLayout } from './model.js';
@@ -14,6 +15,23 @@ const ui = {
 		}
 	}
 } as const;
+it('mounts a prepared UI with scoped media URLs and no source modules', async () => {
+	const compiled = await buildGameUI(ui);
+	const hash = 'a'.repeat(64);
+	const url = 'https://helia.example/api/games/one/assets/' + hash;
+	const html = await compileGameUI(
+		{ ...ui, modules: {}, compiled },
+		'token',
+		{
+			portrait: { name: 'portrait.png', mime: 'image/png', data: 'helia-asset:' + hash }
+		},
+		() => url
+	);
+	expect(html).toContain('img-src data: blob: https://helia.example/api/games/one/assets/');
+	expect(html).toContain("connect-src 'none'");
+	expect(html).toContain(url);
+	expect(html).not.toContain(';base64,');
+});
 describe('game UI contracts and compilation', () => {
 	it('validates packaged multi-module UI and optional creator defaults', () => {
 		expect(

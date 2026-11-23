@@ -5,11 +5,13 @@ import { mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 
 import { hostAILeases } from '#lib/games/ai/leases.js';
+import { gameSummary } from '#lib/games/model.js';
 import migration from '#lib/storage/migrations/0000_initial.sql?raw';
 import {
 	CONFLICT,
 	parseRequest,
 	storedRecord,
+	patchedGame,
 	type StoredRecord,
 	type StorageReply,
 	type StorageRequest,
@@ -40,6 +42,15 @@ function readFilter(table: Table, gameId?: string, sessionId?: string) {
 	}
 	if (table === 'games') {
 		return sql`where id = ${gameId}`;
+	}
+	if (table === 'snapshots' && sessionId !== undefined) {
+		return sql`where game_id = ${gameId} and id in (select snapshot_id from progress where game_id = ${gameId} and session_id = ${sessionId})`;
+	}
+	if (table === 'snapshot_resources' && sessionId !== undefined) {
+		return sql`where game_id = ${gameId} and snapshot_id in (select snapshot_id from progress where game_id = ${gameId} and session_id = ${sessionId})`;
+	}
+	if (table === 'blobs' && sessionId !== undefined) {
+		return sql`where game_id = ${gameId} and id in (select json_extract(value, '$.blobId') from snapshot_resources where game_id = ${gameId} and snapshot_id in (select snapshot_id from progress where game_id = ${gameId} and session_id = ${sessionId}))`;
 	}
 	if (
 		sessionId !== undefined &&
@@ -193,6 +204,14 @@ class Storage {
 		return { version: game.version + 1, records };
 	}
 	private read(command: ReadRequest): StorageReply {
+		if (command.play && !command.sessionId) {
+			const row = this.connection
+				.prepare("SELECT json_extract(value,'$.activeSessionId') AS session FROM games WHERE id=?")
+				.get(command.gameId) as { session: string } | undefined;
+			if (row) {
+				command = { ...command, sessionId: row.session };
+			}
+		}
 		const game = this.db.get<{ version: number }>(
 			sql`select version from games where id = ${command.gameId}`
 		);
@@ -215,7 +234,7 @@ class Storage {
 				records.push(...this.readRows(table, command.gameId, command.sessionId));
 			}
 			for (const table of ['blobs', 'snapshot_resources'] as const) {
-				records.push(...this.readRows(table, command.gameId));
+				records.push(...this.readRows(table, command.gameId, command.sessionId));
 			}
 		}
 		validateStoredHistory(records);
@@ -260,6 +279,19 @@ class Storage {
 	private write(command: WriteRequest): StorageReply {
 		if (command.kind === 'commit') {
 			this.commitVersion(command);
+		}
+		if (command.kind === 'commit' && command.gamePatch) {
+			const current = this.readRows('games', command.gameId)[0];
+			if (!current || command.records.some((row) => row.table === 'games')) {
+				throw Error('Invalid game patch');
+			}
+			command = {
+				...command,
+				records: [
+					...command.records,
+					storedRecord('games', patchedGame(current.value, command.gamePatch))
+				]
+			};
 		}
 		// Parents precede children; shifted message sequence values are updated backwards.
 		const order = [
@@ -319,7 +351,7 @@ class Storage {
 				: this.readRows('games').filter(
 						(row) => (row.value as { trashedAt?: string }).trashedAt === undefined
 					);
-			return { version: 0, records: rows };
+			return { version: 0, records: [], games: rows.map((row) => gameSummary(row.value)) };
 		}
 		if (command.kind === 'trash' || command.kind === 'restore') {
 			return this.trash(command);

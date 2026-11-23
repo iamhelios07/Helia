@@ -1,7 +1,10 @@
+import { gameSummary } from '#lib/games/model.js';
 import {
 	CONFLICT,
 	parseReply,
 	parseRequest,
+	patchedGame,
+	storedRecord,
 	type StoredRecord,
 	type StorageRequest,
 	type StorageReply,
@@ -41,14 +44,24 @@ class MemoryStorage {
 	private list(includeTrashed = false) {
 		return parseReply({
 			version: 0,
-			records: [...this.rows.values()].filter(
-				(row) =>
-					row.table === 'games' &&
-					(includeTrashed || (row.value as { trashedAt?: string }).trashedAt === undefined)
-			)
+			records: [],
+			games: [...this.rows.values()]
+				.filter(
+					(row) =>
+						row.table === 'games' &&
+						(includeTrashed || (row.value as { trashedAt?: string }).trashedAt === undefined)
+				)
+				.map((row) => gameSummary(row.value))
 		});
 	}
 	private read(request: Extract<StorageRequest, { kind: 'read' }>) {
+		if (request.play && !request.sessionId) {
+			const game = this.rows.get('games:' + request.gameId + ':' + request.gameId)?.value as
+				{ activeSessionId: string } | undefined;
+			if (game) {
+				request = { ...request, sessionId: game.activeSessionId };
+			}
+		}
 		return parseReply({
 			version: this.versions.get(request.gameId) ?? 0,
 			records: [...this.rows.values()].filter(
@@ -108,7 +121,25 @@ class MemoryStorage {
 		this.rows = next;
 		return { version: this.versions.get(request.gameId) ?? 0, records: [] };
 	}
+	private applyGamePatch(request: Extract<StorageRequest, { kind: 'commit' | 'create' }>) {
+		if (request.kind === 'commit' && request.gamePatch) {
+			const current = this.rows.get('games:' + request.gameId + ':' + request.gameId);
+			if (!current || request.records.some((row) => row.table === 'games')) {
+				throw Error('Invalid game patch');
+			}
+			request = {
+				...request,
+				records: [
+					...request.records,
+					storedRecord('games', patchedGame(current.value, request.gamePatch))
+				]
+			};
+		}
+		return request;
+	}
+
 	private write(request: Extract<StorageRequest, { kind: 'commit' | 'create' }>): StorageReply {
+		request = this.applyGamePatch(request);
 		const version = this.versions.get(request.gameId);
 		if (
 			(request.kind === 'create' && version !== undefined) ||

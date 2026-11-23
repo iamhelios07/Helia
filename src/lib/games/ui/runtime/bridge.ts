@@ -12,6 +12,7 @@ import {
 	subscribeSessionChanges,
 	subscribeSessionEvents
 } from '#lib/games/repository.js';
+import { assetURL, loadArtifact } from '#lib/games/runtime-content.js';
 import { parseAction, type SessionHistory } from '#lib/games/state/model.js';
 import { parseGameState, type GameState } from '#lib/games/state/value.js';
 
@@ -20,7 +21,7 @@ import { gameSecrets } from '../../secrets/client.js';
 import { unavailableSecrets } from '../../secrets/protocol.js';
 import { compileGameUI } from './compiler.js';
 import { FileBridge } from './files-bridge.js';
-import { UI_LIMITS, type GameUI, type PanelInfo, type PanelView } from './model.js';
+import { UI_LIMITS, parseUIBuild, type GameUI, type PanelInfo, type PanelView } from './model.js';
 
 // UI State lasts only for this application execution, scoped to a game and session.
 const transient = new Map<string, GameState>();
@@ -49,6 +50,7 @@ function defaultRuntime(): GameUIRuntime {
 	};
 }
 export interface MountOptions {
+	initialHistory?: SessionHistory;
 	onerror?: (message: string) => void;
 	onready?: () => void;
 	onui?: (ui: GameUI | undefined) => void;
@@ -81,7 +83,7 @@ export async function mountGameUI(
 	options: MountOptions = {}
 ): Promise<GameUIHandle> {
 	const runtime = options.runtime ?? defaultRuntime();
-	const history = await runtime.getSessionHistory(gameId, sessionId);
+	const history = options.initialHistory ?? (await runtime.getSessionHistory(gameId, sessionId));
 	const ui = history.snapshot.ui;
 	options.onui?.(ui);
 	const files =
@@ -91,7 +93,12 @@ export async function mountGameUI(
 		return watchContent(context, history);
 	}
 	const token = crypto.randomUUID();
-	const document = await compileGameUI(ui, token, history.resources);
+	const prepared = ui.artifact
+		? { ...ui, compiled: parseUIBuild(await loadArtifact(gameId, ui.artifact)) }
+		: ui;
+	const document = await compileGameUI(prepared, token, history.resources, (value) =>
+		assetURL(gameId, value)
+	);
 	return new GameUIBridge(context, history, token).mount(document);
 }
 

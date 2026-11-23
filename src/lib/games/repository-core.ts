@@ -35,7 +35,7 @@ import {
 } from '#lib/games/state/model.js';
 import { emptyStateDocument, parseStateDocument } from '#lib/games/state/schema.js';
 import { parseGameState, sameValue } from '#lib/games/state/value.js';
-import { storedRecord, type StorageTransport } from '#lib/storage/protocol.js';
+import { storedRecord, type StorageRequest, type StorageTransport } from '#lib/storage/protocol.js';
 import { useStorage, type StorageUnit } from '#lib/storage/unit.js';
 
 import type { AgentWorkspaceResult } from './ai/loop.js';
@@ -65,6 +65,7 @@ import {
 	type GameMetadata,
 	type UpdateGameSettings
 } from './model.js';
+import { runtimeReady } from './runtime-ready.js';
 import { gameActions } from './scripting/game-scope.js';
 import { migrateState } from './state/migration.js';
 import { parseGameUI } from './ui/runtime/model.js';
@@ -147,8 +148,7 @@ function contentSnapshot(unit: StorageUnit, gameId: string, game: Game) {
 		schema: game.schema,
 		scripts: game.scripts,
 		...(game.ui ? { ui: game.ui } : {}),
-		...(game.ai ? { ai: game.ai } : {}),
-		...(game.code ? { code: game.code } : {})
+		...(game.ai ? { ai: game.ai } : {})
 	};
 	const id = contentHash(content);
 	const existing = unit.get('snapshots', id);
@@ -165,8 +165,10 @@ function contentSnapshot(unit: StorageUnit, gameId: string, game: Game) {
 	unit.put('snapshots', snapshot);
 	for (const [assetId, asset] of Object.entries(game.resources ?? {})) {
 		const name = asset.name;
-		const fingerprint = contentHash(asset.data);
-		if (unit.get('blobs', fingerprint) === undefined) {
+		const fingerprint = asset.data.startsWith('helia-asset:')
+			? asset.data.slice(12)
+			: contentHash(asset.data);
+		if (!asset.data.startsWith('helia-asset:') && unit.get('blobs', fingerprint) === undefined) {
 			// The blob row is game-owned; snapshots reference it through snapshot_resources.
 			unit.put('blobs', {
 				schemaVersion: 1,
@@ -179,7 +181,7 @@ function contentSnapshot(unit: StorageUnit, gameId: string, game: Game) {
 		// The per-path name row keeps creator asset paths; the blob id deduplicates bytes.
 		unit.put('snapshot_resources', {
 			schemaVersion: 1,
-			id: contentHash(assetId + fingerprint),
+			id: contentHash([id, assetId, fingerprint]),
 			snapshotId: id,
 			gameId,
 			blobId: fingerprint,
@@ -198,9 +200,18 @@ function snapshotResources(unit: StorageUnit, snapshotId: string): GameResources
 		.filter((row) => row.snapshotId === snapshotId)) {
 		const blob = unit.get('blobs', reference.blobId) as { mime: string; data: string } | undefined;
 		if (!blob) {
-			throw new Error('리소스 데이터를 찾을 수 없어요.');
+			const current = gameIn(unit, reference.gameId).resources?.[reference.assetId];
+			if (!current) {
+				throw new Error('리소스 데이터를 찾을 수 없어요.');
+			}
+			result[reference.assetId] = {
+				name: reference.name,
+				mime: current.mime,
+				data: 'helia-asset:' + reference.blobId
+			};
+		} else {
+			result[reference.assetId] = { name: reference.name, mime: blob.mime, data: blob.data };
 		}
-		result[reference.assetId] = { name: reference.name, mime: blob.mime, data: blob.data };
 	}
 	return result;
 }
@@ -399,6 +410,22 @@ class GameRepository {
 	private withGame = <T>(gameId: string, operation: (unit: StorageUnit) => T) => {
 		return useStorage(this.transport, gameId, undefined, operation);
 	};
+	/** First-use snapshots retain portable source, never transport-only artifact references. */
+	private readPlay = async (command: Extract<StorageRequest, { kind: 'read' }>) => {
+		const reply = await this.transport({ ...command, play: true });
+		const saved = reply.records.find((row) => row.table === 'games');
+		if (!saved) {
+			return reply;
+		}
+		const sessionId = command.sessionId ?? parseGame(saved.value).activeSessionId;
+		if (reply.records.some((row) => row.table === 'progress' && row.sessionId === sessionId)) {
+			return reply;
+		}
+		await useStorage(this.transport, command.gameId, sessionId, (unit) =>
+			initialize(unit, command.gameId, sessionId)
+		);
+		return this.transport({ ...command, play: true });
+	};
 	private withHistory = <T>(
 		gameId: string,
 		sessionId: string,
@@ -408,6 +435,9 @@ class GameRepository {
 		const scoped: StorageTransport = (command) => {
 			if (runOptions.signal?.aborted) {
 				throw aiError('canceled');
+			}
+			if (command.kind === 'read') {
+				return this.readPlay(command);
 			}
 			return this.transport(
 				command.kind === 'commit' && runOptions.lease
@@ -470,11 +500,15 @@ class GameRepository {
 			messages
 		};
 	};
-	private getTimeline = (gameId: string, sessionId: string): Promise<SessionTimeline> => {
+	private getTimeline = (
+		gameId: string,
+		sessionId: string,
+		graph = true
+	): Promise<SessionTimeline> => {
 		return this.withHistory(gameId, sessionId, (unit, context) => ({
 			session: context.session,
 			history: context.history,
-			events: historyEvents(context.history, context.messages),
+			events: graph ? historyEvents(context.history, context.messages) : [],
 			messages: visibleMessages(context),
 			memories: activeMemories(context.history, unit.all('memories').map(parseMemory))
 		}));
@@ -639,12 +673,12 @@ class GameRepository {
 	};
 	subscribeSessionEvents = this.uiEvents.subscribe;
 	getSessionTimeline = this.getTimeline;
+	getPlayTimeline = (gameId: string, sessionId: string) =>
+		this.getTimeline(gameId, sessionId, false);
 	deleteSessionEvent = this.deleteEvent;
 	listGames = async (includeTrashed = false) => {
 		const result = await this.transport({ kind: 'list', includeTrashed });
-		return result.records
-			.map((row) => parseGame(row.value))
-			.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+		return (result.games ?? []).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 	};
 	/** Moving to Trash keeps every owned row; the timestamp is the only change. */
 	trashGame = async (gameId: string) => {
@@ -698,6 +732,92 @@ class GameRepository {
 			return { game, sessions };
 		});
 	};
+	getPlayWorkspace = async (
+		gameId: string
+	): Promise<{ game: Game; sessions: Session[]; timeline: SessionTimeline } | null> => {
+		const workspace = await useStorage(
+			(request) => (request.kind === 'read' ? this.readPlay(request) : this.transport(request)),
+			gameId,
+			undefined,
+			(unit) => {
+				if (!unit.get('games', gameId)) {
+					return null;
+				}
+				const game = gameIn(unit, gameId),
+					sessions = unit
+						.all('sessions')
+						.map(parseSession)
+						.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+				const context = initialize(unit, gameId, game.activeSessionId);
+				const timeline = {
+					session: context.session,
+					history: context.history,
+					events: [],
+					messages: visibleMessages(context),
+					memories: activeMemories(context.history, unit.all('memories').map(parseMemory))
+				};
+				return { game, sessions, timeline };
+			}
+		);
+		if (workspace && !runtimeReady(workspace.game)) {
+			const original = (await this.getGameWorkspace(gameId))!.game;
+			await this.applyGameDraft(gameId, {
+				baseContent: editorContent(original),
+				content: editorContent(original)
+			});
+			return this.getPlayWorkspace(gameId);
+		}
+		if (workspace && !runtimeReady(workspace.timeline.history.snapshot)) {
+			await this.prepareRuntimeSnapshot(gameId, workspace.game.activeSessionId);
+			return this.getPlayWorkspace(gameId);
+		}
+		return workspace;
+	};
+	private prepareRuntimeSnapshot = async (gameId: string, sessionId: string) => {
+		const original = await useStorage(
+			this.transport,
+			gameId,
+			sessionId,
+			(unit) => initialize(unit, gameId, sessionId).history
+		);
+		const compiled = await (await import('./runtime-build.js')).buildRuntime(original.snapshot);
+		const id = contentHash({ ...compiled, id: undefined, createdAt: undefined, code: undefined });
+		return this.withHistory(gameId, sessionId, (unit, context) => {
+			if (
+				context.history.snapshot.id !== original.snapshot.id ||
+				context.history.progress.revision !== original.progress.revision
+			) {
+				throw Error('Session changed during runtime preparation');
+			}
+			unit.put('snapshots', { ...compiled, id, createdAt: new Date().toISOString() });
+			for (const raw of unit.all('snapshot_resources')) {
+				const resource = parseSnapshotResource(raw);
+				if (resource.snapshotId === original.snapshot.id) {
+					unit.put('snapshot_resources', {
+						...resource,
+						id: contentHash([id, resource.assetId, resource.blobId]),
+						snapshotId: id
+					});
+				}
+			}
+			for (const transaction of original.transactions) {
+				unit.put('checkpoints', {
+					schemaVersion: 1,
+					id: transaction.id,
+					transactionId: transaction.id,
+					snapshotId: id,
+					gameId,
+					sessionId,
+					state: stateAt(original, transaction.id)
+				});
+			}
+			unit.put('progress', {
+				...original.progress,
+				snapshotId: id,
+				revision: original.progress.revision + 1
+			});
+		});
+	};
 	updateGame = (gameId: string, input: GameMetadata) => {
 		const metadata = validateGameMetadata(input);
 		return this.withGame(gameId, (unit) => {
@@ -726,13 +846,14 @@ class GameRepository {
 			content: GameEditorContent;
 		}
 	) => {
-		const content = input.content.code
+		const source = input.content.code
 			? {
 					...input.content,
 					...(await compileCodeProject(input.content.code, input.content.schema)),
 					code: input.content.code
 				}
 			: input.content;
+		const content = await (await import('./runtime-build.js')).buildRuntime(source);
 		return useStorage(
 			(request) =>
 				this.transport(request.kind === 'read' ? { ...request, includeHistory: true } : request),
@@ -841,7 +962,7 @@ class GameRepository {
 		}
 	};
 
-	updateGameRules = (
+	updateGameRules = async (
 		gameId: string,
 		input: Pick<Game, 'schema' | 'initialState' | 'scripts' | 'ui' | 'ai'>
 	) => {
@@ -849,8 +970,11 @@ class GameRepository {
 			schema: input.schema,
 			initialState: input.initialState
 		});
-		const scripts = parseScripts(input.scripts);
-		const ui = input.ui === undefined ? undefined : parseGameUI(input.ui);
+		const parsedScripts = parseScripts(input.scripts);
+		const parsedUI = input.ui === undefined ? undefined : parseGameUI(input.ui);
+		const { scripts, ui } = await (
+			await import('./runtime-build.js')
+		).buildRuntime({ scripts: parsedScripts, ui: parsedUI, schema });
 		const ai = input.ai === undefined ? undefined : parseGameAIContent(input.ai);
 		return this.withGame(gameId, (unit) => {
 			const game = {

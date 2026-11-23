@@ -17,6 +17,7 @@
 		gameId,
 		sessionId,
 		ui,
+		initialHistory,
 		blocked = false,
 		onsavingchange,
 		children
@@ -24,6 +25,7 @@
 		gameId: string;
 		sessionId: string;
 		ui?: GameUI;
+		initialHistory?: import('../state/model.js').SessionHistory;
 		blocked?: boolean;
 		onsavingchange: (busy: boolean) => void;
 		children: Snippet<[GameUI['chatStyle']]>;
@@ -49,6 +51,7 @@
 					return;
 				}
 				const cleanup = await mountGameUI(frame, game, session, {
+					initialHistory: attempt === 0 ? untrack(() => initialHistory) : undefined,
 					blocked: () => !alive || blocked || isSessionBusy(game, session),
 					oncontentchange: () => {
 						if (alive) {

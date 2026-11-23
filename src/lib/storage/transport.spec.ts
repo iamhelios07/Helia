@@ -23,7 +23,10 @@ it('sends only the typed request to the web endpoint', async () => {
 	expect(await storageRequest({ kind: 'list' })).toEqual({ version: 0, records: [] });
 	expect(fetch).toHaveBeenCalledWith(
 		'/api/storage',
-		expect.objectContaining({ method: 'POST', body: '{"kind":"list"}' })
+		expect.objectContaining({
+			method: 'POST',
+			body: '{"kind":"sync","request":{"kind":"list"},"known":[]}'
+		})
 	);
 });
 it('preserves conflict errors so the repository can retry', async () => {
@@ -45,7 +48,7 @@ it('routes desktop requests to the single host command', async () => {
 	Object.assign(main, { top: main });
 	vi.stubGlobal('window', main);
 	expect(await storageRequest({ kind: 'list' })).toEqual({ version: 0, records: [] });
-	expect(host).toHaveBeenCalledWith({ kind: 'list' });
+	expect(host).toHaveBeenCalledWith({ kind: 'sync', request: { kind: 'list' }, known: [] });
 	expect(nativeInvoke).not.toHaveBeenCalled();
 });
 it('refuses raw native access without the trusted main-frame closure', async () => {

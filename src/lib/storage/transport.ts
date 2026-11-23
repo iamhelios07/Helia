@@ -1,8 +1,8 @@
 import { isDesktopBuild, isTauri } from '#lib/platform/index.js';
 
-import { parseReply, type StorageTransport } from './protocol.js';
+import { synchronizedStorage } from './sync-client.js';
 
-export const storageRequest: StorageTransport = async (request) => {
+async function send(request: unknown): Promise<unknown> {
 	if (isDesktopBuild) {
 		if (!isTauri()) {
 			throw new Error('데스크톱 저장소는 Helia 앱에서 사용할 수 있어요.');
@@ -11,7 +11,7 @@ export const storageRequest: StorageTransport = async (request) => {
 		if (window !== window.top || typeof host !== 'function') {
 			throw new Error('데스크톱 저장소 접근이 허용되지 않았어요.');
 		}
-		return parseReply(await host(request));
+		return host(request);
 	}
 	const response = await fetch('/api/storage', {
 		method: 'POST',
@@ -29,5 +29,29 @@ export const storageRequest: StorageTransport = async (request) => {
 				: '게임 저장소를 사용할 수 없어요.'
 		);
 	}
-	return parseReply(result);
-};
+	return result;
+}
+
+async function loadAsset(gameId: string, hash: string): Promise<string> {
+	if (isDesktopBuild) {
+		const result = (await send({ kind: 'asset', gameId, hash })) as { data: string };
+		if (typeof result.data !== 'string' || !result.data.startsWith('data:')) {
+			throw Error('Invalid asset');
+		}
+		return result.data;
+	}
+	const response = await fetch(`/api/games/${encodeURIComponent(gameId)}/assets/${hash}`, {
+		cache: 'force-cache'
+	});
+	if (!response.ok) {
+		throw Error('Asset unavailable');
+	}
+	const blob = await response.blob();
+	return new Promise((resolve, reject) => {
+		const reader = new FileReader();
+		reader.onload = () => resolve(String(reader.result));
+		reader.onerror = () => reject(Error('Asset unavailable'));
+		reader.readAsDataURL(blob);
+	});
+}
+export const storageRequest = synchronizedStorage(send, loadAsset);

@@ -54,6 +54,8 @@ vi.mock('../games/repository.js', () => ({
 	listGames: vi.fn(),
 	createGame: vi.fn(),
 	getGameWorkspace: vi.fn(),
+	getPlayWorkspace: (...args: unknown[]) =>
+		getGameWorkspace(...(args as Parameters<typeof getGameWorkspace>)),
 	createSession: vi.fn(),
 	selectSession: vi.fn(),
 	updateGame: vi.fn(),
@@ -65,6 +67,8 @@ vi.mock('../games/repository.js', () => ({
 	purgeGame: vi.fn(),
 	getSessionConversation: vi.fn(),
 	getSessionTimeline: vi.fn(),
+	getPlayTimeline: (...args: unknown[]) =>
+		getSessionTimeline(...(args as Parameters<typeof getSessionTimeline>)),
 	selectSessionBranch: vi.fn(),
 	deleteSessionEvent: vi.fn(),
 	subscribeSessionChanges: vi.fn(() => () => {})
@@ -179,6 +183,10 @@ beforeEach(async () => {
 		session: sessionId === otherSession.id ? otherSession : session,
 		messages: []
 	}));
+	vi.mocked(getSessionTimeline).mockImplementation(async (gameId, sessionId) => {
+		const conversation = await getSessionConversation(gameId, sessionId);
+		return committedTimeline(conversation.messages, conversation.session);
+	});
 });
 
 async function openAddDialog() {

@@ -1,4 +1,10 @@
-import { parseGame, parseMessage, parseSession } from '#lib/games/model.js';
+import {
+	parseGame,
+	parseMessage,
+	parseSession,
+	gameSummary,
+	type GameSummary
+} from '#lib/games/model.js';
 import {
 	blobId,
 	counter,
@@ -36,9 +42,13 @@ export interface StorageView {
 	version: number;
 	records: StoredRecord[];
 }
+export interface GamePatch {
+	set: Record<string, unknown>;
+	remove: string[];
+}
 export type StorageRequest =
 	| { kind: 'list'; includeTrashed?: boolean }
-	| { kind: 'read'; gameId: string; sessionId?: string; includeHistory?: boolean }
+	| { kind: 'read'; gameId: string; sessionId?: string; includeHistory?: boolean; play?: boolean }
 	| { kind: 'create'; gameId: string; records: StoredRecord[] }
 	| { kind: 'prune'; gameId: string; sessionId: string; eventId: string; expectedRevision: number }
 	| { kind: 'trash'; gameId: string }
@@ -51,10 +61,12 @@ export type StorageRequest =
 			records: StoredRecord[];
 			deleteSessions: string[];
 			aiLease?: string;
+			gamePatch?: GamePatch;
 	  };
 export interface StorageReply {
 	version: number;
 	records: StoredRecord[];
+	games?: GameSummary[];
 }
 export type StorageTransport = (request: StorageRequest) => Promise<StorageReply>;
 export const CONFLICT = 'STORAGE_CONFLICT';
@@ -114,7 +126,7 @@ export function storedRecord(table: Table, value: unknown, ownerSessionId?: stri
 	return { table, id, gameId, sessionId, value: parsed };
 }
 
-function parseRecords(input: unknown, gameId?: string): StoredRecord[] {
+function parseRecords(input: unknown, gameId?: string, portable = false): StoredRecord[] {
 	if (!Array.isArray(input)) {
 		throw new Error('저장 요청의 형식이 올바르지 않아요.');
 	}
@@ -124,6 +136,9 @@ function parseRecords(input: unknown, gameId?: string): StoredRecord[] {
 			throw new Error('지원하지 않는 저장 항목이에요.');
 		}
 		const parsed = storedRecord(row.table as Table, row.value, row.sessionId as string);
+		if (portable && parsed.table === 'games') {
+			assertPortableResources(parsed.value);
+		}
 		if (
 			parsed.id !== row.id ||
 			parsed.gameId !== row.gameId ||
@@ -157,6 +172,7 @@ function parseReadRequest(gameId: string, input: Record<string, unknown>): Stora
 		kind: 'read',
 		gameId,
 		...(input.includeHistory === true ? { includeHistory: true } : {}),
+		...(input.play === true ? { play: true } : {}),
 		...(input.sessionId === undefined ? {} : { sessionId: identifier(input.sessionId) })
 	};
 }
@@ -173,8 +189,36 @@ function parseCommitRequest(
 		version: counter(input.version),
 		records,
 		deleteSessions: (input.deleteSessions as string[]).map(identifier),
-		...(input.aiLease === undefined ? {} : { aiLease: identifier(input.aiLease) })
+		...(input.aiLease === undefined ? {} : { aiLease: identifier(input.aiLease) }),
+		...(input.gamePatch === undefined ? {} : { gamePatch: parseGamePatch(input.gamePatch) })
 	};
+}
+export function parseGamePatch(value: unknown): GamePatch {
+	const row = record(value),
+		set = record(row.set);
+	if (
+		!Array.isArray(row.remove) ||
+		row.remove.some((key) => typeof key !== 'string') ||
+		Object.keys(set).some((key) => ['__proto__', 'prototype', 'constructor'].includes(key))
+	) {
+		throw Error('Invalid game patch');
+	}
+	return { set, remove: row.remove as string[] };
+}
+export function patchedGame(value: unknown, patch: GamePatch): ReturnType<typeof parseGame> {
+	const next = { ...record(value), ...patch.set };
+	for (const key of patch.remove) {
+		delete next[key];
+	}
+	const game = parseGame(next);
+	assertPortableResources(game);
+	return game;
+}
+function assertPortableResources(value: unknown) {
+	const resources = (value as { resources?: Record<string, { data: string }> }).resources;
+	if (Object.values(resources ?? {}).some((asset) => !asset.data.startsWith('data:'))) {
+		throw Error('Stored resources must contain portable media');
+	}
 }
 
 export function parseRequest(value: unknown): StorageRequest {
@@ -198,7 +242,7 @@ export function parseRequest(value: unknown): StorageRequest {
 	if (input.kind === 'read') {
 		return parseReadRequest(gameId, input);
 	}
-	const records = parseRecords(input.records, gameId);
+	const records = parseRecords(input.records, gameId, true);
 	if (input.kind === 'create') {
 		return createRequest(gameId, records);
 	}
@@ -210,5 +254,12 @@ export function parseRequest(value: unknown): StorageRequest {
 
 export function parseReply(value: unknown): StorageReply {
 	const input = record(value);
-	return { version: counter(input.version), records: parseRecords(input.records) };
+	if (input.games !== undefined && !Array.isArray(input.games)) {
+		throw Error('Invalid game list');
+	}
+	return {
+		version: counter(input.version),
+		records: parseRecords(input.records),
+		...(Array.isArray(input.games) ? { games: input.games.map(gameSummary) } : {})
+	};
 }

@@ -257,11 +257,11 @@ describe('SQLite game repository', () => {
 				initialState: { hp: '100' }
 			}
 		]) {
-			expect(() =>
+			await expect(
 				repository.updateGameRules(game.id, { ...input, scripts: {} } as unknown as Parameters<
 					typeof repository.updateGameRules
 				>[1])
-			).toThrow();
+			).rejects.toThrow();
 		}
 		expect(await transport({ kind: 'read', gameId: game.id })).toEqual(before);
 	});

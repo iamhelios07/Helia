@@ -52,6 +52,23 @@ const media = new Set([
 	'video/mp4',
 	'video/webm'
 ]);
+const checkedMedia = new Map<string, { mime: string; bytes: number }>();
+let checkedCharacters = 0;
+function rememberMedia(data: string, mime: string, bytes: number) {
+	if (bytes > RESOURCE_LIMITS.fileBytes) {
+		return;
+	}
+	while (checkedCharacters + data.length > 8 * 1024 * 1024) {
+		const first = checkedMedia.keys().next().value;
+		if (!first) {
+			break;
+		}
+		checkedCharacters -= first.length;
+		checkedMedia.delete(first);
+	}
+	checkedMedia.set(data, { mime, bytes });
+	checkedCharacters += data.length;
+}
 
 /** Only portable, inert media may be embedded; SVG/HTML and network URLs are excluded. */
 export function parseResources(value: unknown): GameResources {
@@ -100,6 +117,13 @@ function parseResource(id: string, input: unknown): { resource: GameResource; by
 	}
 	const prefix = `data:${row.mime};base64,`;
 	validateResourcePath(row.name);
+	if (/^helia-asset:[a-f0-9]{64}$/.test(row.data)) {
+		return { resource: { name: row.name, mime: row.mime, data: row.data }, bytes: 0 };
+	}
+	const checked = checkedMedia.get(row.data);
+	if (checked?.mime === row.mime) {
+		return { resource: { name: row.name, mime: row.mime, data: row.data }, bytes: checked.bytes };
+	}
 	const data = row.data.startsWith(prefix) ? row.data.slice(prefix.length) : '';
 	if (
 		!data ||
@@ -109,6 +133,7 @@ function parseResource(id: string, input: unknown): { resource: GameResource; by
 		throw Error('리소스 파일 데이터가 올바르지 않아요.');
 	}
 	const bytes = (data.length / 4) * 3 - base64Padding(data);
+	rememberMedia(row.data, row.mime, bytes);
 	const resource = { name: row.name, mime: row.mime, data: row.data };
 	return { resource, bytes };
 }

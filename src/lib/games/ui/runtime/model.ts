@@ -25,6 +25,8 @@ export interface GameUI {
 	version: 1;
 	entry: string;
 	modules: Record<string, { language: 'tsx' | 'typescript'; source: string }>;
+	compiled?: UIBuild;
+	artifact?: string;
 	/** Global stylesheet injected after the frame base styles. */
 	styles?: string;
 	layout?: PanelLayout;
@@ -36,6 +38,47 @@ export interface GameUI {
 		fontFamily?: string;
 		userBackground?: string;
 		assistantBackground?: string;
+	};
+}
+export interface UIBuild {
+	version: 1;
+	sourceHash: string;
+	entry: string;
+	factories: string;
+	dependencies: Record<string, Record<string, string>>;
+}
+export function parseUIBuild(value: unknown): UIBuild {
+	const row = parseGameState(value);
+	if (
+		row.version !== 1 ||
+		typeof row.entry !== 'string' ||
+		typeof row.factories !== 'string' ||
+		row.factories.length > 2 * 1024 * 1024 ||
+		!row.dependencies ||
+		typeof row.dependencies !== 'object' ||
+		Array.isArray(row.dependencies)
+	) {
+		throw Error('Invalid UI build');
+	}
+	for (const deps of Object.values(row.dependencies)) {
+		if (
+			!deps ||
+			typeof deps !== 'object' ||
+			Array.isArray(deps) ||
+			Object.values(deps).some((target) => typeof target !== 'string')
+		) {
+			throw Error('Invalid UI build dependencies');
+		}
+	}
+	if (typeof row.sourceHash !== 'string' || !/^[a-f0-9]{64}$/.test(row.sourceHash)) {
+		throw Error('Invalid UI source fingerprint');
+	}
+	return {
+		version: 1,
+		sourceHash: row.sourceHash,
+		entry: row.entry,
+		factories: row.factories,
+		dependencies: row.dependencies as UIBuild['dependencies']
 	};
 }
 export const UI_LIMITS = Object.freeze({
@@ -174,25 +217,42 @@ export function parseGameUI(value: unknown): GameUI {
 	) {
 		throw Error('게임 UI 형식이 올바르지 않아요.');
 	}
-	const modules = parseModules(input.modules);
-	if (!Object.hasOwn(modules, input.entry)) {
+	const compiled = input.compiled === undefined ? undefined : parseUIBuild(input.compiled);
+	if (
+		input.artifact !== undefined &&
+		(typeof input.artifact !== 'string' || !/^[a-f0-9]{64}$/.test(input.artifact))
+	) {
+		throw Error('Invalid UI artifact');
+	}
+	const modules = Object.keys(input.modules).length ? parseModules(input.modules) : {};
+	if (!Object.hasOwn(modules, input.entry) && !compiled && !input.artifact) {
 		throw Error('게임 UI 진입점을 찾을 수 없어요.');
 	}
-	const result: GameUI = { version: 1, entry: input.entry, modules };
+	const result: GameUI = {
+		version: 1,
+		entry: input.entry,
+		modules,
+		...(compiled ? { compiled } : {}),
+		...(input.artifact ? { artifact: input.artifact as string } : {})
+	};
 	if (input.styles !== undefined) {
-		if (typeof input.styles !== 'string' || input.styles.length > UI_LIMITS.styleBytes) {
-			throw Error('게임 UI 스타일시트가 올바르지 않아요.');
-		}
-		// The frame CSP already blocks @import and url() loads; reject them loudly
-		// instead of letting them fail silently at runtime.
-		if (/@(?:import|charset|namespace)\b|url\s*\(|expression\s*\(/i.test(input.styles)) {
-			throw Error('게임 스타일시트에는 @import와 url()을 쓸 수 없어요.');
-		}
-		result.styles = input.styles;
+		result.styles = parseStyles(input.styles);
 	}
 	if (input.layout !== undefined) {
 		result.layout = parsePanelLayout(input.layout);
 	}
 	parseChatOptions(input, result);
 	return result;
+}
+
+function parseStyles(value: unknown): string {
+	if (typeof value !== 'string' || value.length > UI_LIMITS.styleBytes) {
+		throw Error('게임 UI 스타일시트가 올바르지 않아요.');
+	}
+	// The frame CSP already blocks @import and url() loads; reject them loudly
+	// instead of letting them fail silently at runtime.
+	if (/@(?:import|charset|namespace)\b|url\s*\(|expression\s*\(/i.test(value)) {
+		throw Error('게임 스타일시트에는 @import와 url()을 쓸 수 없어요.');
+	}
+	return value;
 }

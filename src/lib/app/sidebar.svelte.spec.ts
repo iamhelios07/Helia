@@ -9,6 +9,7 @@ import type { Game, Session } from '#lib/games/model.js';
 import {
 	listGames,
 	getGameWorkspace,
+	getSessionTimeline,
 	getSessionConversation,
 	createGame,
 	updateGame
@@ -30,6 +31,8 @@ vi.mock('#lib/games/repository.js', () => ({
 	listGames: vi.fn(),
 	createGame: vi.fn(),
 	getGameWorkspace: vi.fn(),
+	getPlayWorkspace: (...args: unknown[]) =>
+		getGameWorkspace(...(args as Parameters<typeof getGameWorkspace>)),
 	getSessionConversation: vi.fn(),
 	createSession: vi.fn(),
 	selectSession: vi.fn(),
@@ -40,6 +43,8 @@ vi.mock('#lib/games/repository.js', () => ({
 	restoreGame: vi.fn(),
 	purgeGame: vi.fn(),
 	getSessionTimeline: vi.fn(),
+	getPlayTimeline: (...args: unknown[]) =>
+		getSessionTimeline(...(args as Parameters<typeof getSessionTimeline>)),
 	selectSessionBranch: vi.fn(),
 	deleteSessionEvent: vi.fn(),
 	subscribeSessionChanges: vi.fn(() => () => {}),

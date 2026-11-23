@@ -30,7 +30,8 @@ describe('UI content and committed-state observers', () => {
 			scripts: {},
 			ui
 		});
-		expect((await repo.getGameWorkspace(game.id))!.game.ui).toEqual(ui);
+		expect((await repo.getGameWorkspace(game.id))!.game.ui).toMatchObject(ui);
+		expect((await repo.getGameWorkspace(game.id))!.game.ui?.compiled).toBeDefined();
 		const first = await repo.getSessionHistory(game.id, game.activeSessionId);
 		await repo.updateGameRules(game.id, {
 			schema: game.schema,

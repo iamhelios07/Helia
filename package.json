@@ -28,6 +28,7 @@
 		"test:unit": "vitest",
 		"test": "vitest run",
 		"test:native": "cargo test --manifest-path src-tauri/Cargo.toml --lib --no-default-features",
+		"test:web": "pnpm build:web && node --test scripts/start-web.test.mjs",
 		"db:generate": "drizzle-kit generate"
 	},
 	"devDependencies": {

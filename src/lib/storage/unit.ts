@@ -65,7 +65,7 @@ export async function useStorage<T>(
 				kind: 'commit',
 				gameId,
 				version: view.version,
-				records,
+				...commitChanges(records, view),
 				deleteSessions: unit.deletedSessions
 			});
 			return result;
@@ -76,4 +76,26 @@ export async function useStorage<T>(
 		}
 	}
 	throw new Error('게임 데이터가 변경되었어요. 다시 시도해주세요.');
+}
+
+function commitChanges(records: StoredRecord[], view: StorageView) {
+	const game = records.find((row) => row.table === 'games');
+	const previous = view.records.find((row) => row.table === 'games');
+	let gamePatch: import('./protocol.js').GamePatch | undefined;
+	if (game && previous) {
+		const before = previous.value as Record<string, unknown>,
+			after = game.value as Record<string, unknown>;
+		gamePatch = {
+			set: Object.fromEntries(
+				Object.entries(after).filter(
+					([key, value]) => JSON.stringify(value) !== JSON.stringify(before[key])
+				)
+			),
+			remove: Object.keys(before).filter((key) => !Object.hasOwn(after, key))
+		};
+	}
+	return {
+		records: gamePatch ? records.filter((row) => row !== game) : records,
+		...(gamePatch ? { gamePatch } : {})
+	};
 }

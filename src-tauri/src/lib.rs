@@ -5,6 +5,16 @@ pub fn run() {
     let initialization = access.initialization_script();
     tauri::Builder::default()
         .manage(access)
+        .register_asynchronous_uri_scheme_protocol("helia-media", |context, request, responder| {
+            let path = context
+                .app_handle()
+                .state::<storage::StoragePath>()
+                .0
+                .clone();
+            tauri::async_runtime::spawn_blocking(move || {
+                responder.respond(runtime_content::media_response(&path, request.uri().path()))
+            });
+        })
         // Invoke initialization runs before core.js defines invoke. Plugin scripts run
         // after core.js and before application code, so the private bridge captures it safely.
         .plugin(
@@ -42,6 +52,8 @@ mod generation;
 #[cfg(any(feature = "desktop", test))]
 mod network;
 #[cfg(any(feature = "desktop", test))]
+mod runtime_content;
+#[cfg(any(feature = "desktop", test))]
 mod secret_response;
 #[cfg(any(feature = "desktop", test))]
 mod session_files;
@@ -49,6 +61,8 @@ mod session_files;
 mod state_schema;
 #[cfg(any(feature = "desktop", test))]
 mod storage;
+#[cfg(any(feature = "desktop", test))]
+mod storage_sync;
 #[cfg(any(feature = "desktop", test))]
 mod vertex;
 

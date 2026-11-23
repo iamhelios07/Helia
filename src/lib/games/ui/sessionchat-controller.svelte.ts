@@ -19,6 +19,7 @@ import type { GameUI } from './runtime/model.js';
 
 import {
 	getSessionTimeline,
+	getPlayTimeline,
 	selectSessionBranch,
 	deleteSessionEvent,
 	subscribeSessionChanges
@@ -28,6 +29,7 @@ import { GenerationMonitor } from './generation-monitor.svelte.js';
 import { SessionPersonaController } from './session-persona-controller.svelte.js';
 
 interface SessionChatControllerOptions {
+	initialTimeline?: SessionTimeline;
 	gameId: string;
 	sessionId: string;
 	gameTitle: string;
@@ -173,7 +175,7 @@ export class SessionChatController {
 		const session = this.sessionId;
 		const request = ++this.requestId;
 		try {
-			const next = await getSessionTimeline(game, session);
+			const next = await (this.showTimeline ? getSessionTimeline : getPlayTimeline)(game, session);
 			if (this.isCurrent(game, session) && request === this.requestId) {
 				const previousTail = this.messages.at(-1);
 				const nextTail = next.messages.at(-1);
@@ -406,7 +408,7 @@ export class SessionChatController {
 		this.loading = true;
 		this.loadError = '';
 		try {
-			const timeline = await getSessionTimeline(game, session);
+			const timeline = await getPlayTimeline(game, session);
 			if (!this.isCurrent(game, session)) {
 				return;
 			}
@@ -550,7 +552,17 @@ export class SessionChatController {
 			this.refreshPending = true;
 			this.scheduleRefresh();
 		});
-		void this.loadConversation();
+		const initial = this.options().initialTimeline;
+		if (
+			initial &&
+			initial.session.gameId === this.gameId &&
+			initial.session.id === this.sessionId
+		) {
+			this.applyTimeline(initial, false);
+			this.loading = false;
+		} else {
+			void this.loadConversation();
+		}
 		return () => {
 			this.disposed = true;
 			this.modelRequestId++;

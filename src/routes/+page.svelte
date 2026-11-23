@@ -3,7 +3,7 @@
 	import { resolve } from '$app/paths';
 	import { onMount } from 'svelte';
 
-	import type { Game } from '#lib/games/model.js';
+	import type { Game, GameSummary } from '#lib/games/model.js';
 
 	import { configureAppSidebar } from '#lib/app/sidebar.svelte.js';
 	import ConfirmDialog from '#lib/components/ConfirmDialog.svelte';
@@ -27,13 +27,13 @@
 	let creating = $state(false);
 	let createError = $state('');
 	let navigationError = $state('');
-	let savedGames = $state.raw<Game[]>([]);
+	let savedGames = $state.raw<GameSummary[]>([]);
 	let loading = $state(true);
 	let loadError = $state('');
 	let trashOpen = $state(false);
-	let trashedGames = $state.raw<Game[]>([]);
+	let trashedGames = $state.raw<GameSummary[]>([]);
 	let trashError = $state('');
-	let purgeTarget = $state<Game | null>(null);
+	let purgeTarget = $state<GameSummary | null>(null);
 	let trashBusy = $state(false);
 	let ready = $derived(!loading && !loadError);
 	let libraryGames = $derived(savedGames.map(toLibraryGame));

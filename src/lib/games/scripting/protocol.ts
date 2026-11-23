@@ -138,7 +138,7 @@ export function parseInput(value: unknown): ActionRequest {
 		if (id.length > 128 || !['typescript', 'ts'].includes(script.language)) {
 			throw new CreatorRuntimeError('input');
 		}
-		bytes += new TextEncoder().encode(script.source).length;
+		bytes += new TextEncoder().encode(script.compiled ?? script.source).length;
 	}
 	if (bytes > SANDBOX_LIMITS.sourceBytes) {
 		throw new CreatorRuntimeError('input');

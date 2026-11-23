@@ -16,6 +16,7 @@
 		gameId,
 		sessionId,
 		gameTitle,
+		initialTimeline,
 		draft = $bindable(''),
 		onsessionupdate,
 		onsavingchange,
@@ -27,6 +28,7 @@
 		gameId: string;
 		sessionId: string;
 		gameTitle: string;
+		initialTimeline?: import('../state/history.js').SessionTimeline;
 		regex?: RegexRule[];
 		draft?: string;
 		onsessionupdate: (session: Session) => void;
@@ -39,6 +41,7 @@
 		gameId,
 		sessionId,
 		gameTitle,
+		initialTimeline,
 		draft,
 		onsessionupdate,
 		onsavingchange,

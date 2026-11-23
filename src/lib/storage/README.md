@@ -10,17 +10,26 @@ Until implementation stage 10, internal storage changes do not require data migr
 - Desktop: `helia.sqlite` inside Tauri's application data directory for `com.helia.desktop`.
 - Web and desktop databases are independent; there is no automatic synchronization.
 
-For local development, use `pnpm dev:web`. For a built web server over plain HTTP, set its public origin explicitly:
+For local development, use `pnpm dev:web`. To run a built web server at `http://localhost:3000`:
 
 ```powershell
-pnpm build:web
-$env:HELIA_ORIGIN = 'http://localhost:3000'
+pnpm build
 pnpm start
 ```
 
-When deployed behind a reverse proxy, `HELIA_ORIGIN` is the public origin visible to the browser, including the scheme and nonstandard port. This is checked on storage POST requests. The server remains a single-user application; no account system was added.
+The startup script supplies the HTTP listener's protocol to the Node adapter and overwrites its private protocol header on every request. Local HTTP needs no origin setting. `HOST` and `PORT` select the listening address.
+
+For a trusted TLS reverse proxy, set `PROTOCOL_HEADER=x-forwarded-proto` and configure the proxy to overwrite that header. Set `HOST_HEADER=x-forwarded-host` if the proxy rewrites the public host. `HELIA_ORIGIN` can additionally pin API requests to one public origin, including its scheme and nonstandard port. The server remains a single-user application; no account system was added.
 
 Desktop development uses `pnpm desktop:dev`. A browser preview of the desktop build cannot access the native database.
+
+## Transport and content caching
+
+The portable database format is independent of the wire format. Browser and desktop callers use the same synchronization adapter over `/api/storage` and the private native bridge. A synchronization envelope contains the storage operation and fingerprints of cached content. Replies describe the current record set and include only missing or changed content. Game fields are fingerprinted separately, so updating a timestamp does not retransmit scripts, UI or resources. Commits patch changed game fields under the existing version guard; other changed records retain their normal validation and atomic commit behavior.
+
+Library listings contain game summaries only. Session reads load their selected content snapshot; full-history authoring operations can explicitly read all snapshots. Messages, transactions and checkpoints remain available for branch restoration and validation, but their unchanged bodies are reused from the bounded client cache. Each read still checks the host, so edits from another tab or process are observed. Concurrent identical reads share one request, and writes invalidate pending-read reuse.
+
+Packaged media is omitted from synchronization JSON. The web host serves it at `/api/games/{gameId}/assets/{fingerprint}` with private immutable caching and ETags. The desktop bridge resolves the same game-scoped fingerprints through its private storage command. The host adapter hydrates portable data URIs for existing authoring, rendering and export code; creator frames gain no network capability. Media and content caches are memory-bounded and separate from authoritative storage. Eviction only causes another read; it never deletes game data. No database migration or history pruning is required.
 
 ## Connection and model settings
 
@@ -191,9 +200,22 @@ Native storage, model-settings, API-connection and AI-generation calls use main-
 
 ## Development checks
 
+Applied games include prepared JavaScript for logic and UI. Play reads omit the
+code project and deliver game-scoped immutable artifact references; editor reads
+retain portable source and media. Web artifacts and media use private immutable
+HTTP caching. Desktop uses the private storage bridge for artifacts and a scoped
+`helia-media` protocol for inert media. The sandbox still has no network access.
+
+The play workspace bootstraps the active session once and shares that initial
+view with chat and panels. The branch graph is assembled when opened. Metadata
+commits merge against the authoritative game so a thin play view cannot replace
+creator source. Legacy games and snapshots prepare their builds on first use,
+preserving existing state, messages and branches.
+
 ```powershell
 pnpm test
 pnpm test:native
+pnpm test:web
 pnpm check
 pnpm build:web
 pnpm build:desktop

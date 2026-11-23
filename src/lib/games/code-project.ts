@@ -1,8 +1,8 @@
 import type ts from 'typescript';
 
+import type { argumentSchemaCompiler } from './argument-schema.js';
 import type { Game } from './model.js';
 
-import { argumentSchemaCompiler } from './argument-schema.js';
 import { isTypeOnlyModule } from './module-syntax.js';
 import { generateStateTypes } from './state/schema.js';
 import { parseGameUI, UI_LIMITS, type GameUI } from './ui/runtime/model.js';
@@ -271,7 +271,10 @@ export async function compileCodeProject(
 ): Promise<Pick<Game, 'scripts' | 'ui'>> {
 	const project = parseCodeProject(input);
 	const { default: compiler } = await import('typescript');
-	return new ProjectCompiler(compiler, project).compile(schema);
+	const argumentsCompiler = await import('./argument-schema.js');
+	return new ProjectCompiler(compiler, project, argumentsCompiler.argumentSchemaCompiler).compile(
+		schema
+	);
 }
 type RuntimeTarget = 'logic' | 'ui';
 interface ModuleGraph {
@@ -287,7 +290,8 @@ class ProjectCompiler {
 	legacy = false;
 	constructor(
 		readonly compiler: typeof ts,
-		readonly project: CodeProject
+		readonly project: CodeProject,
+		readonly argumentsCompiler: typeof argumentSchemaCompiler
 	) {}
 	error(message: string, file: string, node?: ts.Node): never {
 		const location = node?.getSourceFile().getLineAndCharacterOfPosition(node.getStart());
@@ -578,7 +582,7 @@ class ProjectCompiler {
 	buildLogic(entry: string, schema?: unknown) {
 		const scripts: Game['scripts'] = {};
 		const { modules, dependencies, omitted } = this.graph(entry, 'logic');
-		const argumentsFor = argumentSchemaCompiler(
+		const argumentsFor = this.argumentsCompiler(
 			this.compiler,
 			this.project.files,
 			this.error.bind(this),
@@ -693,10 +697,14 @@ class ProjectCompiler {
 }
 export async function compileAuthoringGame(game: Game): Promise<Game> {
 	if (!game.code) {
-		return game;
+		return (await import('./runtime-build.js')).buildRuntime(game);
 	}
 	const compiled = await compileCodeProject(game.code, game.schema);
-	return { ...game, scripts: compiled.scripts, ui: compiled.ui };
+	return (await import('./runtime-build.js')).buildRuntime({
+		...game,
+		scripts: compiled.scripts,
+		ui: compiled.ui
+	});
 }
 
 function parseGameUIStyles(source: string) {

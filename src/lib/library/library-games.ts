@@ -1,9 +1,9 @@
-import type { Game } from '#lib/games/model.js';
+import type { GameSummary } from '#lib/games/model.js';
 
 /** Saved-game fields displayed by the library and navigation rail. */
-export type LibraryGame = Pick<Game, 'id' | 'title' | 'genre' | 'description' | 'updatedAt'>;
+export type LibraryGame = Pick<GameSummary, 'id' | 'title' | 'genre' | 'description' | 'updatedAt'>;
 
-export function toLibraryGame(game: Game): LibraryGame {
+export function toLibraryGame(game: GameSummary): LibraryGame {
 	return {
 		id: game.id,
 		title: game.title,

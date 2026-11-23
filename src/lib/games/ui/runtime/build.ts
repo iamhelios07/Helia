@@ -1,0 +1,157 @@
+import type * as TypeScript from 'typescript';
+
+import hooksSource from 'preact/hooks?raw';
+import preactSource from 'preact?raw';
+
+import { isTypeOnlyModule } from '../../module-syntax.js';
+import { contentHash } from '../../state/model.js';
+import { parseGameUI, type GameUI, type UIBuild } from './model.js';
+export async function buildGameUI(value: GameUI): Promise<UIBuild> {
+	const ui = parseGameUI(value);
+	const { default: ts } = await import('typescript');
+	const compiler = new UICompiler(ts, ui);
+	compiler.compile('preact', preactSource, true);
+	compiler.compile('preact/hooks', hooksSource, true);
+	for (const [id, module] of Object.entries(ui.modules)) {
+		compiler.compile(id, module.source, false, module.language);
+	}
+	return {
+		version: 1,
+		sourceHash: contentHash([ui.entry, ui.modules]),
+		entry: ui.entry,
+		factories: compiler.factories.join(','),
+		dependencies: Object.fromEntries(compiler.dependencies)
+	};
+}
+class UICompiler {
+	readonly factories: string[] = [];
+	readonly dependencies = new Map<string, Record<string, string>>();
+	constructor(
+		private readonly ts: typeof TypeScript,
+		private readonly ui: GameUI
+	) {}
+	resolve(specifier: string, from: string): string {
+		if (['preact', 'preact/hooks', '@helia/ui'].includes(specifier)) {
+			return specifier;
+		}
+		if (!specifier.startsWith('.')) {
+			throw Error('게임 UI는 포함된 모듈만 불러올 수 있어요.');
+		}
+		const parts = from.split('/').slice(0, -1);
+		for (const part of specifier.split('/')) {
+			if (part === '.' || !part) {
+				continue;
+			}
+			if (part === '..') {
+				if (!parts.length) {
+					throw Error('Invalid module path');
+				}
+				parts.pop();
+			} else {
+				parts.push(part);
+			}
+		}
+		const name = parts.join('/');
+		const target = [
+			name,
+			...['.tsx', '.jsx', '.ts', '.js', '/index.tsx', '/index.jsx', '/index.ts', '/index.js'].map(
+				(ext) => name + ext
+			)
+		].find((id) => Object.hasOwn(this.ui.modules, id));
+		if (!target) {
+			throw Error('게임 UI 모듈을 찾을 수 없어요.');
+		}
+		return target;
+	}
+	compile(
+		id: string,
+		source: string,
+		trusted = false,
+		language?: GameUI['modules'][string]['language']
+	): void {
+		const ts = this.ts;
+		const extension = language === 'tsx' ? '.tsx' : '.ts';
+		const fileName = trusted ? id + '.ts' : id + extension;
+		const deps: Record<string, string> = {};
+		if (!trusted) {
+			const file = ts.createSourceFile(
+				fileName,
+				source,
+				ts.ScriptTarget.ES2022,
+				true,
+				this.scriptKind(language)
+			);
+			const visit = (node: import('typescript').Node) => {
+				if (isTypeOnlyModule(ts, node)) {
+					return;
+				}
+				if (
+					(ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) &&
+					node.moduleSpecifier
+				) {
+					if (!ts.isStringLiteral(node.moduleSpecifier)) {
+						throw Error('Invalid module import');
+					}
+					deps[node.moduleSpecifier.text] = this.resolve(node.moduleSpecifier.text, id);
+				}
+				this.validateStaticModuleNode(node);
+				ts.forEachChild(node, visit);
+			};
+			visit(file);
+		}
+		const result = ts.transpileModule(source, {
+			fileName,
+			reportDiagnostics: true,
+			compilerOptions: {
+				target: ts.ScriptTarget.ES2022,
+				module: ts.ModuleKind.CommonJS,
+				jsx: ts.JsxEmit.React,
+				jsxFactory: '__h',
+				jsxFragmentFactory: '__Fragment',
+				esModuleInterop: true,
+				isolatedModules: true
+			}
+		});
+		if (result.diagnostics?.some((item) => item.category === ts.DiagnosticCategory.Error)) {
+			throw Error('게임 UI 코드를 컴파일하지 못했어요.');
+		}
+		this.dependencies.set(id, deps);
+		this.factories.push(
+			`${JSON.stringify(id)}:function(module,exports,require,__h,__Fragment){\n${result.outputText}\n}`
+		);
+	}
+	private scriptKind(language?: GameUI['modules'][string]['language']): TypeScript.ScriptKind {
+		if (language === 'tsx') {
+			return this.ts.ScriptKind.TSX;
+		}
+		return this.ts.ScriptKind.TS;
+	}
+	private validateStaticModuleNode(node: TypeScript.Node): void {
+		const ts = this.ts;
+		if (
+			ts.isMetaProperty(node) ||
+			ts.isImportEqualsDeclaration(node) ||
+			this.isDynamicImport(node)
+		) {
+			throw Error('동적 모듈 로딩은 지원하지 않아요.');
+		}
+		if (!ts.isAwaitExpression(node) && !(ts.isForOfStatement(node) && node.awaitModifier)) {
+			return;
+		}
+		let parent: TypeScript.Node | undefined = node.parent;
+		while (parent && !ts.isFunctionLike(parent)) {
+			parent = parent.parent;
+		}
+		if (!parent) {
+			throw Error('UI 모듈의 최상위 await는 지원하지 않아요.');
+		}
+	}
+	private isDynamicImport(node: TypeScript.Node): boolean {
+		const ts = this.ts;
+		return (
+			ts.isCallExpression(node) &&
+			(node.expression.kind === ts.SyntaxKind.ImportKeyword ||
+				(ts.isIdentifier(node.expression) && node.expression.text === 'require'))
+		);
+	}
+}

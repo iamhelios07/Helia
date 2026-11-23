@@ -269,7 +269,8 @@ it('applies compiled outputs and their source project atomically to existing ses
 	expect(saved.code).toEqual(fixture());
 	expect(saved.ui?.entry).toBe('ui.tsx');
 	const history = await repo.getSessionHistory(game.id, game.activeSessionId);
-	expect(history.snapshot.code).toEqual(fixture());
+	expect(history.snapshot.code).toBeUndefined();
+	expect((await repo.getGameWorkspace(game.id))!.game.code).toEqual(fixture());
 	expect(history.snapshot.scripts).toEqual(saved.scripts);
 	const bad = fixture();
 	bad.files['main.ts'].source = "export {default as logic} from './gone';";

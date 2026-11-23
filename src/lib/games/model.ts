@@ -42,13 +42,51 @@ export interface Game extends GameMetadata {
 	initialState: GameState;
 	schema: ObjectSchema;
 	/** Source declarations; execution is handled separately. */
-	scripts: Record<string, { language: string; source: string }>;
+	scripts: Record<
+		string,
+		{ language: string; source: string; compiled?: string; compiledFor?: string; artifact?: string }
+	>;
 	ui?: GameUI;
 	ai?: GameAIContent;
 	/** Current chat-processing rules, independent of session state and branch history. */
 	regex?: RegexRule[];
 	resources?: GameResources;
 	code?: CodeProject;
+}
+
+/** Library entries never carry executable content, state or embedded media. */
+export type GameSummary = Pick<
+	Game,
+	| 'schemaVersion'
+	| 'id'
+	| 'title'
+	| 'genre'
+	| 'description'
+	| 'activeSessionId'
+	| 'createdAt'
+	| 'updatedAt'
+	| 'trashedAt'
+>;
+export function gameSummary(input: unknown): GameSummary {
+	if (
+		!isRecord(input) ||
+		input.schemaVersion !== 2 ||
+		!isIdentifier(input.id) ||
+		!isIdentifier(input.activeSessionId) ||
+		!isTimestamp(input.createdAt) ||
+		!isTimestamp(input.updatedAt)
+	) {
+		throw Error('Invalid game summary');
+	}
+	return {
+		...validateGameMetadata(input),
+		schemaVersion: 2,
+		id: input.id,
+		activeSessionId: input.activeSessionId,
+		createdAt: input.createdAt,
+		updatedAt: input.updatedAt,
+		...(isTrashed(input.trashedAt) ? { trashedAt: input.trashedAt } : {})
+	};
 }
 
 /** One independent playthrough, corresponding to a chat in a chat-based client. */
@@ -216,6 +254,27 @@ function scriptLanguage(value: string): string {
 	return ['javascript', 'js'].includes(value) ? 'typescript' : value;
 }
 
+function validateScriptBuild(script: Record<string, unknown>): void {
+	if (
+		script.compiled !== undefined &&
+		(typeof script.compiled !== 'string' || script.compiled.length > 1024 * 1024)
+	) {
+		throw Error('Invalid compiled script');
+	}
+	if (
+		script.artifact !== undefined &&
+		(typeof script.artifact !== 'string' || !/^[a-f0-9]{64}$/.test(script.artifact))
+	) {
+		throw Error('Invalid script artifact');
+	}
+	if (
+		script.compiledFor !== undefined &&
+		(typeof script.compiledFor !== 'string' || !/^[a-f0-9]{64}$/.test(script.compiledFor))
+	) {
+		throw Error('Invalid script source fingerprint');
+	}
+}
+
 export function parseScripts(value: unknown): Game['scripts'] {
 	if (!isRecord(value)) {
 		throw new Error('게임 스크립트의 형식이 올바르지 않아요.');
@@ -232,7 +291,14 @@ export function parseScripts(value: unknown): Game['scripts'] {
 		) {
 			throw new Error('게임 스크립트의 형식이 올바르지 않아요.');
 		}
-		scripts[id] = { language: scriptLanguage(script.language), source: script.source };
+		validateScriptBuild(script);
+		scripts[id] = {
+			language: scriptLanguage(script.language),
+			source: script.source,
+			...(script.compiled === undefined ? {} : { compiled: script.compiled as string }),
+			...(typeof script.compiledFor === 'string' ? { compiledFor: script.compiledFor } : {}),
+			...(script.artifact === undefined ? {} : { artifact: script.artifact as string })
+		};
 	}
 	return scripts;
 }

@@ -18,7 +18,7 @@ import type { SessionChatController } from './sessionchat-controller.svelte.js';
 
 import { validateSessionTitle, type Game, type Session, type GameMetadata } from '../model.js';
 import {
-	getGameWorkspace,
+	getPlayWorkspace,
 	createSession,
 	selectSession,
 	updateGame,
@@ -53,6 +53,7 @@ export class GameWorkspaceController {
 		return this.options().gameId;
 	}
 	game = $state.raw<Game | null>(null);
+	startupTimeline = $state.raw<import('../state/history.js').SessionTimeline | null>(null);
 	sessions = $state.raw<Session[]>([]);
 	loading = $state(true);
 	loadError = $state('');
@@ -181,12 +182,13 @@ export class GameWorkspaceController {
 		this.loadError = '';
 		this.missing = false;
 		try {
-			const workspace = await getGameWorkspace(this.gameId);
+			const workspace = await getPlayWorkspace(this.gameId);
 			if (!workspace) {
 				this.missing = true;
 				return;
 			}
 			this.game = workspace.game;
+			this.startupTimeline = workspace.timeline ?? null;
 			this.sessions = workspace.sessions;
 			this.railGames = [toLibraryGame(this.game)];
 			void this.loadRailGames();
@@ -239,6 +241,7 @@ export class GameWorkspaceController {
 		this.actionError = '';
 		try {
 			const session = await createSession(this.game.id);
+			this.startupTimeline = null;
 			this.sessions = [session, ...this.sessions];
 			this.game = { ...this.game, activeSessionId: session.id, updatedAt: session.updatedAt };
 		} catch {
@@ -255,6 +258,7 @@ export class GameWorkspaceController {
 		this.actionError = '';
 		try {
 			await selectSession(this.game.id, sessionId);
+			this.startupTimeline = null;
 			this.game = { ...this.game, activeSessionId: sessionId };
 		} catch {
 			this.actionError = '세션을 전환하지 못했어요. 다시 시도해주세요.';
@@ -301,6 +305,7 @@ export class GameWorkspaceController {
 		this.deleteError = '';
 		try {
 			const workspace = await deleteSession(this.game.id, this.deletingSession.id);
+			this.startupTimeline = null;
 			this.game = workspace.game;
 			this.sessions = workspace.sessions;
 			this.deletingSession = null;

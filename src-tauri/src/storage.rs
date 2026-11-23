@@ -1,6 +1,6 @@
 use rusqlite::{Connection, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 use std::{
     path::{Path, PathBuf},
     time::Duration,
@@ -143,6 +143,8 @@ enum Request {
         session_id: Option<String>,
         #[serde(default)]
         include_history: bool,
+        #[serde(default)]
+        play: bool,
     },
     Create {
         game_id: String,
@@ -153,6 +155,7 @@ enum Request {
         version: u64,
         records: Vec<StoredRecord>,
         delete_sessions: Vec<String>,
+        game_patch: Option<Value>,
     },
     Prune {
         game_id: String,
@@ -171,7 +174,7 @@ enum Request {
     }
 }
 
-fn open(path: &Path) -> Result<Connection, String> {
+pub(crate) fn open(path: &Path) -> Result<Connection, String> {
     let mut connection = Connection::open(path).map_err(|_| "게임 저장소를 열 수 없어요.")?;
     connection
         .busy_timeout(Duration::from_secs(5))
@@ -204,6 +207,7 @@ fn open(path: &Path) -> Result<Connection, String> {
     }
     connection.execute_batch("CREATE TABLE IF NOT EXISTS editor_drafts (game_id TEXT PRIMARY KEY REFERENCES games(id) ON DELETE CASCADE, version INTEGER NOT NULL, value TEXT)").map_err(db_error)?;
     connection.execute_batch(crate::session_files::SCHEMA).map_err(db_error)?;
+    connection.execute_batch(crate::runtime_content::SCHEMA).map_err(db_error)?;
     Ok(connection)
 }
 fn read_draft(connection: &Connection, game_id: &str) -> Result<Value, String> {
@@ -304,6 +308,12 @@ fn read_rows(
                 "SELECT id, value FROM games WHERE id=?1".to_owned(),
                 vec![game],
             )
+        } else if let Some(session) = session_id.filter(|_| table == Table::Snapshots) {
+            ("SELECT * FROM snapshots WHERE game_id=?1 AND id IN (SELECT snapshot_id FROM progress WHERE game_id=?1 AND session_id=?2)".to_owned(), vec![game,session])
+        } else if let Some(session) = session_id.filter(|_| table == Table::SnapshotResources) {
+            ("SELECT * FROM snapshot_resources WHERE game_id=?1 AND snapshot_id IN (SELECT snapshot_id FROM progress WHERE game_id=?1 AND session_id=?2)".to_owned(), vec![game,session])
+        } else if let Some(session) = session_id.filter(|_| table == Table::Blobs) {
+            ("SELECT * FROM blobs WHERE game_id=?1 AND id IN (SELECT json_extract(value, '$.blobId') FROM snapshot_resources WHERE game_id=?1 AND snapshot_id IN (SELECT snapshot_id FROM progress WHERE game_id=?1 AND session_id=?2))".to_owned(), vec![game,session])
         } else if let Some(session) = session_id.filter(|_| table != Table::Sessions && !shared) {
             (
                 format!(
@@ -450,6 +460,9 @@ fn scripts(value: &Value) -> bool {
                 && !["__proto__", "prototype", "constructor"].contains(&key.as_str())
                 && id(&value["language"])
                 && text(&value["source"])
+                && value.get("compiled").is_none_or(|source| source.as_str().is_some_and(|source| source.len() <= 1024 * 1024))
+                && value.get("compiledFor").is_none_or(blob_id)
+                && value.get("artifact").is_none_or(blob_id)
         })
     })
 }
@@ -489,7 +502,9 @@ fn game_ui(value: Option<&Value>) -> bool {
     let Some(entry) = value["entry"].as_str() else {
         return false;
     };
-    if modules.is_empty() || modules.len() > 32 || !modules.contains_key(entry) {
+    let built = value.get("compiled").is_some_and(|built| built["version"] == 1 && built["factories"].as_str().is_some_and(|source|source.len()<=2*1024*1024) && built["dependencies"].is_object() && blob_id(&built["sourceHash"]));
+    let referenced = value.get("artifact").is_some_and(blob_id);
+    if (!built && !referenced && (modules.is_empty() || !modules.contains_key(entry))) || modules.len() > 32 {
         return false;
     }
     let mut bytes = 0;
@@ -1031,7 +1046,7 @@ fn read_game(
                 records.extend(read_rows(connection, table, Some(game_id), session_id)?);
             }
             for table in [Table::Blobs, Table::SnapshotResources] {
-                records.extend(read_rows(connection, table, Some(game_id), None)?);
+                records.extend(read_rows(connection, table, Some(game_id), session_id)?);
             }
         }
         json!({ "version": version, "records": records })
@@ -1040,6 +1055,10 @@ fn read_game(
     })
 }
 pub(crate) fn execute_request(path: &Path, input: Value) -> Result<Value, String> {
+    if input["kind"] == "artifact" { return crate::runtime_content::read_artifact(path,&input); }
+    if matches!(input["kind"].as_str(), Some("sync" | "asset")) {
+        return crate::storage_sync::execute(path, input);
+    }
     if input["kind"] == "files" {
         return crate::session_files::request(&mut open(path)?, &input);
     }
@@ -1076,18 +1095,33 @@ pub(crate) fn execute_request(path: &Path, input: Value) -> Result<Value, String
             if !include_trashed {
                 records.retain(|row| row.value.get("trashedAt").is_none());
             }
-            json!({ "version": 0, "records": records })
+            let games: Vec<Value> = records.iter().map(|row| {
+                let fields: Map<String, Value> = [
+                    "schemaVersion", "id", "title", "genre", "description",
+                    "activeSessionId", "createdAt", "updatedAt", "trashedAt",
+                ].iter().filter_map(|key| {
+                    row.value.get(*key).map(|value| ((*key).to_owned(), value.clone()))
+                }).collect();
+                json!(fields)
+            }).collect();
+            json!({ "version": 0, "records": [], "games":games })
         }
         Request::Read {
             game_id,
             session_id,
             include_history,
-        } => read_game(
+            play,
+        } => {
+            let selected = if play && session_id.is_none() {
+                transaction.query_row("SELECT json_extract(value,'$.activeSessionId') FROM games WHERE id=?1",[&game_id],|row|row.get::<_,String>(0)).optional().map_err(db_error)?
+            } else { session_id };
+            read_game(
             &transaction,
             &game_id,
-            session_id.as_deref(),
+            selected.as_deref(),
             include_history,
-        )?,
+        )?
+        },
         Request::Create { game_id, records } => write(&transaction, &game_id, records, None, &[])?,
         Request::Prune {
             game_id,
@@ -1107,15 +1141,26 @@ pub(crate) fn execute_request(path: &Path, input: Value) -> Result<Value, String
         Request::Commit {
             game_id,
             version,
-            records,
+            mut records,
             delete_sessions,
-        } => write(
+            game_patch,
+        } => {
+            if let Some(patch)=game_patch {
+                if records.iter().any(|row|row.table==Table::Games){return Err("Invalid game patch".into());}
+                let raw:String=transaction.query_row("SELECT value FROM games WHERE id=?1",[&game_id],|row|row.get(0)).map_err(db_error)?;
+                let mut value:Value=serde_json::from_str(&raw).map_err(|_|"Invalid game patch")?;
+                for(key,item) in patch["set"].as_object().ok_or("Invalid game patch")?{value[key]=item.clone();}
+                for key in patch["remove"].as_array().ok_or("Invalid game patch")?{value.as_object_mut().ok_or("Invalid game patch")?.remove(key.as_str().ok_or("Invalid game patch")?);}
+                records.push(StoredRecord{table:Table::Games,id:game_id.clone(),game_id:game_id.clone(),session_id:None,value});
+            }
+            write(
             &transaction,
             &game_id,
             records,
             Some(version),
             &delete_sessions,
-        )?,
+        )?
+        },
     };
     transaction.commit().map_err(db_error)?;
     Ok(result)
@@ -1836,6 +1881,65 @@ mod tests {
     }
     fn create() -> Value {
         json!({ "kind": "create", "gameId": "game", "records": [row("games", "game", None, &game("게임 🧪")), row("sessions", "session", Some("session"), &session("session"))] })
+    }
+    #[test]
+    fn sync_transfers_only_missing_content_and_metadata_lists() {
+        let fixture = Fixture::new();
+        let mut initial = create();
+        initial["records"][0]["value"]["resources"] = json!({"portrait":{"name":"portrait.png","mime":"image/png","data":"data:image/png;base64,AA=="}});
+        fixture.request(initial).unwrap();
+        let request = json!({"kind":"read","gameId":"game"});
+        let first = fixture
+            .request(json!({"kind":"sync","request":request,"known":[]}))
+            .unwrap();
+        assert!(!first.to_string().contains("base64"));
+        let hash = &first["records"][0]["parts"]["resources"]["value"]["portrait"]["data"]["asset"];
+        let media = fixture
+            .request(json!({"kind":"asset","gameId":"game","hash":hash}))
+            .unwrap();
+        assert_eq!(media["data"], "data:image/png;base64,AA==");
+        assert!(
+            fixture
+                .request(json!({"kind":"asset","gameId":"other","hash":hash}))
+                .is_err()
+        );
+        let known: Vec<Value> = first["records"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|row| {
+                row["parts"]
+                    .as_object()
+                    .unwrap()
+                    .values()
+                    .map(|part| part["hash"].clone())
+            })
+            .collect();
+        let cached = fixture
+            .request(json!({"kind":"sync","request":request,"known":known}))
+            .unwrap();
+        assert!(cached["records"].as_array().unwrap().iter().all(|row| {
+            row["parts"]
+                .as_object()
+                .unwrap()
+                .values()
+                .all(|part| part.get("value").is_none())
+        }));
+        let list = fixture
+            .request(json!({"kind":"sync","request":{"kind":"list"},"known":[]}))
+            .unwrap();
+        assert!(list["records"].as_array().unwrap().is_empty());
+        assert!(list["games"][0].get("resources").is_none());
+        assert_eq!(list["games"][0]["id"], "game");
+    }
+    #[test]
+    fn sync_game_patches_preserve_media_and_the_version_guard() {
+        let fixture = Fixture::new();
+        fixture.create();
+        let patch = json!({"kind":"sync","known":[],"request":{"kind":"commit","gameId":"game","version":0,"records":[{"table":"games","id":"game","gameId":"game","sessionId":null,"patch":{"set":{"title":"Updated"},"remove":[]}}],"deleteSessions":[]}});
+        fixture.request(patch.clone()).unwrap();
+        assert_eq!(fixture.read()["records"][0]["value"]["title"], "Updated");
+        assert_eq!(fixture.request(patch).unwrap_err(), CONFLICT);
     }
     #[test]
     fn validates_unified_state_authoring_drafts() {

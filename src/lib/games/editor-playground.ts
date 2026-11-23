@@ -1,5 +1,6 @@
 import {
 	storedRecord,
+	patchedGame,
 	CONFLICT,
 	type StoredRecord,
 	type StorageTransport
@@ -91,6 +92,10 @@ function playgroundStorage(game: Game): StorageTransport {
 			throw Error(CONFLICT);
 		}
 		const next = new Map(rows);
+		if (request.gamePatch) {
+			const key = `games:${game.id}`;
+			next.set(key, storedRecord('games', patchedGame(rows.get(key)!.value, request.gamePatch)));
+		}
 		for (const row of request.records) {
 			if (row.gameId !== game.id || (row.sessionId && row.sessionId !== game.activeSessionId)) {
 				throw Error('다른 세션의 테스트 저장소에 접근할 수 없어요.');
@@ -108,7 +113,8 @@ function playgroundStorage(game: Game): StorageTransport {
 export type EditorPlaythrough = Awaited<ReturnType<typeof createEditorPlaythrough>>;
 
 export async function createEditorPlaythrough(source: Game, options: PlaygroundOptions = {}) {
-	return new PlaygroundSession(source, options).initialize();
+	const game = await (await import('./runtime-build.js')).buildRuntime(source);
+	return new PlaygroundSession(game, options).initialize();
 }
 class PlaygroundSession {
 	private readonly game: Game;

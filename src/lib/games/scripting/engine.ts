@@ -9,8 +9,6 @@ import {
 
 import { parseGameState } from '#lib/games/state/value.js';
 
-import { argumentSchemaCompiler } from '../argument-schema.js';
-import { generateStateTypes } from '../state/schema.js';
 import { BOOTSTRAP } from './bootstrap.js';
 import { ExecutionBudget } from './budget.js';
 import {
@@ -25,6 +23,7 @@ import {
 	type CreatorFailureCode
 } from './protocol.js';
 import { evaluateRules, type Definition, type RuleKind } from './rules.js';
+import { compileScripts } from './script-build.js';
 import { WEB_BOOTSTRAP } from './web-bootstrap.js';
 import { ScriptWebBridge } from './web-bridge.js';
 
@@ -185,52 +184,6 @@ function readString(vm: QuickJSContext, handle: QuickJSHandle): string {
 		throw new CreatorRuntimeError('protocol');
 	}
 	return boundedText(vm.getString(handle));
-}
-
-async function compileScripts(input: ActionRequest): Promise<{ id: string; source: string }[]> {
-	const compiled: { id: string; source: string }[] = [];
-	const typed = Object.entries(input.scripts);
-	const typedScripts = Object.fromEntries(
-		typed.map(([, script], index) => [`script-${index}.ts`, script])
-	);
-	const paths = new Map(typed.map(([id], index) => [id, `script-${index}.ts`]));
-	let argumentsFor: ((path: string) => string) | undefined;
-	for (const [id] of Object.entries(input.scripts).sort(([a], [b]) => compareScriptIds(a, b))) {
-		const { default: ts } = await import('typescript');
-		argumentsFor ??= argumentSchemaCompiler(
-			ts,
-			typedScripts,
-			(_message, file) => {
-				throw new CreatorRuntimeError(
-					'compile',
-					typed[Number(file.match(/^script-(\d+)\.ts$/)?.[1])]?.[0] ?? id
-				);
-			},
-			generateStateTypes(input.schema)
-		);
-		const output = ts.transpileModule(argumentsFor(paths.get(id)!), {
-			fileName: `${id}.ts`,
-			reportDiagnostics: true,
-			compilerOptions: {
-				target: ts.ScriptTarget.ES2022,
-				module: ts.ModuleKind.ESNext,
-				strict: true,
-				isolatedModules: true
-			}
-		});
-		if (output.diagnostics?.some((item) => item.category === ts.DiagnosticCategory.Error)) {
-			throw new CreatorRuntimeError('compile', id);
-		}
-		compiled.push({ id, source: output.outputText });
-	}
-	return compiled;
-}
-
-function compareScriptIds(a: string, b: string): number {
-	if (a < b) {
-		return -1;
-	}
-	return a > b ? 1 : 0;
 }
 
 function retainResult(

@@ -2,6 +2,7 @@ import { FetchBridge } from '#lib/games/network/bridge.js';
 import { requestNetworkPermission } from '#lib/games/network/permission.js';
 import { NETWORK_LIMITS } from '#lib/games/network/protocol.js';
 import { networkHop } from '#lib/games/network/transport.js';
+import { runtimeScripts } from '#lib/games/runtime-content.js';
 import { SecretWorkerBridge } from '#lib/games/secrets/bridge.js';
 import { gameSecrets } from '#lib/games/secrets/client.js';
 import { unavailableSecrets } from '#lib/games/secrets/protocol.js';
@@ -30,22 +31,37 @@ export const runCreatorAction: ActionRunner = async (input, options = {}) => {
 	if (active >= 4) {
 		throw new CreatorRuntimeError('busy');
 	}
-	const request = encodeInput(input),
-		schema = parseInput(JSON.parse(request)).schema;
-	let worker: Worker;
+	active++;
 	try {
-		worker = new Worker(new URL('./worker.ts', import.meta.url), { type: 'module' });
+		let request = encodeInput(input);
+		const captured = parseInput(JSON.parse(request));
+		if (Object.values(captured.scripts).some((script) => script.artifact)) {
+			request = encodeInput({
+				...captured,
+				scripts: await runtimeScripts(captured.scripts, options.gameId, options.signal)
+			});
+		}
+		if (options.signal?.aborted) {
+			throw new CreatorRuntimeError('canceled');
+		}
+		const execution = new WorkerExecution(createWorker(), options);
+		return decodeWorkerReply(await execution.run(request), captured.schema);
+	} catch (error) {
+		if (options.signal?.aborted) {
+			throw new CreatorRuntimeError('canceled');
+		}
+		throw error instanceof CreatorRuntimeError ? error : new CreatorRuntimeError('protocol');
+	} finally {
+		active--;
+	}
+};
+function createWorker(): Worker {
+	try {
+		return new Worker(new URL('./worker.ts', import.meta.url), { type: 'module' });
 	} catch {
 		throw new CreatorRuntimeError('unavailable');
 	}
-	active++;
-	const execution = new WorkerExecution(worker, options);
-	try {
-		return decodeWorkerReply(await execution.run(request), schema);
-	} catch (error) {
-		throw error instanceof CreatorRuntimeError ? error : new CreatorRuntimeError('protocol');
-	}
-};
+}
 class WorkerExecution {
 	private done = false;
 	private reject: (error: CreatorRuntimeError) => void = () => {};
@@ -111,7 +127,6 @@ class WorkerExecution {
 		this.secrets.dispose();
 		this.options.signal?.removeEventListener('abort', this.cancel);
 		this.worker.terminate();
-		active--;
 		operation();
 	}
 }

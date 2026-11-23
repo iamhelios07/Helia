@@ -104,6 +104,9 @@
 								gameId={currentGame.id}
 								sessionId={currentSessionId}
 								gameTitle={currentGame.title}
+								initialTimeline={workspace.startupTimeline?.session.id === currentSessionId
+									? workspace.startupTimeline
+									: undefined}
 								regex={currentGame.regex}
 								oncontroller={workspace.attachChat}
 								blocked={workspace.sessionBusy || workspace.uiSaving}
@@ -113,6 +116,9 @@
 									(value) => (workspace.chatDrafts[currentSessionId] = value)
 								}
 								onsessionupdate={(updated) => {
+									if (workspace.startupTimeline?.session.updatedAt !== updated.updatedAt) {
+										workspace.startupTimeline = null;
+									}
 									workspace.sessions = workspace.sessions.map((session) =>
 										session.id === updated.id ? updated : session
 									);
@@ -126,6 +132,9 @@
 							gameId={workspace.game.id}
 							sessionId={currentSessionId}
 							ui={workspace.game.ui}
+							initialHistory={workspace.startupTimeline?.session.id === currentSessionId
+								? workspace.startupTimeline.history
+								: undefined}
 							blocked={workspace.sessionBusy || workspace.chatSaving}
 							onsavingchange={(saving) => (workspace.uiSaving = saving)}
 						>
