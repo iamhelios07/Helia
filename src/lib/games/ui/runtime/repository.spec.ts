@@ -21,6 +21,28 @@ const ui = {
 	modules: { 'main.tsx': { language: 'tsx', source: 'export default function(){}' } }
 } as const;
 describe('UI content and committed-state observers', () => {
+	it('rejects UI compile failures when saving rules without changing stored content', async () => {
+		const repo = repository();
+		const game = await repo.createGame();
+		const before = await repo.getGameWorkspace(game.id);
+		await expect(
+			repo.updateGameRules(game.id, {
+				schema: game.schema,
+				initialState: game.initialState,
+				scripts: game.scripts,
+				ui: {
+					...ui,
+					modules: {
+						'main.tsx': {
+							language: 'tsx',
+							source: `import x from 'https://example.com/script.js'; export default function(){}`
+						}
+					}
+				}
+			})
+		).rejects.toThrow('게임 UI는 포함된 모듈만 불러올 수 있어요.');
+		expect(await repo.getGameWorkspace(game.id)).toEqual(before);
+	});
 	it('roundtrips UI content and pins it to session snapshots', async () => {
 		const repo = repository();
 		const game = await repo.createGame();

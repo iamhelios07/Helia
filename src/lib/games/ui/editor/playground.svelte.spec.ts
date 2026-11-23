@@ -137,14 +137,29 @@ it('reports creator Filter failures while keeping the committed test state and h
 }, 20000);
 
 it('surfaces UI compile failures as diagnostics without mounting privileged content', async () => {
-	const { game } = await fixture(
-		`import x from 'https://example.com/script.js'; export default function(){}`
-	);
+	const { game } = await fixture();
 	const diagnostic = vi.fn();
-	render(EditorPlayground, { game, mode: 'preview', ondiagnostic: diagnostic });
+	// Preview receives unapplied drafts, which can fail before an iframe is created.
+	render(EditorPlayground, {
+		game: {
+			...game,
+			ui: {
+				version: 1,
+				entry: 'main.tsx',
+				modules: {
+					'main.tsx': {
+						language: 'tsx',
+						source: `import x from 'https://example.com/script.js'; export default function(){}`
+					}
+				}
+			}
+		},
+		mode: 'preview',
+		ondiagnostic: diagnostic
+	});
 	await expect.element(page.getByRole('alert')).toHaveTextContent('포함된 모듈');
 	expect(diagnostic.mock.calls.some(([entry]) => entry.failed)).toBe(true);
-	expect(document.querySelector('iframe')?.getAttribute('sandbox')).toBe('allow-scripts');
+	expect(document.querySelector('iframe')).toBeNull();
 }, 20000);
 
 it('resolves the draft resource snapshot inside a sandboxed Preact image', async () => {
