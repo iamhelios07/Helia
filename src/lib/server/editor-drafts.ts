@@ -2,6 +2,8 @@ import type Database from 'better-sqlite3';
 
 import { readEditorDraft, type EditorDraft } from '#lib/games/editor.js';
 
+import { guardGameEdit } from './game-edit-lock.js';
+
 export interface SavedEditorDraft {
 	version: number;
 	draft: EditorDraft | null;
@@ -25,6 +27,7 @@ export function editorDraftStorage(connection: Database.Database) {
 	}
 	function write(gameId: string, draft: EditorDraft | null, version: number): SavedEditorDraft {
 		return connection.transaction(() => {
+			guardGameEdit(connection, gameId, 'draft');
 			const previous = read(gameId);
 			if (
 				!Number.isSafeInteger(version) ||

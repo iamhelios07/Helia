@@ -12,6 +12,9 @@ const CONFLICT: &str = "STORAGE_CONFLICT";
 #[path = "game_releases.rs"]
 mod releases;
 
+#[path = "game_edit_lock.rs"]
+mod edit_lock;
+
 pub struct StoragePath(pub PathBuf);
 
 /// A per-process credential injected into a main-frame-only JavaScript closure.
@@ -130,6 +133,9 @@ struct StoredRecord {
     deny_unknown_fields
 )]
 enum Request {
+    UnlockGame {
+        game_id: String,
+    },
     List {
         #[serde(default)]
         include_trashed: bool,
@@ -903,6 +909,7 @@ fn valid_value(table: Table, value: &Value) -> bool {
                 && value
                     .get("installedFrom")
                     .is_none_or(releases::packages::valid_installed_from)
+                && value.get("editLock").is_none_or(edit_lock::valid)
                 && settings(&value["settings"])
                 && object_state(&value["initialState"])
                 && scripts(&value["scripts"])
@@ -1050,6 +1057,7 @@ fn write_draft(
     version: u64,
     draft: &Value,
 ) -> Result<Value, String> {
+    edit_lock::guard(connection, game_id, "draft")?;
     let previous = read_draft(connection, game_id)?;
     if version >= 9_007_199_254_740_991 || previous["version"].as_u64() != Some(version) {
         return Err("다른 편집기에서 초안이 변경되었어요.".into());
@@ -1148,6 +1156,7 @@ pub(crate) fn execute_request(path: &Path, input: Value) -> Result<Value, String
         })
         .map_err(db_error)?;
     let result = match request {
+        Request::UnlockGame { game_id } => edit_lock::unlock(&transaction, &game_id)?,
         Request::ReadDraft { game_id } => read_draft(&transaction, &game_id)?,
         Request::WriteDraft {
             game_id,
@@ -1172,6 +1181,7 @@ pub(crate) fn execute_request(path: &Path, input: Value) -> Result<Value, String
                         "createdAt",
                         "updatedAt",
                         "trashedAt",
+                        "editLock",
                     ]
                     .iter()
                     .filter_map(|key| {

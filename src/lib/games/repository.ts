@@ -10,6 +10,7 @@ export const {
 	createGame,
 	installPreview,
 	install,
+	unlockGame,
 	getGameVersioning,
 	createGameRelease,
 	getGameRelease,

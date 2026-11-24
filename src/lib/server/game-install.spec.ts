@@ -212,6 +212,7 @@ it('preserves provenance through edit, Apply, release, Trash and restore, withou
 		throw Error('Expected install');
 	}
 	const gameId = result.gameId;
+	await repo.unlockGame(gameId);
 	let game = (await repo.getGameWorkspace(gameId))!.game;
 	const provenance = game.installedFrom!;
 	expect(provenance.installedAt).toBe(game.createdAt);
@@ -295,6 +296,7 @@ it('normal creates and commits cannot add package provenance', async () => {
 		]
 	});
 	expect((await repo.getGameWorkspace(copy.id))!.game.installedFrom).toBeUndefined();
+	expect((await repo.getGameWorkspace(copy.id))!.game.editLock).toBeUndefined();
 });
 
 it('previews selected release, modifications and drafts, excluding Trash', async () => {
@@ -309,6 +311,7 @@ it('previews selected release, modifications and drafts, excluding Trash', async
 			versioning: { modified: false, currentRelease: { contentVersion: minimal.contentVersion } }
 		}
 	]);
+	await repo.unlockGame(input.gameId);
 	const game = await repo.updateGame(input.gameId, {
 		title: 'Changed',
 		genre: '',
@@ -356,6 +359,7 @@ it('loads all preview release histories once with the same states as individual 
 	const second = request();
 	await store.requestAsync(first);
 	await store.requestAsync(second);
+	await repo.unlockGame(first.gameId);
 	await repo.createGameRelease(first.gameId, '2.0.0');
 	await repo.updateGame(first.gameId, { title: 'Changed', genre: '', description: '' });
 	const changed = await repo.getGameVersioning(first.gameId);
@@ -513,6 +517,7 @@ it('rolls back on the final authoritative stored-content hash check', async () =
 it('queries conflicts after verification even when a release arrived during await', async () => {
 	const original = request();
 	await store.requestAsync(original);
+	await repo.unlockGame(original.gameId);
 	const input = request();
 	const content = gameReleaseContent((await repo.getGameWorkspace(original.gameId))!.game);
 	content.title = 'Different';

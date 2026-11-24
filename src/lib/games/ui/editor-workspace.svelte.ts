@@ -480,6 +480,11 @@ export class EditorWorkspace {
 				return;
 			}
 			this.game = workspace.game;
+			if (workspace.game.editLock === true) {
+				this.draft = null;
+				this.previewContent = null;
+				return;
+			}
 			await this.recoverDraft(workspace.game, generation);
 		} catch {
 			if (!this.disposed) {
@@ -635,7 +640,7 @@ export class EditorWorkspace {
 	persistDraft = async (): Promise<boolean> => {
 		clearTimeout(this.timer);
 		this.timer = undefined;
-		if (!this.draft) {
+		if (!this.draft || this.game?.editLock === true) {
 			return true;
 		}
 		const snapshot = this.draft;

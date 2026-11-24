@@ -1,5 +1,6 @@
 import { json } from '@sveltejs/kit';
 
+import { GAME_EDIT_LOCKED, INVALID_EDIT_LOCK } from '#lib/games/edit-lock.js';
 import { GamePackageError } from '#lib/games/package/limits.js';
 import { serverStorage } from '#lib/server/sqlite.js';
 import { storageSyncAsync } from '#lib/server/storage-sync.js';
@@ -25,12 +26,24 @@ export const POST: RequestHandler = async ({ request, url }) => {
 			headers: { 'cache-control': 'no-store' }
 		});
 	} catch (error) {
-		if (error instanceof GamePackageError) {
-			return json({ error: error.message, errorCode: error.code }, { status: 400 });
-		}
-		if (error instanceof Error && error.message === CONFLICT) {
-			return json({ error: CONFLICT }, { status: 409 });
-		}
-		return json({ error: '게임 데이터를 저장하거나 읽을 수 없어요.' }, { status: 400 });
+		return storageFailure(error);
 	}
 };
+
+function storageFailure(error: unknown): Response {
+	if (error instanceof Error && [GAME_EDIT_LOCKED, INVALID_EDIT_LOCK].includes(error.message)) {
+		return json(
+			{ error: error.message, errorCode: error.message },
+			{
+				status: error.message === GAME_EDIT_LOCKED ? 403 : 400
+			}
+		);
+	}
+	if (error instanceof GamePackageError) {
+		return json({ error: error.message, errorCode: error.code }, { status: 400 });
+	}
+	if (error instanceof Error && error.message === CONFLICT) {
+		return json({ error: CONFLICT }, { status: 409 });
+	}
+	return json({ error: '게임 데이터를 저장하거나 읽을 수 없어요.' }, { status: 400 });
+}

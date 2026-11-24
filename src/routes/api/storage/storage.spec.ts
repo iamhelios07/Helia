@@ -1,11 +1,21 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
+import { GAME_EDIT_LOCKED, INVALID_EDIT_LOCK } from '#lib/games/edit-lock.js';
 import { GamePackageError, isGamePackageErrorCode } from '#lib/games/package/limits.js';
 import errorCodes from '#lib/storage/fixtures/install/error-codes.json';
 
 import { POST } from './+server.js';
 
 const execute = vi.hoisted(() => vi.fn());
+
+it.each([GAME_EDIT_LOCKED, INVALID_EDIT_LOCK])('returns lock error code %s', async (code) => {
+	execute.mockImplementationOnce(() => {
+		throw Error(code);
+	});
+	const response = await POST(event('http://localhost'));
+	expect(response.status).toBe(code === GAME_EDIT_LOCKED ? 403 : 400);
+	expect(await response.json()).toEqual({ error: code, errorCode: code });
+});
 afterEach(() => vi.unstubAllEnvs());
 vi.mock('#lib/server/sqlite.js', () => ({
 	serverStorage: () => ({ request: execute, requestAsync: execute })

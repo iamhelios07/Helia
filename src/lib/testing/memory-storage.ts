@@ -195,7 +195,11 @@ class MemoryStorage {
 		if (request.kind === 'read') {
 			return this.read(request);
 		}
-		if (request.kind === 'install' || request.kind === 'installPreview') {
+		if (
+			request.kind === 'install' ||
+			request.kind === 'installPreview' ||
+			request.kind === 'unlockGame'
+		) {
 			throw Error('Package installation requires the authoritative host');
 		}
 		return this.write(request);

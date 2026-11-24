@@ -3,6 +3,7 @@ import { validateStateKey, type GameState } from '#lib/games/state/value.js';
 
 import { parseGameAIContent, type GameAIContent } from './ai/prompts.js';
 import { parseCodeProject, type CodeProject } from './code-project.js';
+import { parseEditLock, type EditLock } from './edit-lock.js';
 import { parseInstalledFrom, type InstalledFrom } from './installed-from.js';
 import { parseRegexRules, type RegexRule } from './regex.js';
 import { parseResources, type GameResources } from './resources.js';
@@ -37,6 +38,7 @@ export interface Game extends GameMetadata {
 	id: string;
 	originalGameId?: string;
 	installedFrom?: InstalledFrom;
+	editLock?: EditLock;
 	activeSessionId: string;
 	createdAt: string;
 	updatedAt: string;
@@ -70,6 +72,7 @@ export type GameSummary = Pick<
 	| 'createdAt'
 	| 'updatedAt'
 	| 'trashedAt'
+	| 'editLock'
 >;
 export function gameSummary(input: unknown): GameSummary {
 	if (
@@ -89,6 +92,7 @@ export function gameSummary(input: unknown): GameSummary {
 		activeSessionId: input.activeSessionId,
 		createdAt: input.createdAt,
 		updatedAt: input.updatedAt,
+		...(input.editLock === undefined ? {} : { editLock: parseEditLock(input.editLock) }),
 		...(isTrashed(input.trashedAt) ? { trashedAt: input.trashedAt } : {})
 	};
 }
@@ -240,6 +244,7 @@ export function parseGame(value: unknown): Game {
 		...(value.installedFrom === undefined
 			? {}
 			: { installedFrom: parseInstalledFrom(value.installedFrom) }),
+		...(value.editLock === undefined ? {} : { editLock: parseEditLock(value.editLock) }),
 		createdAt: value.createdAt,
 		updatedAt: value.updatedAt,
 		...(isTrashed(value.trashedAt) ? { trashedAt: value.trashedAt } : {}),

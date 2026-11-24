@@ -36,7 +36,8 @@ export async function prepareInstall(request: InstallRequest) {
 		activeSessionId: request.sessionId,
 		createdAt: now,
 		updatedAt: now,
-		installedFrom: packageInstalledFrom(request, now)
+		installedFrom: packageInstalledFrom(request, now),
+		editLock: true
 	});
 	const session = parseSession({
 		schemaVersion: 1,

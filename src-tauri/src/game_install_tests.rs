@@ -346,6 +346,306 @@ fn raw_json_limit_uses_original_bytes_when_serialization_grows() {
 }
 
 struct Store(std::path::PathBuf);
+
+#[test]
+fn edit_lock_first_play_and_replay_share_frontend_script_and_ui_snapshots() {
+    let fixtures: Value = serde_json::from_str(include_str!(
+        "../../src/lib/storage/fixtures/edit-lock-play.json"
+    ))
+    .unwrap();
+    for case in fixtures.as_array().unwrap() {
+        for sync in [false, true] {
+            let store = Store::new();
+            store.request(case["install"].clone()).unwrap();
+            let id = &case["install"]["gameId"];
+            let before = store.game(id);
+            for command in case["commits"].as_array().unwrap() {
+                assert!(command.get("gamePatch").is_none());
+                assert!(command["records"].as_array().unwrap().iter().all(|row| {
+                    ["snapshots", "progress"].contains(&row["table"].as_str().unwrap())
+                }));
+                lock_dispatch(&store, command.clone(), sync).unwrap();
+            }
+            let read = json!({"kind":"read","gameId":id,"includeHistory":true});
+            let first = store.request(read.clone()).unwrap();
+            let again = store.request(read).unwrap();
+            assert_eq!(first, again);
+            let rows = first["records"].as_array().unwrap();
+            let progress = rows.iter().find(|row| row["table"] == "progress").unwrap();
+            assert_eq!(progress["value"]["snapshotId"], case["snapshotId"]);
+            let snapshot = rows
+                .iter()
+                .find(|row| row["table"] == "snapshots" && row["id"] == case["snapshotId"])
+                .unwrap();
+            assert!(!snapshot["value"]["scripts"].as_object().unwrap().is_empty());
+            assert!(
+                snapshot["value"]["scripts"]
+                    .as_object()
+                    .unwrap()
+                    .values()
+                    .all(|script| script["compiled"].is_string())
+            );
+            assert!(snapshot["value"]["ui"]["compiled"]["factories"].is_string());
+            assert_eq!(store.game(id), before);
+            let state = store
+                .request(json!({"kind":"versioning","action":"read","gameId":id}))
+                .unwrap();
+            assert_eq!(state["versioning"]["modified"], false);
+            assert_eq!(
+                state["versioning"]["contentHash"],
+                case["install"]["release"]["contentHash"]
+            );
+            assert_eq!(
+                store
+                    .request(json!({"kind":"readDraft","gameId":id}))
+                    .unwrap(),
+                json!({"version":0,"draft":null})
+            );
+            let playing = store.request(json!({"kind":"sync","known":[],"request":{"kind":"read","gameId":id,"sessionId":case["install"]["sessionId"],"play":true}})).unwrap();
+            let snapshot = playing["records"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|row| row["table"] == "snapshots" && row["id"] == case["snapshotId"])
+                .unwrap();
+            assert!(snapshot["parts"]["value"]["value"]["ui"]["artifact"].is_string());
+            let db = crate::storage::open(&store.0).unwrap();
+            assert_eq!(
+                db.query_row("SELECT count(*) FROM snapshots", [], |row| row
+                    .get::<_, i64>(0))
+                    .unwrap(),
+                2
+            );
+        }
+    }
+}
+
+fn lock_dispatch(store: &Store, command: Value, sync: bool) -> Result<Value, String> {
+    if sync {
+        store.request(json!({"kind":"sync","known":[],"request":command}))
+    } else {
+        store.request(command)
+    }
+}
+
+#[test]
+fn edit_lock_ignores_unrelated_invalid_fields_on_direct_and_sync_paths() {
+    let fixtures: Value = serde_json::from_str(include_str!(
+        "../../src/lib/storage/fixtures/edit-lock.json"
+    ))
+    .unwrap();
+    for case in fixtures["storedGames"].as_array().unwrap() {
+        for sync in [false, true] {
+            let store = Store::new();
+            let input = input();
+            store.request(input.clone()).unwrap();
+            let id = &input["gameId"];
+            let mut game = store.game(id);
+            for (key, value) in case["value"].as_object().unwrap() {
+                game[key] = value.clone();
+            }
+            crate::storage::open(&store.0)
+                .unwrap()
+                .execute(
+                    "UPDATE games SET value=?1 WHERE id=?2",
+                    params![game.to_string(), id.as_str().unwrap()],
+                )
+                .unwrap();
+            let stored_game = || {
+                let raw: String = crate::storage::open(&store.0)
+                    .unwrap()
+                    .query_row(
+                        "SELECT value FROM games WHERE id=?1",
+                        [id.as_str().unwrap()],
+                        |row| row.get(0),
+                    )
+                    .unwrap();
+                serde_json::from_str::<Value>(&raw).unwrap()
+            };
+            for command in [
+                json!({"kind":"writeDraft","gameId":id,"version":0,"draft":null}),
+                json!({"kind":"versioning","action":"release","gameId":id,"contentVersion":"2.0.0"}),
+            ] {
+                assert_eq!(
+                    lock_dispatch(&store, command, sync).unwrap_err(),
+                    "GAME_EDIT_LOCKED"
+                );
+                assert_eq!(stored_game(), game);
+            }
+            assert_eq!(
+                lock_dispatch(&store, json!({"kind":"unlockGame","gameId":id}), sync).unwrap()["version"],
+                1
+            );
+            game["editLock"] = json!(false);
+            assert_eq!(stored_game(), game);
+            store
+                .request(json!({"kind":"writeDraft","gameId":id,"version":0,"draft":null}))
+                .unwrap();
+        }
+    }
+}
+
+#[test]
+fn edit_lock_shared_content_writes_and_release_are_guarded_on_direct_and_sync_paths() {
+    let fixtures: Value = serde_json::from_str(include_str!(
+        "../../src/lib/storage/fixtures/edit-lock.json"
+    ))
+    .unwrap();
+    for sync in [false, true] {
+        let store = Store::new();
+        let input = input();
+        store.request(input.clone()).unwrap();
+        let id = &input["gameId"];
+        assert_eq!(store.game(id)["editLock"], true);
+        for case in fixtures["writes"].as_array().unwrap() {
+            for shape in ["record", "patch", "syncPatch"] {
+                if shape == "syncPatch" && !sync {
+                    continue;
+                }
+                let before = store.request(json!({"kind":"read","gameId":id})).unwrap();
+                let mut game = store.game(id);
+                for (key, value) in case["set"].as_object().unwrap() {
+                    game[key] = value.clone();
+                }
+                for key in case["remove"].as_array().unwrap() {
+                    game.as_object_mut().unwrap().remove(key.as_str().unwrap());
+                }
+                let patch = json!({"set":case["set"],"remove":case["remove"]});
+                let mut command = json!({"kind":"commit","gameId":id,"version":before["version"],"deleteSessions":[],"records":[]});
+                command["records"] = match shape {
+                    "patch" => {
+                        command["gamePatch"] = patch.clone();
+                        json!([])
+                    }
+                    "syncPatch" => {
+                        json!([{"table":"games","id":id,"gameId":id,"sessionId":null,"patch":patch}])
+                    }
+                    _ => {
+                        json!([{"table":"games","id":id,"gameId":id,"sessionId":null,"value":game}])
+                    }
+                };
+                let result = lock_dispatch(&store, command, sync);
+                if case["allowed"] == true {
+                    result.unwrap();
+                } else {
+                    assert_eq!(
+                        result.unwrap_err(),
+                        "GAME_EDIT_LOCKED",
+                        "{} {shape}",
+                        case["name"]
+                    );
+                    assert_eq!(
+                        store.request(json!({"kind":"read","gameId":id})).unwrap(),
+                        before
+                    );
+                }
+                assert_eq!(store.game(id)["editLock"], true);
+            }
+        }
+        let release =
+            json!({"kind":"versioning","action":"release","gameId":id,"contentVersion":"2.0.0"});
+        assert_eq!(
+            lock_dispatch(&store, release, sync).unwrap_err(),
+            "GAME_EDIT_LOCKED"
+        );
+        for version in [0, 99] {
+            let draft = json!({"kind":"writeDraft","gameId":id,"version":version,"draft":null});
+            assert_eq!(
+                lock_dispatch(&store, draft, sync).unwrap_err(),
+                "GAME_EDIT_LOCKED"
+            );
+        }
+    }
+}
+
+#[test]
+fn edit_lock_unlock_preserves_content_provenance_and_revision_guards() {
+    let store = Store::new();
+    let input = input();
+    store.request(input.clone()).unwrap();
+    let id = &input["gameId"];
+    let before = store.game(id);
+    store.request(json!({"kind":"trash","gameId":id})).unwrap();
+    store
+        .request(json!({"kind":"restore","gameId":id}))
+        .unwrap();
+    assert_eq!(store.game(id)["editLock"], true);
+    let list = store
+        .request(json!({"kind":"list","includeTrashed":true}))
+        .unwrap();
+    assert_eq!(list["games"][0]["editLock"], true);
+    let unlocked = lock_dispatch(&store, json!({"kind":"unlockGame","gameId":id}), true).unwrap();
+    assert_eq!(unlocked["version"], 1);
+    assert_eq!(
+        store
+            .request(json!({"kind":"unlockGame","gameId":id}))
+            .unwrap()["version"],
+        1
+    );
+    let mut expected = before;
+    expected["trashedAt"] = Value::Null;
+    expected["editLock"] = json!(false);
+    assert_eq!(store.game(id), expected);
+    let state = store
+        .request(json!({"kind":"versioning","action":"read","gameId":id}))
+        .unwrap();
+    assert_eq!(state["versioning"]["modified"], false);
+    store
+        .request(json!({"kind":"writeDraft","gameId":id,"version":0,"draft":null}))
+        .unwrap();
+    let mut edited = store.game(id);
+    edited["title"] = json!("Editable");
+    edited["editLock"] = json!(true);
+    store
+        .request(
+            json!({"kind":"commit","gameId":id,"version":1,"deleteSessions":[],"records":[
+                {"table":"games","id":id,"gameId":id,"sessionId":null,"value":edited}
+            ]}),
+        )
+        .unwrap();
+    assert_eq!(store.game(id)["editLock"], false);
+    assert_eq!(store.game(id)["installedFrom"], expected["installedFrom"]);
+    store
+        .request(
+            json!({"kind":"versioning","action":"release","gameId":id,"contentVersion":"2.0.0"}),
+        )
+        .unwrap();
+}
+
+#[test]
+fn edit_lock_malformed_values_fail_before_writes_on_direct_and_sync_paths() {
+    let fixtures: Value = serde_json::from_str(include_str!(
+        "../../src/lib/storage/fixtures/edit-lock.json"
+    ))
+    .unwrap();
+    let store = Store::new();
+    let input = input();
+    store.request(input.clone()).unwrap();
+    let id = &input["gameId"];
+    let before = store.request(json!({"kind":"read","gameId":id})).unwrap();
+    for case in fixtures["values"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|case| case["valid"] == false)
+    {
+        for sync in [false, true] {
+            let mut game = store.game(id);
+            game["editLock"] = case["value"].clone();
+            let command = json!({"kind":"commit","gameId":id,"version":0,"deleteSessions":[],"records":[
+                {"table":"games","id":id,"gameId":id,"sessionId":null,"value":game}
+            ]});
+            assert_eq!(
+                lock_dispatch(&store, command, sync).unwrap_err(),
+                "INVALID_EDIT_LOCK"
+            );
+            assert_eq!(
+                store.request(json!({"kind":"read","gameId":id})).unwrap(),
+                before
+            );
+        }
+    }
+}
 impl Store {
     fn new() -> Self {
         Self(std::env::temp_dir().join(format!("helia-install-{}.sqlite", uuid().unwrap())))
@@ -431,6 +731,9 @@ fn preserves_provenance_across_normal_commit_patch_release_trash_restore_and_res
         .request(json!({"kind":"installJson","json":input.to_string()}))
         .unwrap();
     let id = &input["gameId"];
+    store
+        .request(json!({"kind":"unlockGame","gameId":id}))
+        .unwrap();
     let before = store.game(id);
     let provenance = before["installedFrom"].clone();
     assert!(valid_installed_from(&provenance));
@@ -446,7 +749,7 @@ fn preserves_provenance_across_normal_commit_patch_release_trash_restore_and_res
         game["title"] = json!(format!("Edited {index}"));
         store
             .request(
-                json!({"kind":"commit","gameId":id,"version":index,"deleteSessions":[],"records":[
+                json!({"kind":"commit","gameId":id,"version":index+1,"deleteSessions":[],"records":[
                     {"table":"games","id":id,"gameId":id,"value":game}
                 ]}),
             )
@@ -460,11 +763,11 @@ fn preserves_provenance_across_normal_commit_patch_release_trash_restore_and_res
     .iter()
     .enumerate()
     {
-        store.request(json!({"kind":"commit","gameId":id,"version":index+3,"records":[],"deleteSessions":[],"gamePatch":patch})).unwrap();
+        store.request(json!({"kind":"commit","gameId":id,"version":index+4,"records":[],"deleteSessions":[],"gamePatch":patch})).unwrap();
         assert_eq!(store.game(id)["installedFrom"], provenance);
     }
     // The same game row write used by Apply preserves provenance; no migration is run here.
-    store.request(json!({"kind":"sync","known":[],"request":{"kind":"commit","gameId":id,"version":5,"deleteSessions":[],"records":[
+    store.request(json!({"kind":"sync","known":[],"request":{"kind":"commit","gameId":id,"version":6,"deleteSessions":[],"records":[
         {"table":"games","id":id,"gameId":id,"patch":{"set":{"installedFrom":false},"remove":[]}}
     ]}})).unwrap();
     assert_eq!(store.game(id)["installedFrom"], provenance);
@@ -505,6 +808,7 @@ fn normal_create_and_commit_cannot_forge_provenance() {
         .request(json!({"kind":"create","gameId":input["gameId"],"records":records}))
         .unwrap();
     assert!(store.game(&input["gameId"]).get("installedFrom").is_none());
+    assert!(store.game(&input["gameId"]).get("editLock").is_none());
     let mut records = records;
     records.as_array_mut().unwrap().truncate(1);
     store.request(json!({"kind":"commit","gameId":input["gameId"],"version":0,"records":records,"deleteSessions":[]})).unwrap();

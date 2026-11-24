@@ -14,6 +14,8 @@ import {
 import releaseSchema from '#lib/storage/game-releases.sql?raw';
 import { CONFLICT, type StorageReply, type StorageRequest } from '#lib/storage/protocol.js';
 
+import { guardGameContent, guardGameEdit } from './game-edit-lock.js';
+
 type ReleaseRequest = Extract<StorageRequest, { kind: 'versioning' }>;
 type ContentRequest = Exclude<ReleaseRequest, { action: 'getRelease' }>;
 type SavedGame = { value: string; version: number };
@@ -92,16 +94,19 @@ export function preserveOriginalGameId(db: Database.Database, gameId: string, va
 		{ value: string } | undefined;
 	const prior = previous ? parseGame(JSON.parse(previous.value)) : undefined;
 	const saved = prior?.originalGameId;
+	guardGameContent(prior, game);
 	if (saved && game.originalGameId && saved !== game.originalGameId) {
 		throw Error('Original game identity is immutable');
 	}
 	// Normal writes cannot add, change or remove host-owned package provenance.
-	const { installedFrom: _untrusted, ...content } = game;
+	const { installedFrom: _untrusted, editLock: _untrustedLock, ...content } = game;
 	void _untrusted;
+	void _untrustedLock;
 	return {
 		...content,
 		originalGameId: originalGameId(saved ?? game.originalGameId ?? randomUUID()),
-		...(prior?.installedFrom === undefined ? {} : { installedFrom: prior.installedFrom })
+		...(prior?.installedFrom === undefined ? {} : { installedFrom: prior.installedFrom }),
+		...(prior?.editLock === undefined ? {} : { editLock: prior.editLock })
 	};
 }
 
@@ -216,6 +221,9 @@ class GameReleases {
 
 /** Called inside the host's IMMEDIATE transaction: digest, duplicate check and selection are atomic. */
 export function gameReleases(db: Database.Database, request: ReleaseRequest): StorageReply {
+	if (request.action === 'release') {
+		guardGameEdit(db, request.gameId, 'release');
+	}
 	const saved = db.prepare('SELECT value, version FROM games WHERE id=?').get(request.gameId) as
 		SavedGame | undefined;
 	if (!saved) {

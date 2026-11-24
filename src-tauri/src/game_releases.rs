@@ -110,6 +110,7 @@ pub(super) fn preserve_identity(
         return Err(ERROR.into());
     }
     let mut game = value.clone();
+    super::edit_lock::preserve(connection, id, &mut game)?;
     game["originalGameId"] = json!(origin);
     if let Some(raw) = provenance {
         game["installedFrom"] = serde_json::from_str(&raw).map_err(|_| ERROR)?;
@@ -842,6 +843,7 @@ pub(super) fn request(connection: &mut Connection, input: Value) -> Result<Value
                 expected_content_hash,
                 ..
             } => {
+                super::edit_lock::guard(&tx, game_id, "release")?;
                 reply["releaseResult"] = finalize(
                     &tx,
                     &game,

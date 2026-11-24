@@ -1,0 +1,81 @@
+{
+	"values": [
+		{ "name": "locked", "value": true, "valid": true },
+		{ "name": "unlocked", "value": false, "valid": true },
+		{ "name": "null", "value": null, "valid": false },
+		{ "name": "number", "value": 1, "valid": false },
+		{ "name": "zero", "value": 0, "valid": false },
+		{ "name": "string", "value": "true", "valid": false },
+		{ "name": "object", "value": { "locked": true }, "valid": false },
+		{ "name": "array", "value": [], "valid": false }
+	],
+	"operations": [
+		{ "operation": "draft", "allowedWhenLocked": false },
+		{ "operation": "apply", "allowedWhenLocked": false },
+		{ "operation": "release", "allowedWhenLocked": false },
+		{ "operation": "upgrade", "allowedWhenLocked": true }
+	],
+	"storedGames": [
+		{
+			"name": "locked game with invalid unrelated fields",
+			"value": { "editLock": true, "title": 42, "resources": "invalid" }
+		}
+	],
+	"writes": [
+		{ "name": "rename", "set": { "title": "Edited" }, "remove": [], "allowed": false },
+		{
+			"name": "instructions",
+			"set": { "settings": { "description": "Changed", "firstMessage": "", "authorNote": "" } },
+			"remove": [],
+			"allowed": false
+		},
+		{
+			"name": "regex",
+			"set": {
+				"regex": [
+					{
+						"id": "rule",
+						"name": "Rule",
+						"enabled": true,
+						"stage": "display",
+						"roles": ["assistant"],
+						"pattern": "x",
+						"replacement": "y",
+						"flags": "g"
+					}
+				]
+			},
+			"remove": [],
+			"allowed": false
+		},
+		{
+			"name": "script injection",
+			"set": {
+				"scripts": { "main": { "language": "javascript", "source": "throw Error('changed')" } }
+			},
+			"remove": [],
+			"allowed": false
+		},
+		{ "name": "unchanged content", "set": { "scripts": {} }, "remove": ["ui"], "allowed": true },
+		{
+			"name": "forged unlock and content",
+			"set": { "editLock": false, "title": "Bypass" },
+			"remove": [],
+			"allowed": false
+		},
+		{
+			"name": "removed lock and content",
+			"set": { "title": "Bypass" },
+			"remove": ["editLock"],
+			"allowed": false
+		},
+		{ "name": "forged unlock", "set": { "editLock": false }, "remove": [], "allowed": true },
+		{ "name": "removed lock", "set": {}, "remove": ["editLock"], "allowed": true },
+		{
+			"name": "runtime timestamp",
+			"set": { "updatedAt": "2026-11-24T12:00:00.000Z" },
+			"remove": [],
+			"allowed": true
+		}
+	]
+}

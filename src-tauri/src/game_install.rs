@@ -297,6 +297,7 @@ fn verify(
         };
     }
     game["installedFrom"] = installed_from(request, now)?;
+    game["editLock"] = json!(true);
     Ok((game, normalized, hash))
 }
 

@@ -53,7 +53,8 @@ import { isSessionBusy } from './ai/activity.js';
 import { agentMessages } from './ai/message-echo.js';
 import { parseGameAIContent } from './ai/prompts.js';
 import { aiError } from './ai/protocol.js';
-import { compileCodeProject } from './code-project.js';
+import { compileCodeProject, compileAuthoringGame } from './code-project.js';
+import { assertEditOperation } from './edit-lock.js';
 import { editorContent, type GameEditorContent } from './editor.js';
 import {
 	parseGame,
@@ -746,6 +747,9 @@ class GameRepository {
 		}
 		return reply.versioning;
 	};
+	unlockGame = async (gameId: string): Promise<void> => {
+		await this.transport({ kind: 'unlockGame', gameId });
+	};
 	installPreview = async (
 		originalGameId: string,
 		contentVersion: string
@@ -842,6 +846,9 @@ class GameRepository {
 				return { game, sessions, timeline };
 			}
 		);
+		if (workspace?.game.editLock === true) {
+			return this.prepareLockedPlay(gameId, workspace);
+		}
 		if (workspace && !runtimeReady(workspace.game)) {
 			const original = (await this.getGameWorkspace(gameId))!.game;
 			await this.applyGameDraft(gameId, {
@@ -856,14 +863,44 @@ class GameRepository {
 		}
 		return workspace;
 	};
-	private prepareRuntimeSnapshot = async (gameId: string, sessionId: string) => {
+	/** Installed source remains immutable; only the session's derived runtime snapshot is stored. */
+	private prepareLockedPlay = async (
+		gameId: string,
+		workspace: { game: Game; sessions: Session[]; timeline: SessionTimeline }
+	) => {
+		const original = (await this.getGameWorkspace(gameId))!.game;
+		const compiled = await compileAuthoringGame(original);
+		const snapshot = workspace.timeline.history.snapshot;
+		// Play transport replaces compiled code with artifacts. Readiness and declared script IDs
+		// remain comparable; the installed source cannot change while this lock is present.
+		if (
+			!runtimeReady(snapshot) ||
+			contentHash(Object.keys(snapshot.scripts).sort()) !==
+				contentHash(Object.keys(compiled.scripts).sort()) ||
+			!!snapshot.ui !== !!compiled.ui
+		) {
+			await this.prepareRuntimeSnapshot(gameId, workspace.game.activeSessionId, compiled);
+			return this.getPlayWorkspace(gameId);
+		}
+		return {
+			...workspace,
+			game: { ...workspace.game, scripts: compiled.scripts, ui: compiled.ui }
+		};
+	};
+	private prepareRuntimeSnapshot = async (
+		gameId: string,
+		sessionId: string,
+		runtime?: Pick<Game, 'scripts' | 'ui'>
+	) => {
 		const original = await useStorage(
 			this.transport,
 			gameId,
 			sessionId,
 			(unit) => initialize(unit, gameId, sessionId).history
 		);
-		const compiled = await (await import('./runtime-build.js')).buildRuntime(original.snapshot);
+		const compiled = runtime
+			? { ...original.snapshot, scripts: runtime.scripts, ui: runtime.ui }
+			: await (await import('./runtime-build.js')).buildRuntime(original.snapshot);
 		const id = contentHash({
 			...compiled,
 			id: undefined,
@@ -950,6 +987,7 @@ class GameRepository {
 			undefined,
 			(unit) => {
 				const previous = gameIn(unit, gameId);
+				assertEditOperation(previous.editLock, 'apply');
 				const base = parseGame({
 					...previous,
 					...input.baseContent,

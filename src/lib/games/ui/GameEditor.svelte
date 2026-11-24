@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
+	import { tick } from 'svelte';
 
 	import ConfirmDialog from '#lib/components/ConfirmDialog.svelte';
 	import Icon from '#lib/components/Icon.svelte';
@@ -12,11 +13,27 @@
 	import EditorDocumentWorkspace from './editor/EditorDocumentWorkspace.svelte';
 	import EditorInspectorPanel from './editor/EditorInspectorPanel.svelte';
 	import EditorPlayground from './editor/EditorPlayground.svelte';
+	import GameEditLock from './editor/GameEditLock.svelte';
 	let { gameId, documentRoute }: { gameId: string; documentRoute?: string } = $props();
 	const editor = new EditorWorkspace(
 		() => gameId,
 		() => documentRoute
 	);
+	let heading: HTMLHeadingElement | undefined;
+	async function reloadAfterUnlock() {
+		const unlockedGameId = gameId;
+		await editor.load();
+		await tick();
+		if (
+			gameId === unlockedGameId &&
+			!editor.loading &&
+			!editor.loadError &&
+			!editor.missing &&
+			editor.game?.editLock !== true
+		) {
+			heading?.focus();
+		}
+	}
 </script>
 
 <svelte:head><title>{editor.game?.title ?? '게임'} 편집기 · Helia</title></svelte:head>
@@ -32,7 +49,17 @@
 	<header class="editor-header">
 		<div class="title-group">
 			<Icon name="edit" size={17} />
-			<h1>게임 편집기</h1>
+			<h1
+				{@attach (element) => {
+					heading = element;
+					return () => {
+						heading = undefined;
+					};
+				}}
+				tabindex="-1"
+			>
+				게임 편집기
+			</h1>
 			<span class="slash">/</span><span class="game-title"
 				>{editor.info?.title ?? editor.game?.title ?? '불러오는 중'}</span
 			>
@@ -103,6 +130,8 @@
 			<button type="button" onclick={editor.load}>다시 불러오기</button>
 		</div>
 	{:else if editor.missing}<div class="load-state"><h2>게임을 찾을 수 없어요</h2></div>
+	{:else if editor.game?.editLock === true}
+		<GameEditLock gameId={editor.gameId} onunlocked={reloadAfterUnlock} />
 	{:else if editor.recoveryError}<div class="load-state">
 			<p role="alert">{editor.recoveryError}</p>
 			{#if editor.saveError}<p role="alert">{editor.saveError}</p>{/if}

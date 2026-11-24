@@ -21,13 +21,13 @@
 	<button
 		class={['game-card', { 'game-card--list': view === 'list' }]}
 		type="button"
-		aria-label={`${game.title} · 제작 중 상세 보기`}
+		aria-label={`${game.title} · ${game.editLock === true ? '편집 잠금 · ' : ''}제작 중 상세 보기`}
 		onclick={() => onselect(game)}
 	>
 		<span class="cover-wrap"><GameCover /></span>
 		<span class="game-copy"
 			>{#if game.genre}<span class="genre">{game.genre}</span>{/if}<strong>{game.title}</strong
-			><span class="metadata">제작 중</span></span
+			><span class="metadata">{game.editLock === true ? '편집 잠금' : '제작 중'}</span></span
 		>
 	</button>
 	{#if ontrash}

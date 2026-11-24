@@ -1,0 +1,396 @@
+[
+	{
+		"name": "legacy scripts and UI",
+		"install": {
+			"kind": "install",
+			"gameId": "12345678-1234-4234-8234-123456789abc",
+			"sessionId": "12345678-1234-4234-8234-123456789abd",
+			"packageFormatVersion": 1,
+			"release": {
+				"originalGameId": "12345678-1234-4234-8234-123456789abc",
+				"contentVersion": "1.0.0",
+				"contentHash": "61ab957a6d749be51e09cee84af0d35ca6bebd180df2e066d240a7ec7ed88a44",
+				"createdAt": "2026-11-23T00:00:00.000Z",
+				"content": {
+					"title": "Adventure",
+					"genre": "Fantasy",
+					"description": "Public",
+					"settings": {
+						"description": "Instructions",
+						"firstMessage": "",
+						"authorNote": ""
+					},
+					"schema": {
+						"type": "object",
+						"properties": {},
+						"additionalProperties": false
+					},
+					"initialState": {},
+					"regex": [],
+					"resources": {},
+					"scripts": {
+						"main": {
+							"language": "typescript",
+							"source": "helia.defineAction({name:'probe',run({state}) {return state;}});"
+						}
+					},
+					"ui": {
+						"version": 1,
+						"entry": "main.tsx",
+						"modules": {
+							"main.tsx": {
+								"language": "tsx",
+								"source": "import { registerPanel } from '@helia/ui'; export default function start(){return registerPanel({id:'status',title:'Status',component:()=> <span>Ready</span>});}"
+							}
+						}
+					}
+				}
+			}
+		},
+		"commits": [
+			{
+				"kind": "commit",
+				"gameId": "12345678-1234-4234-8234-123456789abc",
+				"version": 0,
+				"records": [
+					{
+						"table": "snapshots",
+						"id": "c98d149f77514726de6334898edd0d052866d3b6f5ed678dfff39bb3bbb2b2d7",
+						"gameId": "12345678-1234-4234-8234-123456789abc",
+						"sessionId": null,
+						"value": {
+							"schemaVersion": 1,
+							"id": "c98d149f77514726de6334898edd0d052866d3b6f5ed678dfff39bb3bbb2b2d7",
+							"gameId": "12345678-1234-4234-8234-123456789abc",
+							"createdAt": "2026-11-24T00:00:00.000Z",
+							"schema": {
+								"type": "object",
+								"properties": {},
+								"additionalProperties": false
+							},
+							"initialState": {},
+							"scripts": {
+								"main": {
+									"language": "typescript",
+									"source": "helia.defineAction({name:'probe',run({state}) {return state;}});"
+								}
+							},
+							"ui": {
+								"version": 1,
+								"entry": "main.tsx",
+								"modules": {
+									"main.tsx": {
+										"language": "tsx",
+										"source": "import { registerPanel } from '@helia/ui'; export default function start(){return registerPanel({id:'status',title:'Status',component:()=> <span>Ready</span>});}"
+									}
+								}
+							},
+							"settings": {
+								"description": "Instructions",
+								"firstMessage": "",
+								"authorNote": ""
+							}
+						}
+					},
+					{
+						"table": "progress",
+						"id": "12345678-1234-4234-8234-123456789abd",
+						"gameId": "12345678-1234-4234-8234-123456789abc",
+						"sessionId": "12345678-1234-4234-8234-123456789abd",
+						"value": {
+							"schemaVersion": 2,
+							"sessionId": "12345678-1234-4234-8234-123456789abd",
+							"gameId": "12345678-1234-4234-8234-123456789abc",
+							"snapshotId": "c98d149f77514726de6334898edd0d052866d3b6f5ed678dfff39bb3bbb2b2d7",
+							"headId": null,
+							"revision": 0,
+							"state": {}
+						}
+					}
+				],
+				"deleteSessions": []
+			},
+			{
+				"kind": "commit",
+				"gameId": "12345678-1234-4234-8234-123456789abc",
+				"version": 1,
+				"records": [
+					{
+						"table": "progress",
+						"id": "12345678-1234-4234-8234-123456789abd",
+						"gameId": "12345678-1234-4234-8234-123456789abc",
+						"sessionId": "12345678-1234-4234-8234-123456789abd",
+						"value": {
+							"schemaVersion": 2,
+							"sessionId": "12345678-1234-4234-8234-123456789abd",
+							"gameId": "12345678-1234-4234-8234-123456789abc",
+							"snapshotId": "18d09da68d047cd5deb6bdac4bb59055669153730907cb5d745a250d8dadf147",
+							"headId": null,
+							"revision": 1,
+							"state": {}
+						}
+					},
+					{
+						"table": "snapshots",
+						"id": "18d09da68d047cd5deb6bdac4bb59055669153730907cb5d745a250d8dadf147",
+						"gameId": "12345678-1234-4234-8234-123456789abc",
+						"sessionId": null,
+						"value": {
+							"schemaVersion": 1,
+							"id": "18d09da68d047cd5deb6bdac4bb59055669153730907cb5d745a250d8dadf147",
+							"gameId": "12345678-1234-4234-8234-123456789abc",
+							"createdAt": "2026-11-24T00:00:00.000Z",
+							"schema": {
+								"type": "object",
+								"properties": {},
+								"additionalProperties": false
+							},
+							"initialState": {},
+							"scripts": {
+								"main": {
+									"language": "typescript",
+									"source": "helia.defineAction({name:'probe',run({state}) {return state;}});",
+									"compiled": "\"use strict\";\nhelia.defineAction({ name: 'probe', run({ state }) { return state; } });\n",
+									"compiledFor": "7d44ce70d1d64e247f56baeb733a4607c88b57ecb14bb65fd0cbe2af9e20142d"
+								}
+							},
+							"ui": {
+								"version": 1,
+								"entry": "main.tsx",
+								"modules": {
+									"main.tsx": {
+										"language": "tsx",
+										"source": "import { registerPanel } from '@helia/ui'; export default function start(){return registerPanel({id:'status',title:'Status',component:()=> <span>Ready</span>});}"
+									}
+								},
+								"compiled": {
+									"version": 1,
+									"sourceHash": "1f258c8d9e158b5310485ba5b0775c4f29f4e2b1b9742de7626a295ba64dca45",
+									"entry": "main.tsx",
+									"factories": "\"preact\":function(module,exports,require,__h,__Fragment){\n\"use strict\";\nObject.defineProperty(exports, \"__esModule\", { value: true });\nexports.options = exports.isValidElement = void 0;\nexports.Component = x;\nexports.Fragment = M;\nexports.cloneElement = b;\nexports.createContext = R;\nexports.createElement = k;\nexports.h = k;\nexports.createPortal = W;\nexports.createRef = $;\nexports.hydrate = Q;\nexports.render = K;\nexports.toChildArray = A;\nvar n, t, r, i, u, f, e, o, l, c, a, s, h = Symbol.for(\"pv\"), p = {}, v = [], y = /^m(i|n|o|s|text|space)$/, w = Array.isArray, d = v.slice, _ = Object.assign;\nfunction g(n) { n && n.parentNode && n.remove(); }\nfunction k(n, t, r) { var i, u, f, e = {}, o = arguments.length; for (f in t)\n    \"key\" == f ? i = t[f] : \"ref\" == f && \"function\" != typeof n ? u = t[f] : e[f] = t[f]; return o > 2 && (e.children = o > 3 ? d.call(arguments, 2) : r), m(n, e, i, u, null); }\nfunction b(n, t, r) { var i, u, f, e = _({}, n.props), o = arguments.length; for (f in t)\n    \"key\" == f ? i = t[f] : \"ref\" == f && \"function\" != typeof n.type ? u = t[f] : e[f] = t[f]; return o > 2 && (e.children = o > 3 ? d.call(arguments, 2) : r), m(n.type, e, void 0 !== i ? i : n.key, void 0 !== u ? u : n.ref, null); }\nfunction m(r, i, u, f, e) { var o = { type: r, props: i, key: u, ref: f, __k: null, __: null, __b: 0, __e: null, __c: null, constructor: h, __v: e || ++t, __i: -1, __u: 0 }; return !e && n.vnode && n.vnode(o), o; }\nfunction $() { return { current: null }; }\nfunction M(n) { return n.children; }\nfunction x(n, t) { this.props = n, this.context = t, this.__g = 0; }\nfunction S(n, t) { if (null == t)\n    return n.__ && S(n.__, n.__i + 1); for (var r; t < n.__k.length; t++)\n    if ((r = n.__k[t]) && r.__e)\n        return r.__e; return \"function\" != typeof n.type || n.props.__P ? null : S(n); }\nfunction C(n) { if ((n = n.__) && n.__c && !n.props.__P)\n    return n.__e = null, n.__k.some(function (t) { return t && (n.__e = t.__e); }), C(n); }\nfunction j(t) { (8 & t.__g || (t.__g |= 8, i.push(t), f++)) && u == n.debounceRendering || ((u = n.debounceRendering) || queueMicrotask)(L); }\nfunction L() { var t, r, o, l, c, a, s, p, v; try {\n    for (r = 1; i.length;)\n        i.length > r && i.sort(e), t = i.shift(), r = i.length, 8 & t.__g && (l = void 0, c = void 0, a = (c = (o = t).__v).__e, s = [], p = [], (v = o.__P) && ((l = _({ constructor: h }, c)).__v = c.__v + 1, n.vnode && n.vnode(l), V(v, l, c, o.__n, v.namespaceURI, 32 & c.__u ? [a] : null, s, a || S(c), 32 & c.__u, p), l.__v = c.__v, l.__.__k[l.__i] = l, D(s, l, p), c.__ = c.__e = null, l.__e != a && C(l)));\n}\nfinally {\n    (f = i.length) && (u || queueMicrotask)(L);\n} }\nfunction H(n, t, r, i, u, f, e, o, l, c, a) { var s, h, y, w, d, _, g = i.__k || v, k = t.length; for (l = I(r, t, g, l, k), s = 0; s < k; s++)\n    null != (y = r.__k[s]) && (h = ~y.__i && g[y.__i] || p, y.__i = s, _ = V(n, y, h, u, f, e, o, l, c, a), w = y.__e, (h.ref != y.ref || 8 & h.__u) && (h.ref && F(h.ref, null, y, h), y.ref && a.push(y.ref, y.__c || w, y)), d = d || w, 4 & y.__u ? (l = q(y, l, n, !h.__v), h.__e && (h.__e = null)) : \"function\" == typeof y.type && void 0 !== _ ? l = _ : w && (l = w.nextSibling), y.__u &= -21); return r.__e = d, l; }\nfunction I(n, t, r, i, u) { var f, e, o, l, c, a, s, p, v, y = r.length, d = y, _ = 0, g = 0, k = n.__k = Array(u); for (f = 0; f < u; f++)\n    null != (e = t[f]) && \"boolean\" != typeof e && \"function\" != typeof e ? (\"object\" != typeof e || e.constructor === String ? e = k[f] = m(null, e) : w(e) ? e = k[f] = m(M, { children: e }) : e.constructor === h && e.__b ? e = k[f] = m(e.type, e.props, e.key, e.ref, e.__v) : k[f] = e, l = f + _, e.__ = n, e.__b = n.__b + 1, o = null, ~(c = e.__i = O(e, r, l, d)) && (d--, (o = r[c]) && (o.__u |= 2)), o && o.__v ? (e.__u |= 16, c == l - 1 ? _-- : c == l + 1 ? _++ : c != l && (c > l ? _-- : _++, g = 1)) : (~c || (u > y ? _-- : u < y && _++), \"function\" != typeof e.type && (e.__u |= 4))) : k[f] = null; if (g) {\n    for (a = [], s = [], f = 0; f < u; f++)\n        if ((e = k[f]) && 16 & e.__u) {\n            for (_ = 0, p = a.length; _ < p;)\n                a[v = _ + p >> 1] < e.__i ? _ = v + 1 : p = v;\n            a[_] = e.__i, s[f] = _ + 1;\n        }\n    for (_ = a.length; f--;)\n        s[f] && (s[f] == _ ? _-- : k[f].__u |= 4);\n} if (d)\n    for (f = 0; f < y; f++)\n        !(o = r[f]) || 2 & o.__u || (o.__e == i && (i = S(o)), G(o, o)); return i; }\nfunction q(n, t, r, i) { var u, f, e, o; if (\"function\" == typeof n.type) {\n    if (n.props.__P)\n        return t;\n    if (u = n.__k)\n        for (f = 0; f < u.length; f++)\n            u[f] && (u[f].__ = n, t = q(u[f], t, r, !1));\n    return t;\n} for (t && !t.parentNode && (t = S(n)) && !t.parentNode && (t = null), e = n.__e, o = t; o && 8 == o.nodeType;)\n    o = o.nextSibling; for (e != o && (!i && r.moveBefore && e.parentNode ? r.moveBefore(e, t) : r.insertBefore(e, t || null)), t = e; (t = t && t.nextSibling) && 8 == t.nodeType && !t.data.startsWith(\"$s\");)\n    ; return t; }\nfunction A(n, t) { return t = t || [], null != n && \"boolean\" != typeof n && (w(n) ? n.some(function (n) { A(n, t); }) : t.push(n)), t; }\nfunction O(n, t, r, i) { var u, f = n.key, e = n.type, o = t[r], l = o && !(2 & o.__u); if (null === o && null == f || l && f == o.key && e == o.type)\n    return r; if (i > (l ? 1 : 0)) {\n    for (u = r - 1; u >= 0; u--)\n        if ((o = t[u]) && !(2 & o.__u) && f == o.key && e == o.type)\n            return u;\n    for (u = r + 1; u < t.length; u++)\n        if ((o = t[u]) && !(2 & o.__u) && f == o.key && e == o.type)\n            return u;\n} return -1; }\nfunction P(n, t, r) { null == r && (r = \"\"), \"-\" == t[0] ? n.setProperty(t, r) : n[t] = r; }\nfunction T(n, t, r, i, u) { var f, e; if (\"style\" == t)\n    if (\"string\" == typeof r)\n        n.style.cssText = r;\n    else {\n        if (\"string\" == typeof i && (n.style.cssText = i = \"\"), i)\n            for (t in i)\n                r && t in r || P(n.style, t);\n        if (r)\n            for (t in r)\n                i && r[t] == i[t] || P(n.style, t, r[t]);\n    }\nelse if (\"o\" == t[0] && \"n\" == t[1])\n    (n.__e || (n.__e = {}))[t] = r, r && i || (e = a[t] || (a[t] = N(t)), (n.__a || (n.__a = {}))[t] = c, f = t != (t = t.replace(l, \"$1\")), (t = t.slice(2))[0] < \"a\" && (t = t.toLowerCase()), r ? n.addEventListener(t, e, f) : n.removeEventListener(t, e, f));\nelse {\n    if (\"http://www.w3.org/2000/svg\" == u)\n        t = t.replace(/xlink(H|:h)/, \"h\").replace(/sName$/, \"s\");\n    else if (\"width\" != t && \"height\" != t && \"href\" != t && \"list\" != t && \"form\" != t && \"tabIndex\" != t && \"download\" != t && \"rowSpan\" != t && \"colSpan\" != t && \"role\" != t && \"popover\" != t && t in n)\n        try {\n            return void (n[t] = null == r ? \"\" : r);\n        }\n        catch (n) { }\n    if (\"function\" == typeof r)\n        return;\n    null == r || !1 === r && \"-\" != t[4] ? n.removeAttribute(t) : n.setAttribute(t, \"popover\" == t && 1 == r ? \"\" : r);\n} }\nfunction N(t) { return function (r) { var i = this.__e; if (i) {\n    if (i = i[t], null == r[o])\n        r[o] = c++;\n    else if (r[o] < this.__a[t])\n        return;\n    return i(n.event ? n.event(r) : r);\n} }; }\nfunction V(t, r, i, u, f, e, o, l, c, a) { var s, p, y, d, k, b, m, $, C, j, L, I, q, A, O, P, T, N, V = r.type; if (r.constructor !== h)\n    return null; 128 & i.__u && (c = 32 & i.__u, s = i.__c.__z) && (r.__u |= c, p = e = [], 8 == s.nodeType ? l = z(s, e) : e.push(s), l = e[0] || l), (s = n.__b) && s(r); n: if (\"function\" == typeof V) {\n    y = o.length;\n    try {\n        if ($ = r.props, C = (s = V.prototype) && s.render, j = (s = V.contextType) && u[s.__c], L = s ? j ? j.props.value : s.__ : u, (d = i.__c) ? (r.__c = d, 2 & d.__g && (d.__g |= 1)) : (C ? r.__c = d = new V($, L) : (r.__c = d = new x($, L), d.constructor = V, d.render = J), j && j.sub(d), d.state || (d.state = {}), d.__n = u, d.__g |= 8, d.__h = [], d.__k = []), C && (d.__s || (d.__s = d.state), V.getDerivedStateFromProps && (d.__s == d.state && (d.__s = _({}, d.__s)), _(d.__s, V.getDerivedStateFromProps($, d.__s)))), k = d.props, b = d.state, d.__v = r, i.__c) {\n            if ($ !== k && C && !V.getDerivedStateFromProps && d.componentWillReceiveProps && d.componentWillReceiveProps($, L), r.__v == i.__v && !(8 & d.__g) || !(4 & d.__g) && d.shouldComponentUpdate && !1 === d.shouldComponentUpdate($, d.__s, L)) {\n                r.__v != i.__v && (d.props = $, d.state = d.__s, d.__g &= -9), r.__e = i.__e, r.__k = i.__k, r.__k.some(function (n) { n && (n.__ = r); }), v.push.apply(d.__h, d.__k), d.__k = [], d.__h.length && o.push(d), l = S(i);\n                break n;\n            }\n            d.componentWillUpdate && d.componentWillUpdate($, d.__s, L), C && d.componentDidUpdate && d.__h.push(function () { d.componentDidUpdate(k, b, m); });\n        }\n        else\n            C && !V.getDerivedStateFromProps && d.componentWillMount && d.componentWillMount(), C && d.componentDidMount && d.__h.push(d.componentDidMount);\n        if (d.context = L, d.props = $, d.__P = t, d.__g &= -5, I = n.__r, q = 0, C)\n            d.state = d.__s, d.__g &= -9, I && I(r), s = d.render(d.props, d.state, d.context), v.push.apply(d.__h, d.__k), d.__k = [];\n        else\n            do {\n                d.__g &= -9, I && I(r), s = d.render(d.props, d.state, d.context), d.state = d.__s;\n            } while (8 & d.__g && ++q < 25);\n        d.state = d.__s, d.getChildContext && (u = _({}, u, d.getChildContext())), C && i.__c && d.getSnapshotBeforeUpdate && (m = d.getSnapshotBeforeUpdate(k, b)), A = s && s.type === M && null == s.key ? s.props.children : s, $.__P && (s = l, f = (t = $.__P).namespaceURI, c = e = null, i.props && i.props.__P != t && (i.__k.some(function (n) { n && G(n, n); }), i.__k = null), l = i.__k ? S(i, 0) : null), l = H(t, w(A) ? A : [A], r, i, u, f, e, o, l, c, a), $.__P && (r.__e = null, l = s), r.__u &= -161, p && p.some(g), d.__h.length && o.push(d), 1 & d.__g && (d.__g &= -4);\n    }\n    catch (t) {\n        if (o.length = y, r.__v = null, c || e)\n            if (t.then) {\n                if (O = 0, r.__u |= 128 | c, e) {\n                    for (~(T = e.indexOf(l || void 0)) || (T = e.length); (N = e[T - 1]) && 8 == N.nodeType;)\n                        T--;\n                    for (; T < e.length; T++)\n                        if (N = e[T])\n                            if (e[T] = null, 8 == N.nodeType) {\n                                if (N.data.startsWith(\"$s\"))\n                                    O++ || (P = N);\n                                else if (O && N.data.startsWith(\"/$s\") && !--O)\n                                    break;\n                            }\n                            else if (!O)\n                                break;\n                }\n                if (!P) {\n                    for (; l && 8 == l.nodeType && l.nextSibling;)\n                        l = l.nextSibling;\n                    P = l;\n                }\n                (s = z(P = r.__c.__z || (r.__c.__z = P))) ? (r.__e = P, l = s) : r.__e = l, l = l && l.nextSibling;\n            }\n            else\n                e && e.some(g);\n        else\n            r.__e = i.__e;\n        r.__k || (r.__k = i.__k || []), t.then || B(r), n.__e(t, r, i);\n    }\n}\nelse\n    l = r.__e = E(i.__e, r, i, u, f, e, o, c, a, t); return (s = n.diffed) && s(r), l; }\nfunction z(n, t) { if (n && 8 == n.nodeType && n.data.startsWith(\"$s\"))\n    for (var r = 1; n = n.nextSibling;) {\n        if (8 == n.nodeType)\n            if (n.data.startsWith(\"$s\"))\n                r++;\n            else if (n.data.startsWith(\"/$s\") && !--r)\n                return n;\n        t && t.push(n);\n    } }\nfunction B(n) { n && (n.__c && (n.__c.__g |= 4), n.__k && n.__k.some(B)); }\nfunction D(t, r, i) { for (var u = 0; u < i.length;)\n    F(i[u++], i[u++], i[u++]); n.__c && n.__c(r, t), t.some(function (r) { try {\n    t = r.__h, r.__h = [], t.some(function (n) { n.call(r); });\n}\ncatch (t) {\n    n.__e(t, r.__v);\n} }); }\nfunction E(t, r, i, u, f, e, o, l, c, a) { var s, h, v, _, k, b, m, $, M, x = i.props || p, C = r.props, j = r.type; if (\"svg\" == j ? f = \"http://www.w3.org/2000/svg\" : \"math\" == j ? f = \"http://www.w3.org/1998/Math/MathML\" : f || (f = \"http://www.w3.org/1999/xhtml\"), e)\n    for (s = 0; s < e.length; s++)\n        if ((k = e[s]) && (j ? k.localName == j : 3 == k.nodeType)) {\n            t = k, e[s] = null;\n            break;\n        } if (!t) {\n    if ($ = a.ownerDocument || document, !j)\n        return $.createTextNode(C);\n    t = $.createElementNS(f, j, C.is && C), l && (n.__m && n.__m(r, e), l = !1), e = null;\n} if (j) {\n    if (a = \"template\" == j && t.content || t, e = \"textarea\" == j && null != C.defaultValue ? null : e && d.call(a.childNodes), !l && e)\n        for (x = {}, s = 0; s < t.attributes.length; s++)\n            x[(k = t.attributes[s]).name] = k.value;\n    for (s in x)\n        k = x[s], \"dangerouslySetInnerHTML\" == s ? v = k : \"children\" == s || s in C || \"value\" == s && \"defaultValue\" in C || \"checked\" == s && \"defaultChecked\" in C || T(t, s, null, k, f);\n    for (s in M = 1 & i.__u, C)\n        k = C[s], \"children\" == s ? _ = k : \"dangerouslySetInnerHTML\" == s ? h = k : \"value\" == s ? b = k : \"checked\" == s ? m = k : l && \"function\" != typeof k || !(x[s] !== k || M && null != k) || T(t, s, k, x[s], f);\n    h ? (l || v && (h.__html == v.__html || h.__html == t.innerHTML) || (t.innerHTML = h.__html), r.__k = []) : (v && (t.textContent = \"\"), (\"foreignObject\" == j || \"http://www.w3.org/1998/Math/MathML\" == f && y.test(j)) && (f = \"http://www.w3.org/1999/xhtml\"), H(a, w(_) ? _ : [_], r, i, u, f, e, o, e ? e[0] : i.__k && S(i, 0), l, c), e && e.some(g)), l && \"textarea\" != j || (s = \"value\", \"progress\" == j && null == b ? t.removeAttribute(s) : null == b || b === t[s] && (\"progress\" != j || b) || T(t, s, b, x[s], f), s = \"checked\", null != m && m != t[s] && T(t, s, m, x[s], f));\n}\nelse\n    x === C || l && t.data == C || (t.data = C); return t; }\nfunction F(t, r, i, u) { try {\n    \"function\" == typeof t ? r ? r.__x = t(r) || 1 : u && (u = u.__c || u.__e) && (r = u.__x) && (u.__x = null, \"function\" == typeof r ? r() : t(null)) : t.current = r;\n}\ncatch (t) {\n    n.__e(t, i);\n} }\nfunction G(t, r, i) { var u, f, e, o; if (n.unmount && n.unmount(t), !(u = t.ref) || u.current && u.current != t.__e || F(u, null, r, t), u = t.__c) {\n    if (u.componentWillUnmount)\n        try {\n            u.componentWillUnmount();\n        }\n        catch (t) {\n            n.__e(t, r);\n        }\n    u.__P = u.__n = null;\n} if (u = t.__k)\n    for (o = 0; o < u.length; o++)\n        u[o] && G(u[o], r, \"function\" != typeof t.type || i && !t.props.__P); !i && (u = t.__c) && (u = u.__z) && (f = z(u, e = [])) && (u == t.__e && e.some(g), g(f), g(u)), (u = t.__e) && (i || g(u), u.__e && (u.__e = null)), t.__e = t.__c = t.__ = null; }\nfunction J(n, t, r) { return this.constructor(n, r); }\nfunction K(t, r) { var i, u, f, e; n.__ && n.__(t, r), 9 == r.nodeType && (r = r.documentElement), u = (i = t && 32 & t.__u) ? null : r.__k, r.__k = m(M, { children: [t] }), f = [], e = [], V(r, r.__k, u || p, p, r.namespaceURI, u ? null : r.firstChild ? d.call(r.childNodes) : null, f, u ? u.__e : r.firstChild, i, e), D(f, r.__k, e), r.__k.props.children = null; }\nfunction Q(n, t) { n && \"object\" == typeof n && (n.__u |= 32), K(n, t); }\nfunction R(n) { function t(n) { var r, i; return this.getChildContext || (r = new Set, (i = {})[t.__c] = this, this.getChildContext = function () { return i; }, this.shouldComponentUpdate = function (n) { this.props.value != n.value && r.forEach(function (n) { n.__g |= 4, j(n); }); }, this.sub = function (n) { r.add(n); var t = n.componentWillUnmount; n.componentWillUnmount = function () { r.delete(n), t && t.call(n); }; }), n.children; } return t.__c = \"__cC\" + s++, t.__ = n, t.Provider = (t.Consumer = function (n, t) { return n.children(t); }).contextType = t, t; }\nfunction U(n) { return n.children; }\nfunction W(n, t) { return m(U, { __P: t, children: n }); }\nexports.options = n = { __e: function (n, t, r, i) { for (var u, e, o; t = t.__;)\n        if ((u = t.__c) && !(1 & u.__g)) {\n            u.__g |= 4;\n            try {\n                if ((o = (e = u.constructor) && e.getDerivedStateFromError) && u.setState(e.getDerivedStateFromError(n)), u.componentDidCatch && (u.componentDidCatch(n, i || {}), o = 1), o && 8 & u.__g)\n                    return void (u.__g |= 2);\n            }\n            catch (t) {\n                n = t;\n            }\n        } throw f = 0, n; } }, t = 0, exports.isValidElement = r = function (n) { return null != n && n.constructor === h; }, x.prototype.setState = function (n, t) { var r = this.__s; r && r != this.state || (r = this.__s = _({}, this.state)), \"function\" == typeof n && (n = n(_({}, r), this.props)), n && (_(r, n), this.__v && (t && this.__k.push(t), j(this))); }, x.prototype.forceUpdate = function (n) { this.__v && (this.__g |= 4, n && this.__h.push(n), j(this)); }, x.prototype.render = M, i = [], f = 0, e = function (n, t) { return n.__v.__b - t.__v.__b; }, o = Symbol(), l = /(PointerCapture)$|Capture$/i, c = 0, a = {}, s = 0;\n//# sourceMappingURL=preact.mjs.map\n\n},\"preact/hooks\":function(module,exports,require,__h,__Fragment){\n\"use strict\";\nObject.defineProperty(exports, \"__esModule\", { value: true });\nexports.useCallback = b;\nexports.useContext = j;\nexports.useDebugValue = x;\nexports.useEffect = A;\nexports.useErrorBoundary = O;\nexports.useId = P;\nexports.useImperativeHandle = q;\nexports.useLayoutEffect = F;\nexports.useMemo = w;\nexports.useReducer = _;\nexports.useRef = T;\nexports.useState = d;\nconst preact_1 = require(\"preact\");\nvar t, r, u, i, o = Object.is, f = 0, c = [], e = [], a = preact_1.options, v = a.__b, l = a.__r, m = a.diffed, h = a.__c, s = a.unmount, p = a.__;\nfunction y(n, t) { a.__h && a.__h(r, n, f || t), f = 0; var u = r.__H || (r.__H = { __: [], __h: [] }); return n >= u.__.length && u.__.push({}), u.__[n]; }\nfunction d(n) { return f = 1, _(G, n); }\nfunction _(n, u, i) { var f = y(t++, 2); if (f.t = n, !f.__c && (f.__ = [i ? i(u) : G(void 0, u), function (n) { var t = f.__N ? f.__N[0] : f.__[0], r = f.t(t, n); o(t, r) || (f.__N = [r, f.__[1]], f.__c.setState({})); }], f.__c = r, !r.__f)) {\n    r.__f = !0;\n    var c = r.shouldComponentUpdate;\n    r.shouldComponentUpdate = function (n, t, r) { var u = this.__H; if (!u)\n        return !0; var i = !1, f = this.props != n; if (u.__.some(function (n) { n.__N && (i = !0, o(n.__[0], n.__N[0]) || (f = !0)); }), c) {\n        var e = c.call(this, n, t, r);\n        return i ? e || f : e;\n    } return !i || f; };\n} return f.__; }\nfunction A(n, u) { var i = y(t++, 3); !a.__s && E(i.__H, u) && (i.__P = !0, i.__ = n, i.u = u, r.__H.__h.push(i)); }\nfunction F(n, u) { var i = y(t++, 4); !a.__s && E(i.__H, u) && (i.__P = !1, i.__ = n, i.u = u, r.__h.push(i)); }\nfunction T(n) { return f = 5, w(function () { return { current: n }; }, []); }\nfunction q(n, t, r) { f = 6, F(function () { if (\"function\" == typeof n) {\n    var r = n(t());\n    return function () { n(null), r && \"function\" == typeof r && r(); };\n} if (n)\n    return n.current = t(), function () { return n.current = null; }; }, null == r ? r : r.concat(n)); }\nfunction w(n, r) { var u = y(t++, 7); return E(u.__H, r) && (u.__ = n(), u.__H = r), u.__; }\nfunction b(n, t) { return f = 8, w(function () { return n; }, t); }\nfunction j(n) { var u = r.context[n.__c], i = y(t++, 9); return i.c = n, u ? (null == i.__ && (i.__ = !0, u.sub(r)), u.props.value) : n.__; }\nfunction x(n, t) { a.useDebugValue && a.useDebugValue(t ? t(n) : n); }\nfunction O(n) { var u = y(t++, 10), i = d(); return u.__ = n, r.componentDidCatch || (r.componentDidCatch = function (n, t) { u.__ && u.__(n, t), i[1](n); }), [i[0], function () { i[1](void 0); }]; }\nfunction P() { var n = y(t++, 11); if (!n.__) {\n    for (var u = r.__v; !u.__m && u.__;)\n        u = u.__;\n    var i = u.__m || (u.__m = [0, 0]);\n    n.__ = \"P\" + i[0] + \"-\" + i[1]++;\n} return n.__; }\nfunction g() { var n; do {\n    for (; n = e.shift();)\n        try {\n            C(n);\n        }\n        catch (t) {\n            a.__e(t, { __: (n = n.__P) && n.__v });\n        }\n    for (; n = c.shift();) {\n        var t = n.__H;\n        if (n.__P && t)\n            try {\n                t.__h.some(C), t.__h.some(D), t.__h = [];\n            }\n            catch (r) {\n                t.__h = [], a.__e(r, n.__v);\n            }\n    }\n} while (e.length); }\na.__b = function (n) { r = null, v && v(n); }, a.__ = function (n, t) { n && t.__k && t.__k.__m && (n.__m = t.__k.__m), p && p(n, t); }, a.__r = function (n) { l && l(n), t = 0; var i = (r = n.__c).__H; i && (u == r ? r.__h = [] : (i.__h.some(C), i.__h.some(D), t = 0), i.__h = [], i.__.some(function (n) { n.__N && (n.__ = n.__N), n.u = n.__N = void 0; })), u = r; }, a.diffed = function (n) { m && m(n); var t = n.__c; t && t.__H && (t.__H.__h.length && B(c.push(t)), t.__H.__.some(function (n) { n.u && (n.__H = n.u); })), u = r = null; }, a.__c = function (n, t) { t.some(function (n) { try {\n    n.__h.some(C), n.__h = n.__h.filter(function (n) { return !n.__ || D(n); });\n}\ncatch (t) {\n    n.__h = [function () { throw t; }];\n} }), h && h(n, t); }, a.unmount = function (n) { s && s(n); var t, r, u = n.__c; u && u.__H && (u.__H.__.some(function (u) { try {\n    if (u.__P && u.__c) {\n        if (void 0 === r) {\n            for (r = n.__; r && (!r.__c || !r.__c.__P);)\n                r = r.__;\n            r = r && r.__c;\n        }\n        u.__P = r, B(e.push(u));\n    }\n    else\n        C(u);\n}\ncatch (n) {\n    t = n;\n} }), u.__H = void 0, t && a.__e(t, u.__v)); };\nvar k = \"function\" == typeof requestAnimationFrame;\nfunction z(n) { var t, r = function () { clearTimeout(u), k && cancelAnimationFrame(t), setTimeout(n); }, u = setTimeout(r, 35); k && (t = requestAnimationFrame(r)); }\nfunction B(n) { 1 != n && i == a.requestAnimationFrame || ((i = a.requestAnimationFrame) || z)(g); }\nfunction C(n) { var t = r, u = n.__c; \"function\" == typeof u && (n.__c = void 0, u()), r = t; }\nfunction D(n) { var t = r; n.__c = n.__(), r = t; }\nfunction E(n, t) { return !n || n.length != t.length || t.some(function (t, r) { return !o(t, n[r]); }); }\nfunction G(n, t) { return \"function\" == typeof t ? t(n) : t; }\n//# sourceMappingURL=hooks.mjs.map\n\n},\"main.tsx\":function(module,exports,require,__h,__Fragment){\n\"use strict\";\nObject.defineProperty(exports, \"__esModule\", { value: true });\nexports.default = start;\nconst ui_1 = require(\"@helia/ui\");\nfunction start() { return (0, ui_1.registerPanel)({ id: 'status', title: 'Status', component: () => __h(\"span\", null, \"Ready\") }); }\n\n}",
+									"dependencies": {
+										"preact": {},
+										"preact/hooks": {},
+										"main.tsx": {
+											"@helia/ui": "@helia/ui"
+										}
+									}
+								}
+							},
+							"settings": {
+								"description": "Instructions",
+								"firstMessage": "",
+								"authorNote": ""
+							}
+						}
+					}
+				],
+				"deleteSessions": []
+			}
+		],
+		"snapshotId": "18d09da68d047cd5deb6bdac4bb59055669153730907cb5d745a250d8dadf147"
+	},
+	{
+		"name": "code project",
+		"install": {
+			"kind": "install",
+			"gameId": "12345678-1234-4234-8234-123456789abc",
+			"sessionId": "12345678-1234-4234-8234-123456789abd",
+			"packageFormatVersion": 1,
+			"release": {
+				"originalGameId": "12345678-1234-4234-8234-123456789abc",
+				"contentVersion": "1.0.0",
+				"contentHash": "e1dfb2ec1f2dd39341a25276e8bb73f5bec6fcaef2c9846178b4ac7d04053da3",
+				"createdAt": "2026-11-23T00:00:00.000Z",
+				"content": {
+					"title": "Adventure",
+					"genre": "Fantasy",
+					"description": "Public",
+					"settings": {
+						"description": "Instructions",
+						"firstMessage": "",
+						"authorNote": ""
+					},
+					"schema": {
+						"type": "object",
+						"properties": {},
+						"additionalProperties": false
+					},
+					"initialState": {},
+					"regex": [],
+					"resources": {},
+					"code": {
+						"version": 1,
+						"entry": "main.ts",
+						"files": {
+							"logic/part-1.ts": {
+								"language": "typescript",
+								"source": "'use logic';\nhelia.defineAction({name:'probe',run({state}) {return state;}});\n"
+							},
+							"ui/main.tsx": {
+								"language": "tsx",
+								"source": "'use ui';\nimport { registerPanel } from '@helia/ui'; export default function start(){return registerPanel({id:'status',title:'Status',component:()=> <span>Ready</span>});}"
+							},
+							"ui/start-entry.ts": {
+								"language": "typescript",
+								"source": "'use ui';\nimport * as entry from './main.tsx';\nimport { onDispose } from '@helia/ui';\nconst initialize: unknown = Reflect.get(entry, 'default');\nif (typeof initialize === 'function') {\n const dispose = initialize(helia);\n if (typeof dispose === 'function') onDispose(dispose);\n}\n"
+							},
+							"main.ts": {
+								"language": "typescript",
+								"source": "import './logic/part-1.ts';\nimport './ui/start-entry.ts';\n"
+							},
+							"style.css": {
+								"language": "css",
+								"source": ""
+							}
+						},
+						"presentation": {}
+					}
+				}
+			}
+		},
+		"commits": [
+			{
+				"kind": "commit",
+				"gameId": "12345678-1234-4234-8234-123456789abc",
+				"version": 0,
+				"records": [
+					{
+						"table": "snapshots",
+						"id": "58682d47406f5b85b1fa21c17f398d076207e20f521d555f6ac7f049a112012d",
+						"gameId": "12345678-1234-4234-8234-123456789abc",
+						"sessionId": null,
+						"value": {
+							"schemaVersion": 1,
+							"id": "58682d47406f5b85b1fa21c17f398d076207e20f521d555f6ac7f049a112012d",
+							"gameId": "12345678-1234-4234-8234-123456789abc",
+							"createdAt": "2026-11-24T00:00:00.000Z",
+							"schema": {
+								"type": "object",
+								"properties": {},
+								"additionalProperties": false
+							},
+							"initialState": {},
+							"scripts": {},
+							"settings": {
+								"description": "Instructions",
+								"firstMessage": "",
+								"authorNote": ""
+							}
+						}
+					},
+					{
+						"table": "progress",
+						"id": "12345678-1234-4234-8234-123456789abd",
+						"gameId": "12345678-1234-4234-8234-123456789abc",
+						"sessionId": "12345678-1234-4234-8234-123456789abd",
+						"value": {
+							"schemaVersion": 2,
+							"sessionId": "12345678-1234-4234-8234-123456789abd",
+							"gameId": "12345678-1234-4234-8234-123456789abc",
+							"snapshotId": "58682d47406f5b85b1fa21c17f398d076207e20f521d555f6ac7f049a112012d",
+							"headId": null,
+							"revision": 0,
+							"state": {}
+						}
+					}
+				],
+				"deleteSessions": []
+			},
+			{
+				"kind": "commit",
+				"gameId": "12345678-1234-4234-8234-123456789abc",
+				"version": 1,
+				"records": [
+					{
+						"table": "progress",
+						"id": "12345678-1234-4234-8234-123456789abd",
+						"gameId": "12345678-1234-4234-8234-123456789abc",
+						"sessionId": "12345678-1234-4234-8234-123456789abd",
+						"value": {
+							"schemaVersion": 2,
+							"sessionId": "12345678-1234-4234-8234-123456789abd",
+							"gameId": "12345678-1234-4234-8234-123456789abc",
+							"snapshotId": "834a4489dfab1bd0c0a50ed586b092a7c8285ce0c5d133ffc0c902119463530d",
+							"headId": null,
+							"revision": 1,
+							"state": {}
+						}
+					},
+					{
+						"table": "snapshots",
+						"id": "834a4489dfab1bd0c0a50ed586b092a7c8285ce0c5d133ffc0c902119463530d",
+						"gameId": "12345678-1234-4234-8234-123456789abc",
+						"sessionId": null,
+						"value": {
+							"schemaVersion": 1,
+							"id": "834a4489dfab1bd0c0a50ed586b092a7c8285ce0c5d133ffc0c902119463530d",
+							"gameId": "12345678-1234-4234-8234-123456789abc",
+							"createdAt": "2026-11-24T00:00:00.000Z",
+							"schema": {
+								"type": "object",
+								"properties": {},
+								"additionalProperties": false
+							},
+							"initialState": {},
+							"scripts": {
+								"project": {
+									"language": "typescript",
+									"source": "(function(factories,deps,entry){const cache=Object.create(null);function load(id){if(Object.hasOwn(cache,id))return cache[id].exports;const module={exports:{}};cache[id]=module;factories[id](module,module.exports,function(name){const target=deps[id][name];if(!target)throw Error('Unknown module');return load(target);});return module.exports;}const entryModule=load(entry);})({\"main.ts\":function(module,exports,require){\n\"use strict\";\nObject.defineProperty(exports, \"__esModule\", { value: true });\nrequire(\"./logic/part-1.ts\");\n\n},\"logic/part-1.ts\":function(module,exports,require){\n\"use strict\";\n'use logic';\nhelia.defineAction({ name: 'probe', run({ state }) { return state; } });\n\n}},{\"main.ts\":{\"./logic/part-1.ts\":\"logic/part-1.ts\"},\"logic/part-1.ts\":{}},\"main.ts\");",
+									"compiled": "\"use strict\";\n(function (factories, deps, entry) { const cache = Object.create(null); function load(id) { if (Object.hasOwn(cache, id))\n    return cache[id].exports; const module = { exports: {} }; cache[id] = module; factories[id](module, module.exports, function (name) { const target = deps[id][name]; if (!target)\n    throw Error('Unknown module'); return load(target); }); return module.exports; } const entryModule = load(entry); })({ \"main.ts\": function (module, exports, require) {\n        \"use strict\";\n        Object.defineProperty(exports, \"__esModule\", { value: true });\n        require(\"./logic/part-1.ts\");\n    }, \"logic/part-1.ts\": function (module, exports, require) {\n        \"use strict\";\n        'use logic';\n        helia.defineAction({ name: 'probe', run({ state }) { return state; } });\n    } }, { \"main.ts\": { \"./logic/part-1.ts\": \"logic/part-1.ts\" }, \"logic/part-1.ts\": {} }, \"main.ts\");\n",
+									"compiledFor": "304cb9f38b8a992db29829126c577e2dfa3639c049a8d4f58c98963913eecc8f"
+								}
+							},
+							"ui": {
+								"version": 1,
+								"entry": "helia-ui-entry.ts",
+								"modules": {
+									"ui/start-entry.ts": {
+										"language": "typescript",
+										"source": "'use ui';\nimport * as entry from './main.tsx';\nimport { onDispose } from '@helia/ui';\nconst initialize: unknown = Reflect.get(entry, 'default');\nif (typeof initialize === 'function') {\n const dispose = initialize(helia);\n if (typeof dispose === 'function') onDispose(dispose);\n}\n"
+									},
+									"ui/main.tsx": {
+										"language": "tsx",
+										"source": "'use ui';\nimport { registerPanel } from '@helia/ui'; export default function start(){return registerPanel({id:'status',title:'Status',component:()=> <span>Ready</span>});}"
+									},
+									"helia-ui-entry.ts": {
+										"language": "typescript",
+										"source": "import './ui/start-entry.ts';"
+									}
+								},
+								"compiled": {
+									"version": 1,
+									"sourceHash": "6b6b27531f1edde66b4ff9240aa4189524d528fd7cbf4d9dfdb5fc4ff7309407",
+									"entry": "helia-ui-entry.ts",
+									"factories": "\"preact\":function(module,exports,require,__h,__Fragment){\n\"use strict\";\nObject.defineProperty(exports, \"__esModule\", { value: true });\nexports.options = exports.isValidElement = void 0;\nexports.Component = x;\nexports.Fragment = M;\nexports.cloneElement = b;\nexports.createContext = R;\nexports.createElement = k;\nexports.h = k;\nexports.createPortal = W;\nexports.createRef = $;\nexports.hydrate = Q;\nexports.render = K;\nexports.toChildArray = A;\nvar n, t, r, i, u, f, e, o, l, c, a, s, h = Symbol.for(\"pv\"), p = {}, v = [], y = /^m(i|n|o|s|text|space)$/, w = Array.isArray, d = v.slice, _ = Object.assign;\nfunction g(n) { n && n.parentNode && n.remove(); }\nfunction k(n, t, r) { var i, u, f, e = {}, o = arguments.length; for (f in t)\n    \"key\" == f ? i = t[f] : \"ref\" == f && \"function\" != typeof n ? u = t[f] : e[f] = t[f]; return o > 2 && (e.children = o > 3 ? d.call(arguments, 2) : r), m(n, e, i, u, null); }\nfunction b(n, t, r) { var i, u, f, e = _({}, n.props), o = arguments.length; for (f in t)\n    \"key\" == f ? i = t[f] : \"ref\" == f && \"function\" != typeof n.type ? u = t[f] : e[f] = t[f]; return o > 2 && (e.children = o > 3 ? d.call(arguments, 2) : r), m(n.type, e, void 0 !== i ? i : n.key, void 0 !== u ? u : n.ref, null); }\nfunction m(r, i, u, f, e) { var o = { type: r, props: i, key: u, ref: f, __k: null, __: null, __b: 0, __e: null, __c: null, constructor: h, __v: e || ++t, __i: -1, __u: 0 }; return !e && n.vnode && n.vnode(o), o; }\nfunction $() { return { current: null }; }\nfunction M(n) { return n.children; }\nfunction x(n, t) { this.props = n, this.context = t, this.__g = 0; }\nfunction S(n, t) { if (null == t)\n    return n.__ && S(n.__, n.__i + 1); for (var r; t < n.__k.length; t++)\n    if ((r = n.__k[t]) && r.__e)\n        return r.__e; return \"function\" != typeof n.type || n.props.__P ? null : S(n); }\nfunction C(n) { if ((n = n.__) && n.__c && !n.props.__P)\n    return n.__e = null, n.__k.some(function (t) { return t && (n.__e = t.__e); }), C(n); }\nfunction j(t) { (8 & t.__g || (t.__g |= 8, i.push(t), f++)) && u == n.debounceRendering || ((u = n.debounceRendering) || queueMicrotask)(L); }\nfunction L() { var t, r, o, l, c, a, s, p, v; try {\n    for (r = 1; i.length;)\n        i.length > r && i.sort(e), t = i.shift(), r = i.length, 8 & t.__g && (l = void 0, c = void 0, a = (c = (o = t).__v).__e, s = [], p = [], (v = o.__P) && ((l = _({ constructor: h }, c)).__v = c.__v + 1, n.vnode && n.vnode(l), V(v, l, c, o.__n, v.namespaceURI, 32 & c.__u ? [a] : null, s, a || S(c), 32 & c.__u, p), l.__v = c.__v, l.__.__k[l.__i] = l, D(s, l, p), c.__ = c.__e = null, l.__e != a && C(l)));\n}\nfinally {\n    (f = i.length) && (u || queueMicrotask)(L);\n} }\nfunction H(n, t, r, i, u, f, e, o, l, c, a) { var s, h, y, w, d, _, g = i.__k || v, k = t.length; for (l = I(r, t, g, l, k), s = 0; s < k; s++)\n    null != (y = r.__k[s]) && (h = ~y.__i && g[y.__i] || p, y.__i = s, _ = V(n, y, h, u, f, e, o, l, c, a), w = y.__e, (h.ref != y.ref || 8 & h.__u) && (h.ref && F(h.ref, null, y, h), y.ref && a.push(y.ref, y.__c || w, y)), d = d || w, 4 & y.__u ? (l = q(y, l, n, !h.__v), h.__e && (h.__e = null)) : \"function\" == typeof y.type && void 0 !== _ ? l = _ : w && (l = w.nextSibling), y.__u &= -21); return r.__e = d, l; }\nfunction I(n, t, r, i, u) { var f, e, o, l, c, a, s, p, v, y = r.length, d = y, _ = 0, g = 0, k = n.__k = Array(u); for (f = 0; f < u; f++)\n    null != (e = t[f]) && \"boolean\" != typeof e && \"function\" != typeof e ? (\"object\" != typeof e || e.constructor === String ? e = k[f] = m(null, e) : w(e) ? e = k[f] = m(M, { children: e }) : e.constructor === h && e.__b ? e = k[f] = m(e.type, e.props, e.key, e.ref, e.__v) : k[f] = e, l = f + _, e.__ = n, e.__b = n.__b + 1, o = null, ~(c = e.__i = O(e, r, l, d)) && (d--, (o = r[c]) && (o.__u |= 2)), o && o.__v ? (e.__u |= 16, c == l - 1 ? _-- : c == l + 1 ? _++ : c != l && (c > l ? _-- : _++, g = 1)) : (~c || (u > y ? _-- : u < y && _++), \"function\" != typeof e.type && (e.__u |= 4))) : k[f] = null; if (g) {\n    for (a = [], s = [], f = 0; f < u; f++)\n        if ((e = k[f]) && 16 & e.__u) {\n            for (_ = 0, p = a.length; _ < p;)\n                a[v = _ + p >> 1] < e.__i ? _ = v + 1 : p = v;\n            a[_] = e.__i, s[f] = _ + 1;\n        }\n    for (_ = a.length; f--;)\n        s[f] && (s[f] == _ ? _-- : k[f].__u |= 4);\n} if (d)\n    for (f = 0; f < y; f++)\n        !(o = r[f]) || 2 & o.__u || (o.__e == i && (i = S(o)), G(o, o)); return i; }\nfunction q(n, t, r, i) { var u, f, e, o; if (\"function\" == typeof n.type) {\n    if (n.props.__P)\n        return t;\n    if (u = n.__k)\n        for (f = 0; f < u.length; f++)\n            u[f] && (u[f].__ = n, t = q(u[f], t, r, !1));\n    return t;\n} for (t && !t.parentNode && (t = S(n)) && !t.parentNode && (t = null), e = n.__e, o = t; o && 8 == o.nodeType;)\n    o = o.nextSibling; for (e != o && (!i && r.moveBefore && e.parentNode ? r.moveBefore(e, t) : r.insertBefore(e, t || null)), t = e; (t = t && t.nextSibling) && 8 == t.nodeType && !t.data.startsWith(\"$s\");)\n    ; return t; }\nfunction A(n, t) { return t = t || [], null != n && \"boolean\" != typeof n && (w(n) ? n.some(function (n) { A(n, t); }) : t.push(n)), t; }\nfunction O(n, t, r, i) { var u, f = n.key, e = n.type, o = t[r], l = o && !(2 & o.__u); if (null === o && null == f || l && f == o.key && e == o.type)\n    return r; if (i > (l ? 1 : 0)) {\n    for (u = r - 1; u >= 0; u--)\n        if ((o = t[u]) && !(2 & o.__u) && f == o.key && e == o.type)\n            return u;\n    for (u = r + 1; u < t.length; u++)\n        if ((o = t[u]) && !(2 & o.__u) && f == o.key && e == o.type)\n            return u;\n} return -1; }\nfunction P(n, t, r) { null == r && (r = \"\"), \"-\" == t[0] ? n.setProperty(t, r) : n[t] = r; }\nfunction T(n, t, r, i, u) { var f, e; if (\"style\" == t)\n    if (\"string\" == typeof r)\n        n.style.cssText = r;\n    else {\n        if (\"string\" == typeof i && (n.style.cssText = i = \"\"), i)\n            for (t in i)\n                r && t in r || P(n.style, t);\n        if (r)\n            for (t in r)\n                i && r[t] == i[t] || P(n.style, t, r[t]);\n    }\nelse if (\"o\" == t[0] && \"n\" == t[1])\n    (n.__e || (n.__e = {}))[t] = r, r && i || (e = a[t] || (a[t] = N(t)), (n.__a || (n.__a = {}))[t] = c, f = t != (t = t.replace(l, \"$1\")), (t = t.slice(2))[0] < \"a\" && (t = t.toLowerCase()), r ? n.addEventListener(t, e, f) : n.removeEventListener(t, e, f));\nelse {\n    if (\"http://www.w3.org/2000/svg\" == u)\n        t = t.replace(/xlink(H|:h)/, \"h\").replace(/sName$/, \"s\");\n    else if (\"width\" != t && \"height\" != t && \"href\" != t && \"list\" != t && \"form\" != t && \"tabIndex\" != t && \"download\" != t && \"rowSpan\" != t && \"colSpan\" != t && \"role\" != t && \"popover\" != t && t in n)\n        try {\n            return void (n[t] = null == r ? \"\" : r);\n        }\n        catch (n) { }\n    if (\"function\" == typeof r)\n        return;\n    null == r || !1 === r && \"-\" != t[4] ? n.removeAttribute(t) : n.setAttribute(t, \"popover\" == t && 1 == r ? \"\" : r);\n} }\nfunction N(t) { return function (r) { var i = this.__e; if (i) {\n    if (i = i[t], null == r[o])\n        r[o] = c++;\n    else if (r[o] < this.__a[t])\n        return;\n    return i(n.event ? n.event(r) : r);\n} }; }\nfunction V(t, r, i, u, f, e, o, l, c, a) { var s, p, y, d, k, b, m, $, C, j, L, I, q, A, O, P, T, N, V = r.type; if (r.constructor !== h)\n    return null; 128 & i.__u && (c = 32 & i.__u, s = i.__c.__z) && (r.__u |= c, p = e = [], 8 == s.nodeType ? l = z(s, e) : e.push(s), l = e[0] || l), (s = n.__b) && s(r); n: if (\"function\" == typeof V) {\n    y = o.length;\n    try {\n        if ($ = r.props, C = (s = V.prototype) && s.render, j = (s = V.contextType) && u[s.__c], L = s ? j ? j.props.value : s.__ : u, (d = i.__c) ? (r.__c = d, 2 & d.__g && (d.__g |= 1)) : (C ? r.__c = d = new V($, L) : (r.__c = d = new x($, L), d.constructor = V, d.render = J), j && j.sub(d), d.state || (d.state = {}), d.__n = u, d.__g |= 8, d.__h = [], d.__k = []), C && (d.__s || (d.__s = d.state), V.getDerivedStateFromProps && (d.__s == d.state && (d.__s = _({}, d.__s)), _(d.__s, V.getDerivedStateFromProps($, d.__s)))), k = d.props, b = d.state, d.__v = r, i.__c) {\n            if ($ !== k && C && !V.getDerivedStateFromProps && d.componentWillReceiveProps && d.componentWillReceiveProps($, L), r.__v == i.__v && !(8 & d.__g) || !(4 & d.__g) && d.shouldComponentUpdate && !1 === d.shouldComponentUpdate($, d.__s, L)) {\n                r.__v != i.__v && (d.props = $, d.state = d.__s, d.__g &= -9), r.__e = i.__e, r.__k = i.__k, r.__k.some(function (n) { n && (n.__ = r); }), v.push.apply(d.__h, d.__k), d.__k = [], d.__h.length && o.push(d), l = S(i);\n                break n;\n            }\n            d.componentWillUpdate && d.componentWillUpdate($, d.__s, L), C && d.componentDidUpdate && d.__h.push(function () { d.componentDidUpdate(k, b, m); });\n        }\n        else\n            C && !V.getDerivedStateFromProps && d.componentWillMount && d.componentWillMount(), C && d.componentDidMount && d.__h.push(d.componentDidMount);\n        if (d.context = L, d.props = $, d.__P = t, d.__g &= -5, I = n.__r, q = 0, C)\n            d.state = d.__s, d.__g &= -9, I && I(r), s = d.render(d.props, d.state, d.context), v.push.apply(d.__h, d.__k), d.__k = [];\n        else\n            do {\n                d.__g &= -9, I && I(r), s = d.render(d.props, d.state, d.context), d.state = d.__s;\n            } while (8 & d.__g && ++q < 25);\n        d.state = d.__s, d.getChildContext && (u = _({}, u, d.getChildContext())), C && i.__c && d.getSnapshotBeforeUpdate && (m = d.getSnapshotBeforeUpdate(k, b)), A = s && s.type === M && null == s.key ? s.props.children : s, $.__P && (s = l, f = (t = $.__P).namespaceURI, c = e = null, i.props && i.props.__P != t && (i.__k.some(function (n) { n && G(n, n); }), i.__k = null), l = i.__k ? S(i, 0) : null), l = H(t, w(A) ? A : [A], r, i, u, f, e, o, l, c, a), $.__P && (r.__e = null, l = s), r.__u &= -161, p && p.some(g), d.__h.length && o.push(d), 1 & d.__g && (d.__g &= -4);\n    }\n    catch (t) {\n        if (o.length = y, r.__v = null, c || e)\n            if (t.then) {\n                if (O = 0, r.__u |= 128 | c, e) {\n                    for (~(T = e.indexOf(l || void 0)) || (T = e.length); (N = e[T - 1]) && 8 == N.nodeType;)\n                        T--;\n                    for (; T < e.length; T++)\n                        if (N = e[T])\n                            if (e[T] = null, 8 == N.nodeType) {\n                                if (N.data.startsWith(\"$s\"))\n                                    O++ || (P = N);\n                                else if (O && N.data.startsWith(\"/$s\") && !--O)\n                                    break;\n                            }\n                            else if (!O)\n                                break;\n                }\n                if (!P) {\n                    for (; l && 8 == l.nodeType && l.nextSibling;)\n                        l = l.nextSibling;\n                    P = l;\n                }\n                (s = z(P = r.__c.__z || (r.__c.__z = P))) ? (r.__e = P, l = s) : r.__e = l, l = l && l.nextSibling;\n            }\n            else\n                e && e.some(g);\n        else\n            r.__e = i.__e;\n        r.__k || (r.__k = i.__k || []), t.then || B(r), n.__e(t, r, i);\n    }\n}\nelse\n    l = r.__e = E(i.__e, r, i, u, f, e, o, c, a, t); return (s = n.diffed) && s(r), l; }\nfunction z(n, t) { if (n && 8 == n.nodeType && n.data.startsWith(\"$s\"))\n    for (var r = 1; n = n.nextSibling;) {\n        if (8 == n.nodeType)\n            if (n.data.startsWith(\"$s\"))\n                r++;\n            else if (n.data.startsWith(\"/$s\") && !--r)\n                return n;\n        t && t.push(n);\n    } }\nfunction B(n) { n && (n.__c && (n.__c.__g |= 4), n.__k && n.__k.some(B)); }\nfunction D(t, r, i) { for (var u = 0; u < i.length;)\n    F(i[u++], i[u++], i[u++]); n.__c && n.__c(r, t), t.some(function (r) { try {\n    t = r.__h, r.__h = [], t.some(function (n) { n.call(r); });\n}\ncatch (t) {\n    n.__e(t, r.__v);\n} }); }\nfunction E(t, r, i, u, f, e, o, l, c, a) { var s, h, v, _, k, b, m, $, M, x = i.props || p, C = r.props, j = r.type; if (\"svg\" == j ? f = \"http://www.w3.org/2000/svg\" : \"math\" == j ? f = \"http://www.w3.org/1998/Math/MathML\" : f || (f = \"http://www.w3.org/1999/xhtml\"), e)\n    for (s = 0; s < e.length; s++)\n        if ((k = e[s]) && (j ? k.localName == j : 3 == k.nodeType)) {\n            t = k, e[s] = null;\n            break;\n        } if (!t) {\n    if ($ = a.ownerDocument || document, !j)\n        return $.createTextNode(C);\n    t = $.createElementNS(f, j, C.is && C), l && (n.__m && n.__m(r, e), l = !1), e = null;\n} if (j) {\n    if (a = \"template\" == j && t.content || t, e = \"textarea\" == j && null != C.defaultValue ? null : e && d.call(a.childNodes), !l && e)\n        for (x = {}, s = 0; s < t.attributes.length; s++)\n            x[(k = t.attributes[s]).name] = k.value;\n    for (s in x)\n        k = x[s], \"dangerouslySetInnerHTML\" == s ? v = k : \"children\" == s || s in C || \"value\" == s && \"defaultValue\" in C || \"checked\" == s && \"defaultChecked\" in C || T(t, s, null, k, f);\n    for (s in M = 1 & i.__u, C)\n        k = C[s], \"children\" == s ? _ = k : \"dangerouslySetInnerHTML\" == s ? h = k : \"value\" == s ? b = k : \"checked\" == s ? m = k : l && \"function\" != typeof k || !(x[s] !== k || M && null != k) || T(t, s, k, x[s], f);\n    h ? (l || v && (h.__html == v.__html || h.__html == t.innerHTML) || (t.innerHTML = h.__html), r.__k = []) : (v && (t.textContent = \"\"), (\"foreignObject\" == j || \"http://www.w3.org/1998/Math/MathML\" == f && y.test(j)) && (f = \"http://www.w3.org/1999/xhtml\"), H(a, w(_) ? _ : [_], r, i, u, f, e, o, e ? e[0] : i.__k && S(i, 0), l, c), e && e.some(g)), l && \"textarea\" != j || (s = \"value\", \"progress\" == j && null == b ? t.removeAttribute(s) : null == b || b === t[s] && (\"progress\" != j || b) || T(t, s, b, x[s], f), s = \"checked\", null != m && m != t[s] && T(t, s, m, x[s], f));\n}\nelse\n    x === C || l && t.data == C || (t.data = C); return t; }\nfunction F(t, r, i, u) { try {\n    \"function\" == typeof t ? r ? r.__x = t(r) || 1 : u && (u = u.__c || u.__e) && (r = u.__x) && (u.__x = null, \"function\" == typeof r ? r() : t(null)) : t.current = r;\n}\ncatch (t) {\n    n.__e(t, i);\n} }\nfunction G(t, r, i) { var u, f, e, o; if (n.unmount && n.unmount(t), !(u = t.ref) || u.current && u.current != t.__e || F(u, null, r, t), u = t.__c) {\n    if (u.componentWillUnmount)\n        try {\n            u.componentWillUnmount();\n        }\n        catch (t) {\n            n.__e(t, r);\n        }\n    u.__P = u.__n = null;\n} if (u = t.__k)\n    for (o = 0; o < u.length; o++)\n        u[o] && G(u[o], r, \"function\" != typeof t.type || i && !t.props.__P); !i && (u = t.__c) && (u = u.__z) && (f = z(u, e = [])) && (u == t.__e && e.some(g), g(f), g(u)), (u = t.__e) && (i || g(u), u.__e && (u.__e = null)), t.__e = t.__c = t.__ = null; }\nfunction J(n, t, r) { return this.constructor(n, r); }\nfunction K(t, r) { var i, u, f, e; n.__ && n.__(t, r), 9 == r.nodeType && (r = r.documentElement), u = (i = t && 32 & t.__u) ? null : r.__k, r.__k = m(M, { children: [t] }), f = [], e = [], V(r, r.__k, u || p, p, r.namespaceURI, u ? null : r.firstChild ? d.call(r.childNodes) : null, f, u ? u.__e : r.firstChild, i, e), D(f, r.__k, e), r.__k.props.children = null; }\nfunction Q(n, t) { n && \"object\" == typeof n && (n.__u |= 32), K(n, t); }\nfunction R(n) { function t(n) { var r, i; return this.getChildContext || (r = new Set, (i = {})[t.__c] = this, this.getChildContext = function () { return i; }, this.shouldComponentUpdate = function (n) { this.props.value != n.value && r.forEach(function (n) { n.__g |= 4, j(n); }); }, this.sub = function (n) { r.add(n); var t = n.componentWillUnmount; n.componentWillUnmount = function () { r.delete(n), t && t.call(n); }; }), n.children; } return t.__c = \"__cC\" + s++, t.__ = n, t.Provider = (t.Consumer = function (n, t) { return n.children(t); }).contextType = t, t; }\nfunction U(n) { return n.children; }\nfunction W(n, t) { return m(U, { __P: t, children: n }); }\nexports.options = n = { __e: function (n, t, r, i) { for (var u, e, o; t = t.__;)\n        if ((u = t.__c) && !(1 & u.__g)) {\n            u.__g |= 4;\n            try {\n                if ((o = (e = u.constructor) && e.getDerivedStateFromError) && u.setState(e.getDerivedStateFromError(n)), u.componentDidCatch && (u.componentDidCatch(n, i || {}), o = 1), o && 8 & u.__g)\n                    return void (u.__g |= 2);\n            }\n            catch (t) {\n                n = t;\n            }\n        } throw f = 0, n; } }, t = 0, exports.isValidElement = r = function (n) { return null != n && n.constructor === h; }, x.prototype.setState = function (n, t) { var r = this.__s; r && r != this.state || (r = this.__s = _({}, this.state)), \"function\" == typeof n && (n = n(_({}, r), this.props)), n && (_(r, n), this.__v && (t && this.__k.push(t), j(this))); }, x.prototype.forceUpdate = function (n) { this.__v && (this.__g |= 4, n && this.__h.push(n), j(this)); }, x.prototype.render = M, i = [], f = 0, e = function (n, t) { return n.__v.__b - t.__v.__b; }, o = Symbol(), l = /(PointerCapture)$|Capture$/i, c = 0, a = {}, s = 0;\n//# sourceMappingURL=preact.mjs.map\n\n},\"preact/hooks\":function(module,exports,require,__h,__Fragment){\n\"use strict\";\nObject.defineProperty(exports, \"__esModule\", { value: true });\nexports.useCallback = b;\nexports.useContext = j;\nexports.useDebugValue = x;\nexports.useEffect = A;\nexports.useErrorBoundary = O;\nexports.useId = P;\nexports.useImperativeHandle = q;\nexports.useLayoutEffect = F;\nexports.useMemo = w;\nexports.useReducer = _;\nexports.useRef = T;\nexports.useState = d;\nconst preact_1 = require(\"preact\");\nvar t, r, u, i, o = Object.is, f = 0, c = [], e = [], a = preact_1.options, v = a.__b, l = a.__r, m = a.diffed, h = a.__c, s = a.unmount, p = a.__;\nfunction y(n, t) { a.__h && a.__h(r, n, f || t), f = 0; var u = r.__H || (r.__H = { __: [], __h: [] }); return n >= u.__.length && u.__.push({}), u.__[n]; }\nfunction d(n) { return f = 1, _(G, n); }\nfunction _(n, u, i) { var f = y(t++, 2); if (f.t = n, !f.__c && (f.__ = [i ? i(u) : G(void 0, u), function (n) { var t = f.__N ? f.__N[0] : f.__[0], r = f.t(t, n); o(t, r) || (f.__N = [r, f.__[1]], f.__c.setState({})); }], f.__c = r, !r.__f)) {\n    r.__f = !0;\n    var c = r.shouldComponentUpdate;\n    r.shouldComponentUpdate = function (n, t, r) { var u = this.__H; if (!u)\n        return !0; var i = !1, f = this.props != n; if (u.__.some(function (n) { n.__N && (i = !0, o(n.__[0], n.__N[0]) || (f = !0)); }), c) {\n        var e = c.call(this, n, t, r);\n        return i ? e || f : e;\n    } return !i || f; };\n} return f.__; }\nfunction A(n, u) { var i = y(t++, 3); !a.__s && E(i.__H, u) && (i.__P = !0, i.__ = n, i.u = u, r.__H.__h.push(i)); }\nfunction F(n, u) { var i = y(t++, 4); !a.__s && E(i.__H, u) && (i.__P = !1, i.__ = n, i.u = u, r.__h.push(i)); }\nfunction T(n) { return f = 5, w(function () { return { current: n }; }, []); }\nfunction q(n, t, r) { f = 6, F(function () { if (\"function\" == typeof n) {\n    var r = n(t());\n    return function () { n(null), r && \"function\" == typeof r && r(); };\n} if (n)\n    return n.current = t(), function () { return n.current = null; }; }, null == r ? r : r.concat(n)); }\nfunction w(n, r) { var u = y(t++, 7); return E(u.__H, r) && (u.__ = n(), u.__H = r), u.__; }\nfunction b(n, t) { return f = 8, w(function () { return n; }, t); }\nfunction j(n) { var u = r.context[n.__c], i = y(t++, 9); return i.c = n, u ? (null == i.__ && (i.__ = !0, u.sub(r)), u.props.value) : n.__; }\nfunction x(n, t) { a.useDebugValue && a.useDebugValue(t ? t(n) : n); }\nfunction O(n) { var u = y(t++, 10), i = d(); return u.__ = n, r.componentDidCatch || (r.componentDidCatch = function (n, t) { u.__ && u.__(n, t), i[1](n); }), [i[0], function () { i[1](void 0); }]; }\nfunction P() { var n = y(t++, 11); if (!n.__) {\n    for (var u = r.__v; !u.__m && u.__;)\n        u = u.__;\n    var i = u.__m || (u.__m = [0, 0]);\n    n.__ = \"P\" + i[0] + \"-\" + i[1]++;\n} return n.__; }\nfunction g() { var n; do {\n    for (; n = e.shift();)\n        try {\n            C(n);\n        }\n        catch (t) {\n            a.__e(t, { __: (n = n.__P) && n.__v });\n        }\n    for (; n = c.shift();) {\n        var t = n.__H;\n        if (n.__P && t)\n            try {\n                t.__h.some(C), t.__h.some(D), t.__h = [];\n            }\n            catch (r) {\n                t.__h = [], a.__e(r, n.__v);\n            }\n    }\n} while (e.length); }\na.__b = function (n) { r = null, v && v(n); }, a.__ = function (n, t) { n && t.__k && t.__k.__m && (n.__m = t.__k.__m), p && p(n, t); }, a.__r = function (n) { l && l(n), t = 0; var i = (r = n.__c).__H; i && (u == r ? r.__h = [] : (i.__h.some(C), i.__h.some(D), t = 0), i.__h = [], i.__.some(function (n) { n.__N && (n.__ = n.__N), n.u = n.__N = void 0; })), u = r; }, a.diffed = function (n) { m && m(n); var t = n.__c; t && t.__H && (t.__H.__h.length && B(c.push(t)), t.__H.__.some(function (n) { n.u && (n.__H = n.u); })), u = r = null; }, a.__c = function (n, t) { t.some(function (n) { try {\n    n.__h.some(C), n.__h = n.__h.filter(function (n) { return !n.__ || D(n); });\n}\ncatch (t) {\n    n.__h = [function () { throw t; }];\n} }), h && h(n, t); }, a.unmount = function (n) { s && s(n); var t, r, u = n.__c; u && u.__H && (u.__H.__.some(function (u) { try {\n    if (u.__P && u.__c) {\n        if (void 0 === r) {\n            for (r = n.__; r && (!r.__c || !r.__c.__P);)\n                r = r.__;\n            r = r && r.__c;\n        }\n        u.__P = r, B(e.push(u));\n    }\n    else\n        C(u);\n}\ncatch (n) {\n    t = n;\n} }), u.__H = void 0, t && a.__e(t, u.__v)); };\nvar k = \"function\" == typeof requestAnimationFrame;\nfunction z(n) { var t, r = function () { clearTimeout(u), k && cancelAnimationFrame(t), setTimeout(n); }, u = setTimeout(r, 35); k && (t = requestAnimationFrame(r)); }\nfunction B(n) { 1 != n && i == a.requestAnimationFrame || ((i = a.requestAnimationFrame) || z)(g); }\nfunction C(n) { var t = r, u = n.__c; \"function\" == typeof u && (n.__c = void 0, u()), r = t; }\nfunction D(n) { var t = r; n.__c = n.__(), r = t; }\nfunction E(n, t) { return !n || n.length != t.length || t.some(function (t, r) { return !o(t, n[r]); }); }\nfunction G(n, t) { return \"function\" == typeof t ? t(n) : t; }\n//# sourceMappingURL=hooks.mjs.map\n\n},\"ui/start-entry.ts\":function(module,exports,require,__h,__Fragment){\n\"use strict\";\n'use ui';\nvar __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {\n    if (k2 === undefined) k2 = k;\n    var desc = Object.getOwnPropertyDescriptor(m, k);\n    if (!desc || (\"get\" in desc ? !m.__esModule : desc.writable || desc.configurable)) {\n      desc = { enumerable: true, get: function() { return m[k]; } };\n    }\n    Object.defineProperty(o, k2, desc);\n}) : (function(o, m, k, k2) {\n    if (k2 === undefined) k2 = k;\n    o[k2] = m[k];\n}));\nvar __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {\n    Object.defineProperty(o, \"default\", { enumerable: true, value: v });\n}) : function(o, v) {\n    o[\"default\"] = v;\n});\nvar __importStar = (this && this.__importStar) || (function () {\n    var ownKeys = function(o) {\n        ownKeys = Object.getOwnPropertyNames || function (o) {\n            var ar = [];\n            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;\n            return ar;\n        };\n        return ownKeys(o);\n    };\n    return function (mod) {\n        if (mod && mod.__esModule) return mod;\n        var result = {};\n        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== \"default\") __createBinding(result, mod, k[i]);\n        __setModuleDefault(result, mod);\n        return result;\n    };\n})();\nObject.defineProperty(exports, \"__esModule\", { value: true });\nconst entry = __importStar(require(\"./main.tsx\"));\nconst ui_1 = require(\"@helia/ui\");\nconst initialize = Reflect.get(entry, 'default');\nif (typeof initialize === 'function') {\n    const dispose = initialize(helia);\n    if (typeof dispose === 'function')\n        (0, ui_1.onDispose)(dispose);\n}\n\n},\"ui/main.tsx\":function(module,exports,require,__h,__Fragment){\n\"use strict\";\n'use ui';\nObject.defineProperty(exports, \"__esModule\", { value: true });\nexports.default = start;\nconst ui_1 = require(\"@helia/ui\");\nfunction start() { return (0, ui_1.registerPanel)({ id: 'status', title: 'Status', component: () => __h(\"span\", null, \"Ready\") }); }\n\n},\"helia-ui-entry.ts\":function(module,exports,require,__h,__Fragment){\n\"use strict\";\nObject.defineProperty(exports, \"__esModule\", { value: true });\nrequire(\"./ui/start-entry.ts\");\n\n}",
+									"dependencies": {
+										"preact": {},
+										"preact/hooks": {},
+										"ui/start-entry.ts": {
+											"./main.tsx": "ui/main.tsx",
+											"@helia/ui": "@helia/ui"
+										},
+										"ui/main.tsx": {
+											"@helia/ui": "@helia/ui"
+										},
+										"helia-ui-entry.ts": {
+											"./ui/start-entry.ts": "ui/start-entry.ts"
+										}
+									}
+								},
+								"styles": ""
+							},
+							"settings": {
+								"description": "Instructions",
+								"firstMessage": "",
+								"authorNote": ""
+							}
+						}
+					}
+				],
+				"deleteSessions": []
+			}
+		],
+		"snapshotId": "834a4489dfab1bd0c0a50ed586b092a7c8285ce0c5d133ffc0c902119463530d"
+	}
+]

@@ -1,5 +1,6 @@
 import { json } from '@sveltejs/kit';
 
+import { GAME_EDIT_LOCKED } from '#lib/games/edit-lock.js';
 import { readEditorDraft } from '#lib/games/editor.js';
 import { editorDraftStorage } from '#lib/server/editor-drafts.js';
 import { serverStorage } from '#lib/server/sqlite.js';
@@ -41,14 +42,24 @@ export const PUT: RequestHandler = async ({ request, params, url }) => {
 			options
 		);
 	} catch (error) {
-		const conflict = error instanceof Error && error.message === 'EDITOR_DRAFT_CONFLICT';
-		return json(
-			{
-				error: conflict
-					? '다른 편집기에서 초안이 변경되었어요. 입력 내용을 보존한 뒤 초안을 다시 불러와주세요.'
-					: '편집 초안을 저장하지 못했어요.'
-			},
-			{ status: conflict ? 409 : 400, ...options }
-		);
+		return draftFailure(error);
 	}
 };
+
+function draftFailure(error: unknown): Response {
+	if (error instanceof Error && error.message === GAME_EDIT_LOCKED) {
+		return json(
+			{ error: GAME_EDIT_LOCKED, errorCode: GAME_EDIT_LOCKED },
+			{ status: 403, ...options }
+		);
+	}
+	const conflict = error instanceof Error && error.message === 'EDITOR_DRAFT_CONFLICT';
+	return json(
+		{
+			error: conflict
+				? '다른 편집기에서 초안이 변경되었어요. 입력 내용을 보존한 뒤 초안을 다시 불러와주세요.'
+				: '편집 초안을 저장하지 못했어요.'
+		},
+		{ status: conflict ? 409 : 400, ...options }
+	);
+}

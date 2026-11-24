@@ -28,6 +28,24 @@ const event = (body: unknown, origin = 'http://localhost') =>
 			body: typeof body === 'string' ? body : JSON.stringify(body)
 		})
 	}) as Parameters<typeof PUT>[0];
+
+it('returns the lock code for draft saves and clears without writing', async () => {
+	state
+		.storage!.connection.prepare(
+			"UPDATE games SET value=json_set(value,'$.editLock',json('true')) WHERE id=?"
+		)
+		.run(game.id);
+	for (const draft of [createEditorDraft(game), null]) {
+		const response = await PUT(event({ version: 0, draft }));
+		expect(response.status).toBe(403);
+		expect(await response.json()).toEqual({
+			error: 'GAME_EDIT_LOCKED',
+			errorCode: 'GAME_EDIT_LOCKED'
+		});
+	}
+	const response = await GET(event(null));
+	expect(await response.json()).toEqual({ version: 0, draft: null });
+});
 it('stores unfinished authoring JSON on the server with revisions and uncached reads', async () => {
 	const draft = createEditorDraft(game);
 	draft.documents.state = '{unfinished';

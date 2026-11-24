@@ -22,6 +22,7 @@ import { pruneRecords } from '#lib/storage/prune.js';
 import fileSchema from '#lib/storage/session-files.sql?raw';
 import { validateStoredHistory } from '#lib/storage/validate-history.js';
 
+import { unlockGame } from './game-edit-lock.js';
 import { installGame, installPreview, prepareInstall } from './game-install.js';
 import { gameReleases, initializeGameReleases, preserveOriginalGameId } from './game-releases.js';
 
@@ -348,6 +349,9 @@ class Storage {
 		return { version: command.kind === 'create' ? 0 : command.version + 1, records: [] };
 	}
 	private execute(command: StorageRequest): StorageReply {
+		if (command.kind === 'unlockGame') {
+			return unlockGame(this.connection, command.gameId);
+		}
 		if (command.kind === 'install') {
 			throw Error('Install requires requestAsync for authoritative verification');
 		}

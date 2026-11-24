@@ -4,6 +4,8 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { render } from 'vitest-browser-svelte';
 import { page, userEvent } from 'vitest/browser';
 
+import { storageRequest } from '#lib/storage/transport.js';
+
 import type { EditorDraft } from '../editor.js';
 
 import { loadAuthoringDraft, saveAuthoringDraft } from '../editor-draft-storage.js';
@@ -53,6 +55,70 @@ const nameInput = () => page.getByRole('textbox', { name: '이름', exact: true 
 const applyButton = () => page.getByRole('button', { name: '적용', exact: true });
 const returnLink = () => page.getByRole('link', { name: '플레이로 돌아가기' });
 const heightHandle = () => page.getByRole('slider', { name: '검사 패널 높이 조절' });
+
+it('shows the entry lock before recovering or saving drafts', async () => {
+	const game = await createGame();
+	await storageRequest({
+		kind: 'commit',
+		gameId: game.id,
+		version: 0,
+		records: [],
+		deleteSessions: [],
+		gamePatch: { set: { editLock: true }, remove: [] }
+	});
+	render(GameEditor, { gameId: game.id });
+	await expect.element(page.getByRole('region', { name: '편집 잠금', exact: true })).toBeVisible();
+	expect(loadAuthoringDraft).not.toHaveBeenCalled();
+	expect(saveAuthoringDraft).not.toHaveBeenCalled();
+	await expect.element(returnLink()).toBeVisible();
+});
+
+it('focuses the editor heading after unlocking and finishing draft recovery', async () => {
+	const game = await createGame();
+	const transport = vi.mocked(storageRequest).getMockImplementation()!;
+	await storageRequest({
+		kind: 'commit',
+		gameId: game.id,
+		version: 0,
+		records: [],
+		deleteSessions: [],
+		gamePatch: { set: { editLock: true }, remove: [] }
+	});
+	vi.mocked(storageRequest).mockImplementation(async (request) => {
+		if (request.kind === 'unlockGame') {
+			return transport({
+				kind: 'commit',
+				gameId: game.id,
+				version: 1,
+				records: [],
+				deleteSessions: [],
+				gamePatch: { set: { editLock: false }, remove: [] }
+			});
+		}
+		return transport(request);
+	});
+	let finishRecovery!: () => void;
+	vi.mocked(loadAuthoringDraft).mockImplementationOnce(
+		() =>
+			new Promise((resolve) => {
+				finishRecovery = () => resolve({ version: 0, draft: null });
+			})
+	);
+	render(GameEditor, { gameId: game.id });
+	await page.getByRole('button', { name: '편집 잠금 해제', exact: true }).click();
+	await page.getByRole('button', { name: '잠금 해제', exact: true }).click();
+	await expect.element(page.getByRole('status')).toHaveTextContent('게임을 불러오는 중');
+	await expect
+		.element(page.getByRole('heading', { name: '게임 편집기', exact: true }))
+		.not.toHaveFocus();
+	await expect.poll(() => typeof finishRecovery).toBe('function');
+	finishRecovery();
+	await expect.element(nameInput()).toBeVisible();
+	await expect
+		.element(page.getByRole('heading', { name: '게임 편집기', exact: true }))
+		.toHaveFocus();
+	vi.mocked(storageRequest).mockImplementation(transport);
+});
 
 it('opens regex as a dedicated chat document, restores its draft and applies it without changing session state', async () => {
 	const game = await createGame();

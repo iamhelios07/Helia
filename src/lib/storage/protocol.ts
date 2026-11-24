@@ -71,6 +71,7 @@ export interface GamePatch {
 }
 export type StorageRequest =
 	| InstallRequest
+	| { kind: 'unlockGame'; gameId: string }
 	| InstallPreviewRequest
 	| { kind: 'versioning'; gameId: string; action: 'read' }
 	| { kind: 'versioning'; gameId: string; action: 'getRelease'; releaseId: string }
@@ -268,6 +269,9 @@ export function parseRequest(value: unknown): StorageRequest {
 		return { kind: 'list', ...(input.includeTrashed === true ? { includeTrashed: true } : {}) };
 	}
 	const gameId = identifier(input.gameId);
+	if (input.kind === 'unlockGame') {
+		return { kind: 'unlockGame', gameId };
+	}
 	if (input.kind === 'versioning') {
 		return parseVersioningRequest(gameId, input);
 	}
