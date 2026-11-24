@@ -1,0 +1,17 @@
+[
+	{
+		"name": "lone surrogate keys and values",
+		"rawJson": "{\"kind\":\"install\",\"gameId\":\"12345678-1234-4234-8234-123456789abd\",\"sessionId\":\"12345678-1234-4234-8234-123456789abe\",\"packageFormatVersion\":1,\"release\":{\"originalGameId\":\"12345678-1234-4234-8234-123456789abc\",\"contentVersion\":\"1.0.0\",\"contentHash\":\"50a150a14a0c6150d56da464fe6c7d46f058bdc36d894dea24cb929f2da8b8ca\",\"createdAt\":\"2026-11-23T00:00:00.000Z\",\"content\":{\"title\":\"Adventure\",\"genre\":\"Fantasy\",\"description\":\"Public\",\"settings\":{\"description\":\"Instructions\",\"firstMessage\":\"Welcome\",\"authorNote\":\"\"},\"schema\":{\"type\":\"object\",\"properties\":{\"label\":{\"type\":\"string\"},\"tiny\":{\"type\":\"number\"},\"large\":{\"type\":\"number\"},\"😀\":{\"type\":\"number\"},\"\\ud800\":{\"type\":\"string\"},\"\":{\"type\":\"number\"}},\"additionalProperties\":false},\"initialState\":{\"label\":\"한글 é 🌌\",\"tiny\":1e-7,\"large\":9007199254740992,\"😀\":0,\"\\ud800\":\"\\udfff\",\"\":1e+21},\"regex\":[],\"resources\":{},\"scripts\":{}}}}",
+		"errorCode": "content"
+	},
+	{
+		"name": "lone surrogate key",
+		"rawJson": "{\"kind\":\"install\",\"gameId\":\"12345678-1234-4234-8234-123456789abd\",\"sessionId\":\"12345678-1234-4234-8234-123456789abe\",\"packageFormatVersion\":1,\"release\":{\"originalGameId\":\"12345678-1234-4234-8234-123456789abc\",\"contentVersion\":\"1.0.0\",\"contentHash\":\"a7552d931bd6f3f5c6764ab1eef72c3d403c9a480d43209c6c46ba27dfafba7e\",\"createdAt\":\"2026-11-23T00:00:00.000Z\",\"content\":{\"title\":\"Adventure\",\"genre\":\"Fantasy\",\"description\":\"Public\",\"settings\":{\"description\":\"Instructions\",\"firstMessage\":\"Welcome\",\"authorNote\":\"\"},\"schema\":{\"type\":\"object\",\"properties\":{},\"additionalProperties\":false},\"initialState\":{},\"regex\":[],\"resources\":{},\"scripts\":{},\"unknown\":{\"\\ud800\":\"value\"}}}}",
+		"errorCode": "content"
+	},
+	{
+		"name": "lone surrogate value",
+		"rawJson": "{\"kind\":\"install\",\"gameId\":\"12345678-1234-4234-8234-123456789abd\",\"sessionId\":\"12345678-1234-4234-8234-123456789abe\",\"packageFormatVersion\":1,\"release\":{\"originalGameId\":\"12345678-1234-4234-8234-123456789abc\",\"contentVersion\":\"1.0.0\",\"contentHash\":\"a7552d931bd6f3f5c6764ab1eef72c3d403c9a480d43209c6c46ba27dfafba7e\",\"createdAt\":\"2026-11-23T00:00:00.000Z\",\"content\":{\"title\":\"Adventure\",\"genre\":\"Fantasy\",\"description\":\"\\udfff\",\"settings\":{\"description\":\"Instructions\",\"firstMessage\":\"Welcome\",\"authorNote\":\"\"},\"schema\":{\"type\":\"object\",\"properties\":{},\"additionalProperties\":false},\"initialState\":{},\"regex\":[],\"resources\":{},\"scripts\":{}}}}",
+		"errorCode": "content"
+	}
+]

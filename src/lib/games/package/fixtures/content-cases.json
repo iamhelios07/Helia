@@ -1198,7 +1198,7 @@
 		}
 	},
 	{
-		"name": "creator keys surrogates and IEEE754",
+		"name": "creator keys Unicode and IEEE754",
 		"request": {
 			"kind": "install",
 			"gameId": "12345678-1234-4234-8234-123456789abd",
@@ -1207,7 +1207,7 @@
 			"release": {
 				"originalGameId": "12345678-1234-4234-8234-123456789abc",
 				"contentVersion": "1.0.0",
-				"contentHash": "50a150a14a0c6150d56da464fe6c7d46f058bdc36d894dea24cb929f2da8b8ca",
+				"contentHash": "9678bb2090dbb38b33b44128baa7f0e5cdcd9deba920d022a22ed696b8d63f35",
 				"createdAt": "2026-11-23T00:00:00.000Z",
 				"content": {
 					"title": "Adventure",
@@ -1233,9 +1233,6 @@
 							"😀": {
 								"type": "number"
 							},
-							"\ud800": {
-								"type": "string"
-							},
 							"": {
 								"type": "number"
 							}
@@ -1247,7 +1244,6 @@
 						"tiny": 1e-7,
 						"large": 9007199254740992,
 						"😀": 0,
-						"\ud800": "\udfff",
 						"": 1e21
 					},
 					"regex": [],
@@ -1282,9 +1278,6 @@
 						"😀": {
 							"type": "number"
 						},
-						"\ud800": {
-							"type": "string"
-						},
 						"": {
 							"type": "number"
 						}
@@ -1296,14 +1289,13 @@
 					"tiny": 1e-7,
 					"large": 9007199254740992,
 					"😀": 0,
-					"\ud800": "\udfff",
 					"": 1e21
 				},
 				"regex": [],
 				"resources": {},
 				"scripts": {}
 			},
-			"contentHash": "50a150a14a0c6150d56da464fe6c7d46f058bdc36d894dea24cb929f2da8b8ca"
+			"contentHash": "9678bb2090dbb38b33b44128baa7f0e5cdcd9deba920d022a22ed696b8d63f35"
 		}
 	},
 	{

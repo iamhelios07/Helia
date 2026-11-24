@@ -28,6 +28,20 @@ export interface PackageVerificationIds {
 	now: string;
 }
 
+/** IPC and UTF-8 hashing require Unicode scalar values in both keys and values. */
+function validateUnicode(value: unknown): void {
+	if (typeof value === 'string') {
+		requirePackage(value.isWellFormed(), 'content');
+		return;
+	}
+	if (value && typeof value === 'object') {
+		for (const [key, item] of Object.entries(value)) {
+			requirePackage(key.isWellFormed(), 'content');
+			validateUnicode(item);
+		}
+	}
+}
+
 /** Shared client/Node boundary. Never execute or compile authored code here. */
 export async function verifyReleaseContent(
 	release: { originalGameId: string; contentHash: string; content: unknown },
@@ -35,6 +49,7 @@ export async function verifyReleaseContent(
 ): Promise<{ content: GameReleaseContent; contentHash: string }> {
 	try {
 		validateGameReleaseContent(release.content);
+		validateUnicode(release.content);
 		const input = packageObject(release.content);
 		requirePackage(!INSTALL_ONLY_KEYS.some((key) => Object.hasOwn(input, key)), 'installOnlyKey');
 		const origin = packageOriginalGameId(release.originalGameId);

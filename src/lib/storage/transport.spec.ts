@@ -1,7 +1,10 @@
 import { afterEach, expect, it, vi } from 'vitest';
 
+import minimalRelease from '#lib/games/package/fixtures/minimal-release.json';
 import { GamePackageError, isGamePackageErrorCode } from '#lib/games/package/limits.js';
 import errorCodes from '#lib/storage/fixtures/install/error-codes.json';
+
+import installRequestLimit from './install-request-limit.json';
 
 const flags = vi.hoisted(() => ({ desktop: false, native: false }));
 const nativeInvoke = vi.hoisted(() => vi.fn());
@@ -91,6 +94,84 @@ it('routes desktop requests to the single host command', async () => {
 	expect(host).toHaveBeenCalledWith({ kind: 'sync', request: { kind: 'list' }, known: [] });
 	expect(nativeInvoke).not.toHaveBeenCalled();
 });
+it.each(errorCodes)(
+	'restores native package error %s with the stable local message',
+	async (code) => {
+		flags.desktop = true;
+		flags.native = true;
+		const host = vi.fn().mockRejectedValue({ errorCode: code });
+		const main = { __HELIA_STORAGE__: host };
+		Object.assign(main, { top: main });
+		vi.stubGlobal('window', main);
+		const error = await storageRequest({
+			kind: 'installPreview',
+			originalGameId: minimalRelease.originalGameId,
+			contentVersion: '1.0.0'
+		}).catch((error: unknown) => error);
+		expect(error).toBeInstanceOf(GamePackageError);
+		expect(error).toMatchObject({ code });
+	}
+);
+it('checks the desktop install UTF-8 size before invoking the host at the exact limit and +1', async () => {
+	flags.desktop = true;
+	flags.native = true;
+	const host = vi.fn().mockResolvedValue({ version: 0, records: [] });
+	const main = { __HELIA_STORAGE__: host };
+	Object.assign(main, { top: main });
+	vi.stubGlobal('window', main);
+	const request = {
+		kind: 'install' as const,
+		gameId: '12345678-1234-4234-8234-123456789abd',
+		sessionId: '12345678-1234-4234-8234-123456789abe',
+		packageFormatVersion: 1 as const,
+		release: minimalRelease,
+		padding: '한\u0000'
+	};
+	const size = () => new TextEncoder().encode(JSON.stringify(request)).length;
+	request.padding += 'x'.repeat(installRequestLimit - size());
+	expect(size()).toBe(installRequestLimit);
+	await storageRequest(request);
+	expect(host).toHaveBeenCalledTimes(1);
+	request.padding += 'x';
+	expect(size()).toBe(installRequestLimit + 1);
+	await expect(storageRequest(request)).rejects.toMatchObject({ code: 'limit' });
+	expect(host).toHaveBeenCalledTimes(1);
+});
+it('uses the private JSON envelope only for native install requests', async () => {
+	flags.desktop = true;
+	flags.native = true;
+	const host = vi.fn().mockResolvedValue({ version: 0, records: [] });
+	const main = { __HELIA_STORAGE__: host };
+	Object.assign(main, { top: main });
+	vi.stubGlobal('window', main);
+	const request = {
+		kind: 'install' as const,
+		gameId: '12345678-1234-4234-8234-123456789abd',
+		sessionId: '12345678-1234-4234-8234-123456789abe',
+		packageFormatVersion: 1 as const,
+		release: minimalRelease
+	};
+	await storageRequest(request);
+	expect(host).toHaveBeenLastCalledWith({ kind: 'installJson', json: JSON.stringify(request) });
+	const preview = {
+		kind: 'installPreview' as const,
+		originalGameId: minimalRelease.originalGameId,
+		contentVersion: '1.0.0'
+	};
+	await storageRequest(preview);
+	expect(host).toHaveBeenLastCalledWith(preview);
+});
+it.each(['STORAGE_CONFLICT', { errorCode: 'constructor' }, { errorCode: 'unknown' }])(
+	'preserves ordinary native rejection %j',
+	async (failure) => {
+		flags.desktop = true;
+		flags.native = true;
+		const main = { __HELIA_STORAGE__: vi.fn().mockRejectedValue(failure) };
+		Object.assign(main, { top: main });
+		vi.stubGlobal('window', main);
+		await expect(storageRequest({ kind: 'list' })).rejects.toEqual(failure);
+	}
+);
 it('refuses raw native access without the trusted main-frame closure', async () => {
 	flags.desktop = true;
 	flags.native = true;

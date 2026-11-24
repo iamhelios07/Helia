@@ -9,6 +9,9 @@ const SCHEMA: &str = include_str!("../../src/lib/storage/game-releases.sql");
 const ERROR: &str = "Invalid game release";
 const LIMIT: usize = 10_000;
 
+#[path = "game_install.rs"]
+pub(super) mod packages;
+
 fn db_error(_: rusqlite::Error) -> String {
     "Game release storage unavailable".into()
 }
@@ -44,6 +47,14 @@ fn valid_hash(value: &str) -> bool {
 }
 pub(super) fn initialize(connection: &mut Connection) -> Result<(), String> {
     connection.execute_batch(SCHEMA).map_err(db_error)?;
+    // Existing databases need no write lock, including advisory install previews.
+    let missing: bool = connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM games WHERE json_extract(value,'$.originalGameId') IS NULL)",
+        [], |row| row.get(0),
+    ).map_err(db_error)?;
+    if !missing {
+        return Ok(());
+    }
     let tx = connection
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(db_error)?;
@@ -75,15 +86,15 @@ pub(super) fn preserve_identity(
     id: &str,
     value: &Value,
 ) -> Result<Value, String> {
-    let saved: Option<String> = connection
+    let (saved, provenance): (Option<String>, Option<String>) = connection
         .query_row(
-            "SELECT json_extract(value,'$.originalGameId') FROM games WHERE id=?1",
+            "SELECT json_extract(value,'$.originalGameId'),json_extract(value,'$.installedFrom') FROM games WHERE id=?1",
             [id],
-            |row| row.get(0),
+            |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .optional()
         .map_err(db_error)?
-        .flatten();
+        .unwrap_or_default();
     let incoming = value
         .get("originalGameId")
         .map(|v| v.as_str().filter(|id| valid_uuid(id)).ok_or(ERROR))
@@ -100,6 +111,11 @@ pub(super) fn preserve_identity(
     }
     let mut game = value.clone();
     game["originalGameId"] = json!(origin);
+    if let Some(raw) = provenance {
+        game["installedFrom"] = serde_json::from_str(&raw).map_err(|_| ERROR)?;
+    } else {
+        game.as_object_mut().ok_or(ERROR)?.remove("installedFrom");
+    }
     Ok(game)
 }
 
@@ -682,12 +698,21 @@ fn state(connection: &Connection, game: &Value, hash: &str) -> Result<Value, Str
         )
         .optional()
         .map_err(db_error)?;
-    let current = releases
-        .iter()
-        .find(|r| r["id"].as_str() == selected.as_deref());
-    Ok(
-        json!({"originalGameId":game["originalGameId"],"contentHash":hash,"currentRelease":current,"releases":releases,"modified":current.is_some_and(|r|r["contentHash"]!=hash)}),
-    )
+    Ok(state_from_history(
+        game,
+        hash,
+        releases,
+        selected.as_deref(),
+    ))
+}
+fn state_from_history(
+    game: &Value,
+    hash: &str,
+    releases: Vec<Value>,
+    selected: Option<&str>,
+) -> Value {
+    let current = releases.iter().find(|r| r["id"].as_str() == selected);
+    json!({"originalGameId":game["originalGameId"],"contentHash":hash,"currentRelease":current,"releases":releases,"modified":current.is_some_and(|r|r["contentHash"]!=hash)})
 }
 fn get_release(connection: &Connection, game_id: &str, release_id: &str) -> Result<Value, String> {
     if !valid_uuid(release_id) {

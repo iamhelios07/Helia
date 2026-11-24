@@ -23,6 +23,12 @@ pub(crate) fn execute(path: &Path, input: Value) -> Result<Value, String> {
     if input["kind"] == "asset" {
         return asset(path, &input);
     }
+    if matches!(
+        input["request"]["kind"].as_str(),
+        Some("install" | "installJson" | "installPreview")
+    ) {
+        return Err(ERROR.into());
+    }
     let known = input["known"].as_array().ok_or(ERROR)?;
     if known.len() > 10000 {
         return Err(ERROR.into());

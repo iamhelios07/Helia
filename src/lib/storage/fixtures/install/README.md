@@ -8,6 +8,8 @@ Node와 Rust(`include_str!`)가 같은 JSON을 읽는다. 각 사례는 독립�
   `errorCode`를 유지한다. B1이 갱신되면 두 파일을 함께 갱신한다.
 - `release-cases.json`: B1의 시각 고정 데이터 복사본. 호스트는 패키지 원본
   `release.createdAt`을 별도로 검증해야 한다. B1 콘텐츠 검증만으로 대체하지 않는다.
+- B1 `fixtures/surrogate-cases.json`의 `rawJson`은 키·값의 고립 UTF-16 surrogate를 담는다.
+  두 호스트는 이를 `content`로 거부한다. Rust는 원문 JSON 파싱 단계에서 거부한다.
 - `conflict-cases.json`: 같은 해시 별도 설치, 충돌 무시, 버전 변경 후 무시, K 변경,
   K는 같고 들어오는 콘텐츠만 변경, 원본·최종 버전·들어오는 해시 결합 오류,
   K 공집합에서 오래된 확인 값, 잘못된 확인 값·버전, 기존 ID, Trash 제외를 포함한다.
@@ -37,5 +39,8 @@ TS는 `server/game-install.spec.ts`와 `server/package-release.spec.ts`에 있�
 `installPreview`는 콘텐츠 없이 소문자 원본 UUID·SemVer만 검증한다.
 미리보기는 deferred 읽기 트랜잭션에서 설치본들의 릴리스 이력을 SQL 한 번으로 조회한다.
 `install`과 `installPreview`는 직접 전송하며 `sync` 봉투 안에서는 거부한다.
+데스크톱 `install`은 비공개 `installJson` 봉투의 원문 JSON으로 전달하여 Rust가
+역직렬화 전에 64 MiB UTF-8 상한을 검사하고 파싱 실패를 `content`로 반환한다.
+이 봉투에는 `install`만 담을 수 있다. 일반 저장·미리보기 전송은 기존 경로를 쓴다.
 미리보기의 `existingHashes`는 각 설치본의 요청 버전 해시 집합이다. 충돌 확인 값은
 미리보기가 아닌 설치 호스트의 `conflict` 응답에서만 가져온다.

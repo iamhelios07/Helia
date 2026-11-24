@@ -6,7 +6,7 @@
 수용 사례의 `normalizedContent`와 `contentHash`는 정규화 결과와 기존 릴리스 다이제스트다.
 거부 사례의 `errorCode`는 패키지 검증 계층의 코드다. 호스트의 전송 오류 포장은 별도로 검사한다.
 
-- `content-cases.json`: 콘텐츠·어댑터 사례 40개. 제작자 키, 유니코드·서러게이트,
+- `content-cases.json`: 콘텐츠·어댑터 사례 40개. 제작자 키, 정상 유니코드,
   IEEE-754 숫자, 레거시 scripts/UI, code/presentation, 공유 에셋, 빈 리소스,
   제목 길이 경계, 모든 설치 전용 키(`editLock` 포함), 미지·컴파일 필드,
   `scripts: null` 거부, 공백 정규화, 잘못된 해시·UUID를 포함한다.
@@ -18,6 +18,8 @@
   시각을 대신 검증하지 않는다. 시각 형식 오류의 `errorCode`는 매니페스트 경로의
   `format`이다.
 - `minimal-release.json`: 바이트 고정 테스트의 작은 정규형 릴리스.
+- `surrogate-cases.json`: 키·문자열 값의 고립 UTF-16 surrogate는 `content`로 거부한다.
+  Rust도 읽을 수 있도록 원본 설치 요청을 `rawJson` 문자열로 감쌌다.
 - `minimal-package.json`: 위 릴리스의 독립 작성기로 만든 패키지 전체 base64와 SHA-256.
   실행 시 재생성하지 않으며 TS 작성기가 바이트 단위로 일치해야 한다.
 

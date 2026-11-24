@@ -10,6 +10,7 @@ import { decodeGamePackage, encodeGamePackage } from './codec.js';
 import cases from './fixtures/content-cases.json';
 import golden from './fixtures/minimal-package.json';
 import minimal from './fixtures/minimal-release.json';
+import surrogateCases from './fixtures/surrogate-cases.json';
 import {
 	CONTENT_CHARACTER_LIMIT,
 	CONTENT_NODE_LIMIT,
@@ -141,6 +142,12 @@ it('self-validation rejects noncanonical exported content with an otherwise vali
 	await expect(decodeGamePackage(await encodeGamePackage(input))).rejects.toMatchObject({
 		code: 'nonCanonical'
 	});
+});
+
+it.each(surrogateCases)('export self-validation rejects $name', async ({ rawJson, errorCode }) => {
+	const request = JSON.parse(rawJson);
+	const bytes = await encodeGamePackage(request.release);
+	await expect(decodeGamePackage(bytes)).rejects.toMatchObject({ code: errorCode });
 });
 
 it('rejects raw complex content before replacing resources or normalizing away unknown keys', async () => {

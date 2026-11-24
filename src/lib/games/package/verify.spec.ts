@@ -4,6 +4,7 @@ import { canonicalReleaseContent, hashGameReleaseContent } from '../release-cont
 import { validateGameReleaseContent } from '../versioning-validation.js';
 import cases from './fixtures/content-cases.json';
 import minimal from './fixtures/minimal-release.json';
+import surrogateCases from './fixtures/surrogate-cases.json';
 import { verifyReleaseContent } from './verify.js';
 
 const ids = { gameId: 'installation', sessionId: 'session', now: minimal.createdAt };
@@ -22,14 +23,24 @@ it.each(cases)('shared host content fixture: $name', async ({ request, expect: e
 	).toEqual(verified);
 });
 
-it('keeps creator maps, signed zero, surrogates and floating point values in the existing digest', async () => {
-	const fixture = cases.find((row) => row.name === 'creator keys surrogates and IEEE754')!;
+it('keeps creator maps, signed zero, Unicode and floating point values in the existing digest', async () => {
+	const fixture = cases.find((row) => row.name === 'creator keys Unicode and IEEE754')!;
 	const content = (await verifyReleaseContent(fixture.request.release, ids)).content;
 	content.initialState['😀'] = -0;
 	content.initialState.large = Number('9007199254740993');
 	expect(await hashGameReleaseContent(content)).toBe(fixture.expect.contentHash);
-	expect(canonicalReleaseContent(content)).toContain('\\ud800');
+	expect(canonicalReleaseContent(content)).toContain('😀');
 });
+
+it.each(surrogateCases)(
+	'rejects $name before normalization or hashing',
+	async ({ rawJson, errorCode }) => {
+		const request = JSON.parse(rawJson);
+		await expect(verifyReleaseContent(request.release, ids)).rejects.toMatchObject({
+			code: errorCode
+		});
+	}
+);
 
 it('bounds raw nodes before unknown fields can be stripped by normalization', async () => {
 	const atLimit = Array.from({ length: 99999 }, () => null);

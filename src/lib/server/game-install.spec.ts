@@ -10,6 +10,7 @@ import { editorContent, createEditorDraft } from '#lib/games/editor.js';
 import { parseInstalledFrom } from '#lib/games/installed-from.js';
 import { parseGame } from '#lib/games/model.js';
 import minimal from '#lib/games/package/fixtures/minimal-release.json';
+import surrogateCases from '#lib/games/package/fixtures/surrogate-cases.json';
 import { GamePackageError } from '#lib/games/package/limits.js';
 import { verifyReleaseContent } from '#lib/games/package/verify.js';
 import { hashGameReleaseContent, gameReleaseContent } from '#lib/games/release-content.js';
@@ -114,6 +115,9 @@ async function checkFixture(fixture: Fixture) {
 }
 
 it.each([...contentCases, ...releaseCases])('shared content/timestamp: $name', checkFixture);
+it.each(surrogateCases)('rejects shared raw JSON: $name', async ({ rawJson, errorCode }) => {
+	await checkFixture({ request: JSON.parse(rawJson), expect: { accepted: false, errorCode } });
+});
 it.each(conflictCases)('shared install: $name', async (fixture) => {
 	for (const setup of fixture.setup ?? []) {
 		await store.requestAsync(setup);
