@@ -8,6 +8,7 @@ import type { GameRelease, GameVersioning } from './versioning.js';
 
 import { parseGame } from './model.js';
 import { gameReleaseContent, hashGameReleaseContent } from './release-content.js';
+import { parseGameRelease } from './versioning-validation.js';
 import { compareSemVer, parseSemVer } from './versioning.js';
 
 const origin = '12345678-1234-4234-8234-123456789abc';
@@ -323,6 +324,29 @@ it.each(['source', 'stylesheet', 'presentation'] as const)(
 		expect(await digest(changed)).not.toBe(await digest(original));
 	}
 );
+
+it.each([
+	null,
+	'legacy provenance',
+	{},
+	{ kind: 'package', packageFormatVersion: 0 },
+	{
+		kind: 'package',
+		packageFormatVersion: 1,
+		packageRelease: {
+			contentVersion: '1.0.0',
+			contentHash: 'a'.repeat(64),
+			createdAt: timestamp
+		},
+		versionChanged: false,
+		installedAt: timestamp
+	}
+])('ignores installedFrom in legacy frozen content: %j', async (installedFrom) => {
+	const saved = await release();
+	const input = { ...saved, content: { ...saved.content, installedFrom } };
+	expect(parseGameRelease(input)).toEqual(saved);
+	expect(parseReply({ version: 0, records: [], release: input }).release).toEqual(saved);
+});
 
 describe('versioning wire reply contract', () => {
 	it('strips unknown fields and credentials from parsed frozen content', async () => {

@@ -1,0 +1,11 @@
+[
+	"format",
+	"version",
+	"integrity",
+	"limit",
+	"content",
+	"nonCanonical",
+	"installOnlyKey",
+	"newerHeliaRequired",
+	"staleAcknowledgement"
+]

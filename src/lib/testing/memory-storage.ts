@@ -195,6 +195,9 @@ class MemoryStorage {
 		if (request.kind === 'read') {
 			return this.read(request);
 		}
+		if (request.kind === 'install' || request.kind === 'installPreview') {
+			throw Error('Package installation requires the authoritative host');
+		}
 		return this.write(request);
 	};
 }

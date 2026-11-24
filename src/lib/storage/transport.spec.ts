@@ -1,5 +1,8 @@
 import { afterEach, expect, it, vi } from 'vitest';
 
+import { GamePackageError, isGamePackageErrorCode } from '#lib/games/package/limits.js';
+import errorCodes from '#lib/storage/fixtures/install/error-codes.json';
+
 const flags = vi.hoisted(() => ({ desktop: false, native: false }));
 const nativeInvoke = vi.hoisted(() => vi.fn());
 vi.mock('#lib/platform/index.js', () => ({
@@ -36,6 +39,43 @@ it('preserves conflict errors so the repository can retry', async () => {
 	);
 	await expect(storageRequest({ kind: 'list' })).rejects.toThrow('STORAGE_CONFLICT');
 });
+it.each(errorCodes)(
+	'restores web 400 package error %s with its stable local message',
+	async (code) => {
+		vi.stubGlobal(
+			'fetch',
+			vi
+				.fn()
+				.mockResolvedValue(
+					Response.json({ error: 'untrusted host message', errorCode: code }, { status: 400 })
+				)
+		);
+		expect(isGamePackageErrorCode(code)).toBe(true);
+		if (!isGamePackageErrorCode(code)) {
+			throw Error('Unknown shared error code');
+		}
+		const error = await storageRequest({
+			kind: 'installPreview',
+			originalGameId: '12345678-1234-4234-8234-123456789abc',
+			contentVersion: '1.0.0'
+		}).catch((error: unknown) => error);
+		expect(error).toBeInstanceOf(GamePackageError);
+		expect(error).toMatchObject({ code, message: new GamePackageError(code).message });
+	}
+);
+it.each(['unknown', 'constructor', '__proto__', 1, null])(
+	'keeps unknown package error code %j as an ordinary transport error',
+	async (errorCode) => {
+		vi.stubGlobal(
+			'fetch',
+			vi.fn().mockResolvedValue(Response.json({ error: 'Rejected', errorCode }, { status: 400 }))
+		);
+		const error = await storageRequest({ kind: 'list' }).catch((error: unknown) => error);
+		expect(error).toBeInstanceOf(Error);
+		expect(error).not.toBeInstanceOf(GamePackageError);
+		expect(error).toMatchObject({ message: 'Rejected' });
+	}
+);
 it('handles non-JSON error responses without leaking a parser error', async () => {
 	vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('Bad gateway', { status: 502 })));
 	await expect(storageRequest({ kind: 'list' })).rejects.toThrow('게임 저장소를 사용할 수 없어요.');

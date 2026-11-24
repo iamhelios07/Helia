@@ -2,7 +2,7 @@ import type Database from 'better-sqlite3';
 
 import { createHash, randomUUID } from 'node:crypto';
 
-import { parseGame } from '#lib/games/model.js';
+import { parseGame, type Game } from '#lib/games/model.js';
 import { canonicalReleaseContent, gameReleaseContent } from '#lib/games/release-content.js';
 import { validateGameReleaseContent } from '#lib/games/versioning-validation.js';
 import {
@@ -20,6 +20,53 @@ type SavedGame = { value: string; version: number };
 type ReleaseRow = GameReleaseSummary & { content?: string };
 const summaryColumns = `id, original_game_id AS originalGameId, content_version AS contentVersion,
  content_hash AS contentHash, created_at AS createdAt`;
+
+function releaseContent(db: Database.Database, game: Game) {
+	originalGameId(game.originalGameId);
+	const content = gameReleaseContent(game, (reference) => {
+		const blob = db
+			.prepare('SELECT value FROM blobs WHERE game_id=? AND id=?')
+			.get(game.id, reference.slice(12)) as { value: string } | undefined;
+		if (!blob) {
+			throw Error('Release asset unavailable');
+		}
+		return (JSON.parse(blob.value) as { data: string }).data;
+	});
+	validateGameReleaseContent(content);
+	return {
+		content,
+		contentHash: createHash('sha256').update(canonicalReleaseContent(content)).digest('hex')
+	};
+}
+
+function releaseVersioning(
+	game: Game,
+	contentHash: string,
+	releases: GameReleaseSummary[],
+	selectedReleaseId: string | null
+): GameVersioning {
+	if (releases.length > 10000) {
+		throw Error('Release history limit exceeded');
+	}
+	const currentRelease = releases.find((release) => release.id === selectedReleaseId) ?? null;
+	return {
+		originalGameId: game.originalGameId!,
+		contentHash,
+		currentRelease,
+		releases,
+		modified: currentRelease !== null && currentRelease.contentHash !== contentHash
+	};
+}
+
+/** Preview supplies a batch-loaded release history while using the normal authoritative digest. */
+export function readGameVersioning(
+	db: Database.Database,
+	game: Game,
+	releases: GameReleaseSummary[],
+	selectedReleaseId: string | null
+): GameVersioning {
+	return releaseVersioning(game, releaseContent(db, game).contentHash, releases, selectedReleaseId);
+}
 
 /** Additive initialization preserves development databases and independently assigns old games an origin. */
 export function initializeGameReleases(db: Database.Database) {
@@ -43,11 +90,19 @@ export function preserveOriginalGameId(db: Database.Database, gameId: string, va
 	const game = parseGame(value);
 	const previous = db.prepare('SELECT value FROM games WHERE id=?').get(gameId) as
 		{ value: string } | undefined;
-	const saved = previous ? parseGame(JSON.parse(previous.value)).originalGameId : undefined;
+	const prior = previous ? parseGame(JSON.parse(previous.value)) : undefined;
+	const saved = prior?.originalGameId;
 	if (saved && game.originalGameId && saved !== game.originalGameId) {
 		throw Error('Original game identity is immutable');
 	}
-	return { ...game, originalGameId: originalGameId(saved ?? game.originalGameId ?? randomUUID()) };
+	// Normal writes cannot add, change or remove host-owned package provenance.
+	const { installedFrom: _untrusted, ...content } = game;
+	void _untrusted;
+	return {
+		...content,
+		originalGameId: originalGameId(saved ?? game.originalGameId ?? randomUUID()),
+		...(prior?.installedFrom === undefined ? {} : { installedFrom: prior.installedFrom })
+	};
 }
 
 class GameReleases {
@@ -60,20 +115,9 @@ class GameReleases {
 		private saved: SavedGame
 	) {
 		this.game = parseGame(JSON.parse(saved.value));
-		originalGameId(this.game.originalGameId);
-		this.content = gameReleaseContent(this.game, (reference) => {
-			const blob = db
-				.prepare('SELECT value FROM blobs WHERE game_id=? AND id=?')
-				.get(this.game.id, reference.slice(12)) as { value: string } | undefined;
-			if (!blob) {
-				throw Error('Release asset unavailable');
-			}
-			return (JSON.parse(blob.value) as { data: string }).data;
-		});
-		validateGameReleaseContent(this.content);
-		this.contentHash = createHash('sha256')
-			.update(canonicalReleaseContent(this.content))
-			.digest('hex');
+		const current = releaseContent(db, this.game);
+		this.content = current.content;
+		this.contentHash = current.contentHash;
 	}
 	private summaries(): GameReleaseSummary[] {
 		const releases = this.db
@@ -89,14 +133,7 @@ class GameReleases {
 		const selection = this.db
 			.prepare('SELECT release_id FROM game_release_selection WHERE game_id=?')
 			.get(this.game.id) as { release_id: string } | undefined;
-		const currentRelease = releases.find((release) => release.id === selection?.release_id) ?? null;
-		return {
-			originalGameId: this.game.originalGameId!,
-			contentHash: this.contentHash,
-			currentRelease,
-			releases,
-			modified: currentRelease !== null && currentRelease.contentHash !== this.contentHash
-		};
+		return releaseVersioning(this.game, this.contentHash, releases, selection?.release_id ?? null);
 	}
 	private release(request: Extract<ReleaseRequest, { action: 'release' }>): StorageReply {
 		if (this.game.trashedAt) {

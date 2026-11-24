@@ -1,0 +1,439 @@
+[
+	{
+		"name": "valid timestamp 0001-01-01T00:00:00.000Z",
+		"request": {
+			"kind": "install",
+			"gameId": "12345678-1234-4234-8234-123456789abd",
+			"sessionId": "12345678-1234-4234-8234-123456789abe",
+			"packageFormatVersion": 1,
+			"release": {
+				"originalGameId": "12345678-1234-4234-8234-123456789abc",
+				"contentVersion": "1.0.0",
+				"contentHash": "a7552d931bd6f3f5c6764ab1eef72c3d403c9a480d43209c6c46ba27dfafba7e",
+				"createdAt": "0001-01-01T00:00:00.000Z",
+				"content": {
+					"title": "Adventure",
+					"genre": "Fantasy",
+					"description": "Public",
+					"settings": {
+						"description": "Instructions",
+						"firstMessage": "Welcome",
+						"authorNote": ""
+					},
+					"schema": {
+						"type": "object",
+						"properties": {},
+						"additionalProperties": false
+					},
+					"initialState": {},
+					"regex": [],
+					"resources": {},
+					"scripts": {}
+				}
+			}
+		},
+		"expect": {
+			"accepted": true,
+			"normalizedContent": {
+				"title": "Adventure",
+				"genre": "Fantasy",
+				"description": "Public",
+				"settings": {
+					"description": "Instructions",
+					"firstMessage": "Welcome",
+					"authorNote": ""
+				},
+				"schema": {
+					"type": "object",
+					"properties": {},
+					"additionalProperties": false
+				},
+				"initialState": {},
+				"regex": [],
+				"resources": {},
+				"scripts": {}
+			},
+			"contentHash": "a7552d931bd6f3f5c6764ab1eef72c3d403c9a480d43209c6c46ba27dfafba7e"
+		}
+	},
+	{
+		"name": "valid timestamp 9999-12-31T23:59:59.999Z",
+		"request": {
+			"kind": "install",
+			"gameId": "12345678-1234-4234-8234-123456789abd",
+			"sessionId": "12345678-1234-4234-8234-123456789abe",
+			"packageFormatVersion": 1,
+			"release": {
+				"originalGameId": "12345678-1234-4234-8234-123456789abc",
+				"contentVersion": "1.0.0",
+				"contentHash": "a7552d931bd6f3f5c6764ab1eef72c3d403c9a480d43209c6c46ba27dfafba7e",
+				"createdAt": "9999-12-31T23:59:59.999Z",
+				"content": {
+					"title": "Adventure",
+					"genre": "Fantasy",
+					"description": "Public",
+					"settings": {
+						"description": "Instructions",
+						"firstMessage": "Welcome",
+						"authorNote": ""
+					},
+					"schema": {
+						"type": "object",
+						"properties": {},
+						"additionalProperties": false
+					},
+					"initialState": {},
+					"regex": [],
+					"resources": {},
+					"scripts": {}
+				}
+			}
+		},
+		"expect": {
+			"accepted": true,
+			"normalizedContent": {
+				"title": "Adventure",
+				"genre": "Fantasy",
+				"description": "Public",
+				"settings": {
+					"description": "Instructions",
+					"firstMessage": "Welcome",
+					"authorNote": ""
+				},
+				"schema": {
+					"type": "object",
+					"properties": {},
+					"additionalProperties": false
+				},
+				"initialState": {},
+				"regex": [],
+				"resources": {},
+				"scripts": {}
+			},
+			"contentHash": "a7552d931bd6f3f5c6764ab1eef72c3d403c9a480d43209c6c46ba27dfafba7e"
+		}
+	},
+	{
+		"name": "valid timestamp 2024-02-29T00:00:00.000Z",
+		"request": {
+			"kind": "install",
+			"gameId": "12345678-1234-4234-8234-123456789abd",
+			"sessionId": "12345678-1234-4234-8234-123456789abe",
+			"packageFormatVersion": 1,
+			"release": {
+				"originalGameId": "12345678-1234-4234-8234-123456789abc",
+				"contentVersion": "1.0.0",
+				"contentHash": "a7552d931bd6f3f5c6764ab1eef72c3d403c9a480d43209c6c46ba27dfafba7e",
+				"createdAt": "2024-02-29T00:00:00.000Z",
+				"content": {
+					"title": "Adventure",
+					"genre": "Fantasy",
+					"description": "Public",
+					"settings": {
+						"description": "Instructions",
+						"firstMessage": "Welcome",
+						"authorNote": ""
+					},
+					"schema": {
+						"type": "object",
+						"properties": {},
+						"additionalProperties": false
+					},
+					"initialState": {},
+					"regex": [],
+					"resources": {},
+					"scripts": {}
+				}
+			}
+		},
+		"expect": {
+			"accepted": true,
+			"normalizedContent": {
+				"title": "Adventure",
+				"genre": "Fantasy",
+				"description": "Public",
+				"settings": {
+					"description": "Instructions",
+					"firstMessage": "Welcome",
+					"authorNote": ""
+				},
+				"schema": {
+					"type": "object",
+					"properties": {},
+					"additionalProperties": false
+				},
+				"initialState": {},
+				"regex": [],
+				"resources": {},
+				"scripts": {}
+			},
+			"contentHash": "a7552d931bd6f3f5c6764ab1eef72c3d403c9a480d43209c6c46ba27dfafba7e"
+		}
+	},
+	{
+		"name": "invalid timestamp 2026-11-20T09:15:00+09:00",
+		"request": {
+			"kind": "install",
+			"gameId": "12345678-1234-4234-8234-123456789abd",
+			"sessionId": "12345678-1234-4234-8234-123456789abe",
+			"packageFormatVersion": 1,
+			"release": {
+				"originalGameId": "12345678-1234-4234-8234-123456789abc",
+				"contentVersion": "1.0.0",
+				"contentHash": "a7552d931bd6f3f5c6764ab1eef72c3d403c9a480d43209c6c46ba27dfafba7e",
+				"createdAt": "2026-11-20T09:15:00+09:00",
+				"content": {
+					"title": "Adventure",
+					"genre": "Fantasy",
+					"description": "Public",
+					"settings": {
+						"description": "Instructions",
+						"firstMessage": "Welcome",
+						"authorNote": ""
+					},
+					"schema": {
+						"type": "object",
+						"properties": {},
+						"additionalProperties": false
+					},
+					"initialState": {},
+					"regex": [],
+					"resources": {},
+					"scripts": {}
+				}
+			}
+		},
+		"expect": {
+			"accepted": false,
+			"errorCode": "format"
+		}
+	},
+	{
+		"name": "invalid timestamp 2026-11-20T09:15:00Z",
+		"request": {
+			"kind": "install",
+			"gameId": "12345678-1234-4234-8234-123456789abd",
+			"sessionId": "12345678-1234-4234-8234-123456789abe",
+			"packageFormatVersion": 1,
+			"release": {
+				"originalGameId": "12345678-1234-4234-8234-123456789abc",
+				"contentVersion": "1.0.0",
+				"contentHash": "a7552d931bd6f3f5c6764ab1eef72c3d403c9a480d43209c6c46ba27dfafba7e",
+				"createdAt": "2026-11-20T09:15:00Z",
+				"content": {
+					"title": "Adventure",
+					"genre": "Fantasy",
+					"description": "Public",
+					"settings": {
+						"description": "Instructions",
+						"firstMessage": "Welcome",
+						"authorNote": ""
+					},
+					"schema": {
+						"type": "object",
+						"properties": {},
+						"additionalProperties": false
+					},
+					"initialState": {},
+					"regex": [],
+					"resources": {},
+					"scripts": {}
+				}
+			}
+		},
+		"expect": {
+			"accepted": false,
+			"errorCode": "format"
+		}
+	},
+	{
+		"name": "invalid timestamp 2026-02-30T09:15:00.000Z",
+		"request": {
+			"kind": "install",
+			"gameId": "12345678-1234-4234-8234-123456789abd",
+			"sessionId": "12345678-1234-4234-8234-123456789abe",
+			"packageFormatVersion": 1,
+			"release": {
+				"originalGameId": "12345678-1234-4234-8234-123456789abc",
+				"contentVersion": "1.0.0",
+				"contentHash": "a7552d931bd6f3f5c6764ab1eef72c3d403c9a480d43209c6c46ba27dfafba7e",
+				"createdAt": "2026-02-30T09:15:00.000Z",
+				"content": {
+					"title": "Adventure",
+					"genre": "Fantasy",
+					"description": "Public",
+					"settings": {
+						"description": "Instructions",
+						"firstMessage": "Welcome",
+						"authorNote": ""
+					},
+					"schema": {
+						"type": "object",
+						"properties": {},
+						"additionalProperties": false
+					},
+					"initialState": {},
+					"regex": [],
+					"resources": {},
+					"scripts": {}
+				}
+			}
+		},
+		"expect": {
+			"accepted": false,
+			"errorCode": "format"
+		}
+	},
+	{
+		"name": "invalid timestamp 2026-11-20T09:15:00.000000Z",
+		"request": {
+			"kind": "install",
+			"gameId": "12345678-1234-4234-8234-123456789abd",
+			"sessionId": "12345678-1234-4234-8234-123456789abe",
+			"packageFormatVersion": 1,
+			"release": {
+				"originalGameId": "12345678-1234-4234-8234-123456789abc",
+				"contentVersion": "1.0.0",
+				"contentHash": "a7552d931bd6f3f5c6764ab1eef72c3d403c9a480d43209c6c46ba27dfafba7e",
+				"createdAt": "2026-11-20T09:15:00.000000Z",
+				"content": {
+					"title": "Adventure",
+					"genre": "Fantasy",
+					"description": "Public",
+					"settings": {
+						"description": "Instructions",
+						"firstMessage": "Welcome",
+						"authorNote": ""
+					},
+					"schema": {
+						"type": "object",
+						"properties": {},
+						"additionalProperties": false
+					},
+					"initialState": {},
+					"regex": [],
+					"resources": {},
+					"scripts": {}
+				}
+			}
+		},
+		"expect": {
+			"accepted": false,
+			"errorCode": "format"
+		}
+	},
+	{
+		"name": "invalid timestamp 0000-01-01T00:00:00.000Z",
+		"request": {
+			"kind": "install",
+			"gameId": "12345678-1234-4234-8234-123456789abd",
+			"sessionId": "12345678-1234-4234-8234-123456789abe",
+			"packageFormatVersion": 1,
+			"release": {
+				"originalGameId": "12345678-1234-4234-8234-123456789abc",
+				"contentVersion": "1.0.0",
+				"contentHash": "a7552d931bd6f3f5c6764ab1eef72c3d403c9a480d43209c6c46ba27dfafba7e",
+				"createdAt": "0000-01-01T00:00:00.000Z",
+				"content": {
+					"title": "Adventure",
+					"genre": "Fantasy",
+					"description": "Public",
+					"settings": {
+						"description": "Instructions",
+						"firstMessage": "Welcome",
+						"authorNote": ""
+					},
+					"schema": {
+						"type": "object",
+						"properties": {},
+						"additionalProperties": false
+					},
+					"initialState": {},
+					"regex": [],
+					"resources": {},
+					"scripts": {}
+				}
+			}
+		},
+		"expect": {
+			"accepted": false,
+			"errorCode": "format"
+		}
+	},
+	{
+		"name": "invalid timestamp 2026-11-20T24:00:00.000Z",
+		"request": {
+			"kind": "install",
+			"gameId": "12345678-1234-4234-8234-123456789abd",
+			"sessionId": "12345678-1234-4234-8234-123456789abe",
+			"packageFormatVersion": 1,
+			"release": {
+				"originalGameId": "12345678-1234-4234-8234-123456789abc",
+				"contentVersion": "1.0.0",
+				"contentHash": "a7552d931bd6f3f5c6764ab1eef72c3d403c9a480d43209c6c46ba27dfafba7e",
+				"createdAt": "2026-11-20T24:00:00.000Z",
+				"content": {
+					"title": "Adventure",
+					"genre": "Fantasy",
+					"description": "Public",
+					"settings": {
+						"description": "Instructions",
+						"firstMessage": "Welcome",
+						"authorNote": ""
+					},
+					"schema": {
+						"type": "object",
+						"properties": {},
+						"additionalProperties": false
+					},
+					"initialState": {},
+					"regex": [],
+					"resources": {},
+					"scripts": {}
+				}
+			}
+		},
+		"expect": {
+			"accepted": false,
+			"errorCode": "format"
+		}
+	},
+	{
+		"name": "invalid timestamp 2026-11-20T09:15:00.000Z\n",
+		"request": {
+			"kind": "install",
+			"gameId": "12345678-1234-4234-8234-123456789abd",
+			"sessionId": "12345678-1234-4234-8234-123456789abe",
+			"packageFormatVersion": 1,
+			"release": {
+				"originalGameId": "12345678-1234-4234-8234-123456789abc",
+				"contentVersion": "1.0.0",
+				"contentHash": "a7552d931bd6f3f5c6764ab1eef72c3d403c9a480d43209c6c46ba27dfafba7e",
+				"createdAt": "2026-11-20T09:15:00.000Z\n",
+				"content": {
+					"title": "Adventure",
+					"genre": "Fantasy",
+					"description": "Public",
+					"settings": {
+						"description": "Instructions",
+						"firstMessage": "Welcome",
+						"authorNote": ""
+					},
+					"schema": {
+						"type": "object",
+						"properties": {},
+						"additionalProperties": false
+					},
+					"initialState": {},
+					"regex": [],
+					"resources": {},
+					"scripts": {}
+				}
+			}
+		},
+		"expect": {
+			"accepted": false,
+			"errorCode": "format"
+		}
+	}
+]

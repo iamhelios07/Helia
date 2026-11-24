@@ -3,6 +3,7 @@ import { validateStateKey, type GameState } from '#lib/games/state/value.js';
 
 import { parseGameAIContent, type GameAIContent } from './ai/prompts.js';
 import { parseCodeProject, type CodeProject } from './code-project.js';
+import { parseInstalledFrom, type InstalledFrom } from './installed-from.js';
 import { parseRegexRules, type RegexRule } from './regex.js';
 import { parseResources, type GameResources } from './resources.js';
 import { parseGameUI, type GameUI } from './ui/runtime/model.js';
@@ -35,6 +36,7 @@ export interface Game extends GameMetadata {
 	schemaVersion: 2;
 	id: string;
 	originalGameId?: string;
+	installedFrom?: InstalledFrom;
 	activeSessionId: string;
 	createdAt: string;
 	updatedAt: string;
@@ -235,6 +237,9 @@ export function parseGame(value: unknown): Game {
 			? {}
 			: { originalGameId: originalGameId(value.originalGameId) }),
 		activeSessionId: value.activeSessionId,
+		...(value.installedFrom === undefined
+			? {}
+			: { installedFrom: parseInstalledFrom(value.installedFrom) }),
 		createdAt: value.createdAt,
 		updatedAt: value.updatedAt,
 		...(isTrashed(value.trashedAt) ? { trashedAt: value.trashedAt } : {}),

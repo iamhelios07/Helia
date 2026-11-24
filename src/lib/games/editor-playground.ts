@@ -70,6 +70,9 @@ function playgroundStorage(game: Game): StorageTransport {
 		if (request.kind === 'list') {
 			return { version, records: [...rows.values()].filter((row) => row.table === 'games') };
 		}
+		if (request.kind !== 'read' && request.kind !== 'commit') {
+			throw Error('테스트 저장소는 읽기와 커밋만 지원해요.');
+		}
 		if (request.gameId !== game.id) {
 			throw Error('다른 게임의 테스트 저장소에 접근할 수 없어요.');
 		}
@@ -84,9 +87,6 @@ function playgroundStorage(game: Game): StorageTransport {
 						row.sessionId === request.sessionId
 				)
 			});
-		}
-		if (request.kind !== 'commit') {
-			throw Error('테스트 저장소는 읽기와 커밋만 지원해요.');
 		}
 		if (request.version !== version) {
 			throw Error(CONFLICT);

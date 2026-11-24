@@ -1,0 +1,2857 @@
+[
+	{
+		"name": "empty legacy scripts",
+		"request": {
+			"kind": "install",
+			"gameId": "12345678-1234-4234-8234-123456789abd",
+			"sessionId": "12345678-1234-4234-8234-123456789abe",
+			"packageFormatVersion": 1,
+			"release": {
+				"originalGameId": "12345678-1234-4234-8234-123456789abc",
+				"contentVersion": "1.0.0",
+				"contentHash": "a7552d931bd6f3f5c6764ab1eef72c3d403c9a480d43209c6c46ba27dfafba7e",
+				"createdAt": "2026-11-23T00:00:00.000Z",
+				"content": {
+					"title": "Adventure",
+					"genre": "Fantasy",
+					"description": "Public",
+					"settings": {
+						"description": "Instructions",
+						"firstMessage": "Welcome",
+						"authorNote": ""
+					},
+					"schema": {
+						"type": "object",
+						"properties": {},
+						"additionalProperties": false
+					},
+					"initialState": {},
+					"regex": [],
+					"resources": {},
+					"scripts": {}
+				}
+			}
+		},
+		"expect": {
+			"accepted": true,
+			"normalizedContent": {
+				"title": "Adventure",
+				"genre": "Fantasy",
+				"description": "Public",
+				"settings": {
+					"description": "Instructions",
+					"firstMessage": "Welcome",
+					"authorNote": ""
+				},
+				"schema": {
+					"type": "object",
+					"properties": {},
+					"additionalProperties": false
+				},
+				"initialState": {},
+				"regex": [],
+				"resources": {},
+				"scripts": {}
+			},
+			"contentHash": "a7552d931bd6f3f5c6764ab1eef72c3d403c9a480d43209c6c46ba27dfafba7e"
+		}
+	},
+	{
+		"name": "code without scripts",
+		"request": {
+			"kind": "install",
+			"gameId": "12345678-1234-4234-8234-123456789abd",
+			"sessionId": "12345678-1234-4234-8234-123456789abe",
+			"packageFormatVersion": 1,
+			"release": {
+				"originalGameId": "12345678-1234-4234-8234-123456789abc",
+				"contentVersion": "1.0.0",
+				"contentHash": "b341648c91145473a29dcae05185af7a34f84fb3d1dd74c3bbf506b3eba6d7d4",
+				"createdAt": "2026-11-23T00:00:00.000Z",
+				"content": {
+					"title": "Adventure",
+					"genre": "Fantasy",
+					"description": "Public",
+					"settings": {
+						"description": "Instructions",
+						"firstMessage": "Welcome",
+						"authorNote": ""
+					},
+					"schema": {
+						"type": "object",
+						"properties": {},
+						"additionalProperties": false
+					},
+					"initialState": {},
+					"regex": [],
+					"resources": {},
+					"code": {
+						"version": 1,
+						"entry": "main.ts",
+						"files": {
+							"main.ts": {
+								"language": "typescript",
+								"source": "export {};"
+							}
+						}
+					}
+				}
+			}
+		},
+		"expect": {
+			"accepted": true,
+			"normalizedContent": {
+				"title": "Adventure",
+				"genre": "Fantasy",
+				"description": "Public",
+				"settings": {
+					"description": "Instructions",
+					"firstMessage": "Welcome",
+					"authorNote": ""
+				},
+				"schema": {
+					"type": "object",
+					"properties": {},
+					"additionalProperties": false
+				},
+				"initialState": {},
+				"regex": [],
+				"resources": {},
+				"code": {
+					"version": 1,
+					"entry": "main.ts",
+					"files": {
+						"main.ts": {
+							"language": "typescript",
+							"source": "export {};"
+						}
+					}
+				}
+			},
+			"contentHash": "b341648c91145473a29dcae05185af7a34f84fb3d1dd74c3bbf506b3eba6d7d4"
+		}
+	},
+	{
+		"name": "legacy Unicode keys, floats, signed zero and media",
+		"request": {
+			"kind": "install",
+			"gameId": "12345678-1234-4234-8234-123456789abd",
+			"sessionId": "12345678-1234-4234-8234-123456789abe",
+			"packageFormatVersion": 1,
+			"release": {
+				"originalGameId": "12345678-1234-4234-8234-123456789abc",
+				"contentVersion": "1.0.0",
+				"contentHash": "e0e130a69d6e44a2c983d33299293923f89183752210221c78b192b9a3cf8fa8",
+				"createdAt": "2026-11-23T00:00:00.000Z",
+				"content": {
+					"title": "별빛 이야기 🌌",
+					"genre": "Adventure",
+					"description": "Public description",
+					"settings": {
+						"description": "Authored instructions\n",
+						"firstMessage": "Welcome",
+						"authorNote": "Stay in character"
+					},
+					"schema": {
+						"type": "object",
+						"properties": {
+							"": {
+								"type": "number"
+							},
+							"tiny": {
+								"type": "number"
+							},
+							"large": {
+								"type": "number"
+							},
+							"label": {
+								"type": "string"
+							},
+							"😀": {
+								"type": "number"
+							}
+						},
+						"additionalProperties": false
+					},
+					"initialState": {
+						"": 1.25,
+						"tiny": 1e-7,
+						"large": 1e21,
+						"label": "é 한글  ",
+						"😀": 0
+					},
+					"ai": {
+						"version": 1,
+						"lorebook": [
+							{
+								"id": "lore-1",
+								"name": "World",
+								"keys": ["forest"],
+								"content": "Ancient forest",
+								"order": 0,
+								"always": true,
+								"enabled": true,
+								"caseSensitive": false
+							}
+						],
+						"folders": ["World"]
+					},
+					"regex": [
+						{
+							"id": "rule-1",
+							"name": "Display",
+							"enabled": true,
+							"stage": "display",
+							"roles": ["assistant"],
+							"pattern": "forest",
+							"replacement": "woods",
+							"flags": "g"
+						}
+					],
+					"resources": {
+						"portrait": {
+							"name": "images/portrait.png",
+							"mime": "image/png",
+							"data": "data:image/png;base64,AAEC/w=="
+						},
+						"music": {
+							"name": "audio/theme.ogg",
+							"mime": "audio/ogg",
+							"data": "data:audio/ogg;base64,AQID"
+						}
+					},
+					"scripts": {
+						"rules": {
+							"language": "typescript",
+							"source": "export const rules = {};"
+						}
+					},
+					"ui": {
+						"version": 1,
+						"entry": "main.tsx",
+						"modules": {
+							"main.tsx": {
+								"language": "tsx",
+								"source": "export default () => <p>Hello</p>;"
+							}
+						},
+						"styles": "p { color: red; }",
+						"layout": {
+							"kind": "panel",
+							"id": "main"
+						},
+						"chatDock": "right",
+						"chatRatio": 0.3,
+						"chatStyle": {
+							"color": "white"
+						}
+					}
+				}
+			}
+		},
+		"expect": {
+			"accepted": true,
+			"normalizedContent": {
+				"title": "별빛 이야기 🌌",
+				"genre": "Adventure",
+				"description": "Public description",
+				"settings": {
+					"description": "Authored instructions\n",
+					"firstMessage": "Welcome",
+					"authorNote": "Stay in character"
+				},
+				"schema": {
+					"type": "object",
+					"properties": {
+						"": {
+							"type": "number"
+						},
+						"tiny": {
+							"type": "number"
+						},
+						"large": {
+							"type": "number"
+						},
+						"label": {
+							"type": "string"
+						},
+						"😀": {
+							"type": "number"
+						}
+					},
+					"additionalProperties": false
+				},
+				"initialState": {
+					"": 1.25,
+					"tiny": 1e-7,
+					"large": 1e21,
+					"label": "é 한글  ",
+					"😀": 0
+				},
+				"ai": {
+					"version": 1,
+					"lorebook": [
+						{
+							"id": "lore-1",
+							"name": "World",
+							"keys": ["forest"],
+							"content": "Ancient forest",
+							"order": 0,
+							"always": true,
+							"enabled": true,
+							"caseSensitive": false
+						}
+					],
+					"folders": ["World"]
+				},
+				"regex": [
+					{
+						"id": "rule-1",
+						"name": "Display",
+						"enabled": true,
+						"stage": "display",
+						"roles": ["assistant"],
+						"pattern": "forest",
+						"replacement": "woods",
+						"flags": "g"
+					}
+				],
+				"resources": {
+					"portrait": {
+						"name": "images/portrait.png",
+						"mime": "image/png",
+						"data": "data:image/png;base64,AAEC/w=="
+					},
+					"music": {
+						"name": "audio/theme.ogg",
+						"mime": "audio/ogg",
+						"data": "data:audio/ogg;base64,AQID"
+					}
+				},
+				"scripts": {
+					"rules": {
+						"language": "typescript",
+						"source": "export const rules = {};"
+					}
+				},
+				"ui": {
+					"version": 1,
+					"entry": "main.tsx",
+					"modules": {
+						"main.tsx": {
+							"language": "tsx",
+							"source": "export default () => <p>Hello</p>;"
+						}
+					},
+					"styles": "p { color: red; }",
+					"layout": {
+						"kind": "panel",
+						"id": "main"
+					},
+					"chatDock": "right",
+					"chatRatio": 0.3,
+					"chatStyle": {
+						"color": "white"
+					}
+				}
+			},
+			"contentHash": "e0e130a69d6e44a2c983d33299293923f89183752210221c78b192b9a3cf8fa8"
+		}
+	},
+	{
+		"name": "source project overrides derived scripts and UI",
+		"request": {
+			"kind": "install",
+			"gameId": "12345678-1234-4234-8234-123456789abd",
+			"sessionId": "12345678-1234-4234-8234-123456789abe",
+			"packageFormatVersion": 1,
+			"release": {
+				"originalGameId": "12345678-1234-4234-8234-123456789abc",
+				"contentVersion": "1.0.0",
+				"contentHash": "3d5f53003cfcbb05ae386d0dda41a8cdcb03471991af284d8cc4c809544cefc8",
+				"createdAt": "2026-11-23T00:00:00.000Z",
+				"content": {
+					"title": "별빛 이야기 🌌",
+					"genre": "Adventure",
+					"description": "Public description",
+					"settings": {
+						"description": "Authored instructions\n",
+						"firstMessage": "Welcome",
+						"authorNote": "Stay in character"
+					},
+					"schema": {
+						"type": "object",
+						"properties": {
+							"": {
+								"type": "number"
+							},
+							"tiny": {
+								"type": "number"
+							},
+							"large": {
+								"type": "number"
+							},
+							"label": {
+								"type": "string"
+							},
+							"😀": {
+								"type": "number"
+							}
+						},
+						"additionalProperties": false
+					},
+					"initialState": {
+						"": 1.25,
+						"tiny": 1e-7,
+						"large": 1e21,
+						"label": "é 한글  ",
+						"😀": 0
+					},
+					"ai": {
+						"version": 1,
+						"lorebook": [
+							{
+								"id": "lore-1",
+								"name": "World",
+								"keys": ["forest"],
+								"content": "Ancient forest",
+								"order": 0,
+								"always": true,
+								"enabled": true,
+								"caseSensitive": false
+							}
+						],
+						"folders": ["World"]
+					},
+					"regex": [
+						{
+							"id": "rule-1",
+							"name": "Display",
+							"enabled": true,
+							"stage": "display",
+							"roles": ["assistant"],
+							"pattern": "forest",
+							"replacement": "woods",
+							"flags": "g"
+						}
+					],
+					"resources": {
+						"portrait": {
+							"name": "images/portrait.png",
+							"mime": "image/png",
+							"data": "data:image/png;base64,AAEC/w=="
+						},
+						"music": {
+							"name": "audio/theme.ogg",
+							"mime": "audio/ogg",
+							"data": "data:audio/ogg;base64,AQID"
+						}
+					},
+					"code": {
+						"version": 1,
+						"entry": "main.ts",
+						"files": {
+							"main.ts": {
+								"language": "typescript",
+								"source": "export {};"
+							},
+							"style.css": {
+								"language": "css",
+								"source": "body { color: white; }"
+							}
+						},
+						"folders": ["empty"],
+						"presentation": {
+							"chatDock": "left",
+							"chatRatio": 0.4,
+							"chatStyle": {
+								"color": "white"
+							}
+						}
+					}
+				}
+			}
+		},
+		"expect": {
+			"accepted": true,
+			"normalizedContent": {
+				"title": "별빛 이야기 🌌",
+				"genre": "Adventure",
+				"description": "Public description",
+				"settings": {
+					"description": "Authored instructions\n",
+					"firstMessage": "Welcome",
+					"authorNote": "Stay in character"
+				},
+				"schema": {
+					"type": "object",
+					"properties": {
+						"": {
+							"type": "number"
+						},
+						"tiny": {
+							"type": "number"
+						},
+						"large": {
+							"type": "number"
+						},
+						"label": {
+							"type": "string"
+						},
+						"😀": {
+							"type": "number"
+						}
+					},
+					"additionalProperties": false
+				},
+				"initialState": {
+					"": 1.25,
+					"tiny": 1e-7,
+					"large": 1e21,
+					"label": "é 한글  ",
+					"😀": 0
+				},
+				"ai": {
+					"version": 1,
+					"lorebook": [
+						{
+							"id": "lore-1",
+							"name": "World",
+							"keys": ["forest"],
+							"content": "Ancient forest",
+							"order": 0,
+							"always": true,
+							"enabled": true,
+							"caseSensitive": false
+						}
+					],
+					"folders": ["World"]
+				},
+				"regex": [
+					{
+						"id": "rule-1",
+						"name": "Display",
+						"enabled": true,
+						"stage": "display",
+						"roles": ["assistant"],
+						"pattern": "forest",
+						"replacement": "woods",
+						"flags": "g"
+					}
+				],
+				"resources": {
+					"portrait": {
+						"name": "images/portrait.png",
+						"mime": "image/png",
+						"data": "data:image/png;base64,AAEC/w=="
+					},
+					"music": {
+						"name": "audio/theme.ogg",
+						"mime": "audio/ogg",
+						"data": "data:audio/ogg;base64,AQID"
+					}
+				},
+				"code": {
+					"version": 1,
+					"entry": "main.ts",
+					"files": {
+						"main.ts": {
+							"language": "typescript",
+							"source": "export {};"
+						},
+						"style.css": {
+							"language": "css",
+							"source": "body { color: white; }"
+						}
+					},
+					"folders": ["empty"],
+					"presentation": {
+						"chatDock": "left",
+						"chatRatio": 0.4,
+						"chatStyle": {
+							"color": "white"
+						}
+					}
+				}
+			},
+			"contentHash": "3d5f53003cfcbb05ae386d0dda41a8cdcb03471991af284d8cc4c809544cefc8"
+		}
+	},
+	{
+		"name": "legacy JS/JSX project normalization and unknown field removal",
+		"request": {
+			"kind": "install",
+			"gameId": "12345678-1234-4234-8234-123456789abd",
+			"sessionId": "12345678-1234-4234-8234-123456789abe",
+			"packageFormatVersion": 1,
+			"release": {
+				"originalGameId": "12345678-1234-4234-8234-123456789abc",
+				"contentVersion": "1.0.0",
+				"contentHash": "8d117adf5603c2c7843734c4230004fc05956d2273c411a8feba80d6d9e79b17",
+				"createdAt": "2026-11-23T00:00:00.000Z",
+				"content": {
+					"title": "별빛 이야기 🌌",
+					"genre": "Adventure",
+					"description": "Public description",
+					"settings": {
+						"description": "Authored instructions\n",
+						"firstMessage": "Welcome",
+						"authorNote": "Stay in character"
+					},
+					"schema": {
+						"type": "object",
+						"properties": {
+							"": {
+								"type": "number"
+							},
+							"tiny": {
+								"type": "number"
+							},
+							"large": {
+								"type": "number"
+							},
+							"label": {
+								"type": "string"
+							},
+							"😀": {
+								"type": "number"
+							}
+						},
+						"additionalProperties": false
+					},
+					"initialState": {
+						"": 1.25,
+						"tiny": 1e-7,
+						"large": 1e21,
+						"label": "é 한글  ",
+						"😀": 0
+					},
+					"ai": {
+						"version": 1,
+						"lorebook": [
+							{
+								"id": "lore-1",
+								"name": "World",
+								"keys": ["forest"],
+								"content": "Ancient forest",
+								"order": 0,
+								"always": true,
+								"enabled": true,
+								"caseSensitive": false
+							}
+						],
+						"folders": ["World"]
+					},
+					"regex": [
+						{
+							"id": "rule-1",
+							"name": "Display",
+							"enabled": true,
+							"stage": "display",
+							"roles": ["assistant"],
+							"pattern": "forest",
+							"replacement": "woods",
+							"flags": "g"
+						}
+					],
+					"resources": {
+						"portrait": {
+							"name": "images/portrait.png",
+							"mime": "image/png",
+							"data": "data:image/png;base64,AAEC/w=="
+						},
+						"music": {
+							"name": "audio/theme.ogg",
+							"mime": "audio/ogg",
+							"data": "data:audio/ogg;base64,AQID"
+						}
+					},
+					"code": {
+						"version": 1,
+						"entry": "main.tsx",
+						"files": {
+							"main.tsx": {
+								"language": "tsx",
+								"source": "import View from \"./view\";\nconst load = import(\"./other\");\nexport {x} from \"../shared\";\nconst unchanged = \"./other.js\";"
+							},
+							"view.tsx": {
+								"language": "tsx",
+								"source": "export default () => <p>Hello</p>;"
+							},
+							"other.ts": {
+								"language": "typescript",
+								"source": "export const other = 1;"
+							},
+							"style.css": {
+								"language": "css",
+								"source": "p { color: white; }"
+							}
+						},
+						"folders": ["empty", "nested"],
+						"presentation": {
+							"layout": {
+								"kind": "panel",
+								"id": "main"
+							},
+							"chatDock": "left",
+							"chatRatio": 0.4,
+							"chatStyle": {
+								"color": "white"
+							}
+						}
+					}
+				}
+			}
+		},
+		"expect": {
+			"accepted": true,
+			"normalizedContent": {
+				"title": "별빛 이야기 🌌",
+				"genre": "Adventure",
+				"description": "Public description",
+				"settings": {
+					"description": "Authored instructions\n",
+					"firstMessage": "Welcome",
+					"authorNote": "Stay in character"
+				},
+				"schema": {
+					"type": "object",
+					"properties": {
+						"": {
+							"type": "number"
+						},
+						"tiny": {
+							"type": "number"
+						},
+						"large": {
+							"type": "number"
+						},
+						"label": {
+							"type": "string"
+						},
+						"😀": {
+							"type": "number"
+						}
+					},
+					"additionalProperties": false
+				},
+				"initialState": {
+					"": 1.25,
+					"tiny": 1e-7,
+					"large": 1e21,
+					"label": "é 한글  ",
+					"😀": 0
+				},
+				"ai": {
+					"version": 1,
+					"lorebook": [
+						{
+							"id": "lore-1",
+							"name": "World",
+							"keys": ["forest"],
+							"content": "Ancient forest",
+							"order": 0,
+							"always": true,
+							"enabled": true,
+							"caseSensitive": false
+						}
+					],
+					"folders": ["World"]
+				},
+				"regex": [
+					{
+						"id": "rule-1",
+						"name": "Display",
+						"enabled": true,
+						"stage": "display",
+						"roles": ["assistant"],
+						"pattern": "forest",
+						"replacement": "woods",
+						"flags": "g"
+					}
+				],
+				"resources": {
+					"portrait": {
+						"name": "images/portrait.png",
+						"mime": "image/png",
+						"data": "data:image/png;base64,AAEC/w=="
+					},
+					"music": {
+						"name": "audio/theme.ogg",
+						"mime": "audio/ogg",
+						"data": "data:audio/ogg;base64,AQID"
+					}
+				},
+				"code": {
+					"version": 1,
+					"entry": "main.tsx",
+					"files": {
+						"main.tsx": {
+							"language": "tsx",
+							"source": "import View from \"./view\";\nconst load = import(\"./other\");\nexport {x} from \"../shared\";\nconst unchanged = \"./other.js\";"
+						},
+						"view.tsx": {
+							"language": "tsx",
+							"source": "export default () => <p>Hello</p>;"
+						},
+						"other.ts": {
+							"language": "typescript",
+							"source": "export const other = 1;"
+						},
+						"style.css": {
+							"language": "css",
+							"source": "p { color: white; }"
+						}
+					},
+					"folders": ["empty", "nested"],
+					"presentation": {
+						"layout": {
+							"kind": "panel",
+							"id": "main"
+						},
+						"chatDock": "left",
+						"chatRatio": 0.4,
+						"chatStyle": {
+							"color": "white"
+						}
+					}
+				}
+			},
+			"contentHash": "8d117adf5603c2c7843734c4230004fc05956d2273c411a8feba80d6d9e79b17"
+		}
+	},
+	{
+		"name": "shared assets",
+		"request": {
+			"kind": "install",
+			"gameId": "12345678-1234-4234-8234-123456789abd",
+			"sessionId": "12345678-1234-4234-8234-123456789abe",
+			"packageFormatVersion": 1,
+			"release": {
+				"originalGameId": "12345678-1234-4234-8234-123456789abc",
+				"contentVersion": "1.0.0",
+				"contentHash": "c1fc5248cf38faddf7e464e3e64237549a2cbfbd55c7e5ed844b3a53f7a83c35",
+				"createdAt": "2026-11-23T00:00:00.000Z",
+				"content": {
+					"title": "별빛 이야기 🌌",
+					"genre": "Adventure",
+					"description": "Public description",
+					"settings": {
+						"description": "Authored instructions\n",
+						"firstMessage": "Welcome",
+						"authorNote": "Stay in character"
+					},
+					"schema": {
+						"type": "object",
+						"properties": {
+							"": {
+								"type": "number"
+							},
+							"tiny": {
+								"type": "number"
+							},
+							"large": {
+								"type": "number"
+							},
+							"label": {
+								"type": "string"
+							},
+							"😀": {
+								"type": "number"
+							}
+						},
+						"additionalProperties": false
+					},
+					"initialState": {
+						"": 1.25,
+						"tiny": 1e-7,
+						"large": 1e21,
+						"label": "é 한글  ",
+						"😀": 0
+					},
+					"ai": {
+						"version": 1,
+						"lorebook": [
+							{
+								"id": "lore-1",
+								"name": "World",
+								"keys": ["forest"],
+								"content": "Ancient forest",
+								"order": 0,
+								"always": true,
+								"enabled": true,
+								"caseSensitive": false
+							}
+						],
+						"folders": ["World"]
+					},
+					"regex": [
+						{
+							"id": "rule-1",
+							"name": "Display",
+							"enabled": true,
+							"stage": "display",
+							"roles": ["assistant"],
+							"pattern": "forest",
+							"replacement": "woods",
+							"flags": "g"
+						}
+					],
+					"resources": {
+						"portrait": {
+							"name": "images/portrait.png",
+							"mime": "image/png",
+							"data": "data:image/png;base64,AAEC/w=="
+						},
+						"music": {
+							"name": "audio/theme.ogg",
+							"mime": "audio/ogg",
+							"data": "data:audio/ogg;base64,AQID"
+						},
+						"copy": {
+							"name": "copy.png",
+							"mime": "image/png",
+							"data": "data:image/png;base64,AAEC/w=="
+						}
+					},
+					"scripts": {
+						"rules": {
+							"language": "typescript",
+							"source": "export const rules = {};"
+						}
+					},
+					"ui": {
+						"version": 1,
+						"entry": "main.tsx",
+						"modules": {
+							"main.tsx": {
+								"language": "tsx",
+								"source": "export default () => <p>Hello</p>;"
+							}
+						},
+						"styles": "p { color: red; }",
+						"layout": {
+							"kind": "panel",
+							"id": "main"
+						},
+						"chatDock": "right",
+						"chatRatio": 0.3,
+						"chatStyle": {
+							"color": "white"
+						}
+					}
+				}
+			}
+		},
+		"expect": {
+			"accepted": true,
+			"normalizedContent": {
+				"title": "별빛 이야기 🌌",
+				"genre": "Adventure",
+				"description": "Public description",
+				"settings": {
+					"description": "Authored instructions\n",
+					"firstMessage": "Welcome",
+					"authorNote": "Stay in character"
+				},
+				"schema": {
+					"type": "object",
+					"properties": {
+						"": {
+							"type": "number"
+						},
+						"tiny": {
+							"type": "number"
+						},
+						"large": {
+							"type": "number"
+						},
+						"label": {
+							"type": "string"
+						},
+						"😀": {
+							"type": "number"
+						}
+					},
+					"additionalProperties": false
+				},
+				"initialState": {
+					"": 1.25,
+					"tiny": 1e-7,
+					"large": 1e21,
+					"label": "é 한글  ",
+					"😀": 0
+				},
+				"ai": {
+					"version": 1,
+					"lorebook": [
+						{
+							"id": "lore-1",
+							"name": "World",
+							"keys": ["forest"],
+							"content": "Ancient forest",
+							"order": 0,
+							"always": true,
+							"enabled": true,
+							"caseSensitive": false
+						}
+					],
+					"folders": ["World"]
+				},
+				"regex": [
+					{
+						"id": "rule-1",
+						"name": "Display",
+						"enabled": true,
+						"stage": "display",
+						"roles": ["assistant"],
+						"pattern": "forest",
+						"replacement": "woods",
+						"flags": "g"
+					}
+				],
+				"resources": {
+					"portrait": {
+						"name": "images/portrait.png",
+						"mime": "image/png",
+						"data": "data:image/png;base64,AAEC/w=="
+					},
+					"music": {
+						"name": "audio/theme.ogg",
+						"mime": "audio/ogg",
+						"data": "data:audio/ogg;base64,AQID"
+					},
+					"copy": {
+						"name": "copy.png",
+						"mime": "image/png",
+						"data": "data:image/png;base64,AAEC/w=="
+					}
+				},
+				"scripts": {
+					"rules": {
+						"language": "typescript",
+						"source": "export const rules = {};"
+					}
+				},
+				"ui": {
+					"version": 1,
+					"entry": "main.tsx",
+					"modules": {
+						"main.tsx": {
+							"language": "tsx",
+							"source": "export default () => <p>Hello</p>;"
+						}
+					},
+					"styles": "p { color: red; }",
+					"layout": {
+						"kind": "panel",
+						"id": "main"
+					},
+					"chatDock": "right",
+					"chatRatio": 0.3,
+					"chatStyle": {
+						"color": "white"
+					}
+				}
+			},
+			"contentHash": "c1fc5248cf38faddf7e464e3e64237549a2cbfbd55c7e5ed844b3a53f7a83c35"
+		}
+	},
+	{
+		"name": "code presentation",
+		"request": {
+			"kind": "install",
+			"gameId": "12345678-1234-4234-8234-123456789abd",
+			"sessionId": "12345678-1234-4234-8234-123456789abe",
+			"packageFormatVersion": 1,
+			"release": {
+				"originalGameId": "12345678-1234-4234-8234-123456789abc",
+				"contentVersion": "1.0.0",
+				"contentHash": "aebc6c4bf7868407ad36787242c5ce2c52a90fc8355bde4767c0bb2287e3e6dd",
+				"createdAt": "2026-11-23T00:00:00.000Z",
+				"content": {
+					"title": "Adventure",
+					"genre": "Fantasy",
+					"description": "Public",
+					"settings": {
+						"description": "Instructions",
+						"firstMessage": "Welcome",
+						"authorNote": ""
+					},
+					"schema": {
+						"type": "object",
+						"properties": {},
+						"additionalProperties": false
+					},
+					"initialState": {},
+					"regex": [],
+					"resources": {},
+					"code": {
+						"version": 1,
+						"entry": "main.ts",
+						"files": {
+							"main.ts": {
+								"language": "typescript",
+								"source": "export {};"
+							}
+						},
+						"presentation": {
+							"chatDock": "right",
+							"chatRatio": 0.4
+						}
+					}
+				}
+			}
+		},
+		"expect": {
+			"accepted": true,
+			"normalizedContent": {
+				"title": "Adventure",
+				"genre": "Fantasy",
+				"description": "Public",
+				"settings": {
+					"description": "Instructions",
+					"firstMessage": "Welcome",
+					"authorNote": ""
+				},
+				"schema": {
+					"type": "object",
+					"properties": {},
+					"additionalProperties": false
+				},
+				"initialState": {},
+				"regex": [],
+				"resources": {},
+				"code": {
+					"version": 1,
+					"entry": "main.ts",
+					"files": {
+						"main.ts": {
+							"language": "typescript",
+							"source": "export {};"
+						}
+					},
+					"presentation": {
+						"chatDock": "right",
+						"chatRatio": 0.4
+					}
+				}
+			},
+			"contentHash": "aebc6c4bf7868407ad36787242c5ce2c52a90fc8355bde4767c0bb2287e3e6dd"
+		}
+	},
+	{
+		"name": "metadata at exact title limit",
+		"request": {
+			"kind": "install",
+			"gameId": "12345678-1234-4234-8234-123456789abd",
+			"sessionId": "12345678-1234-4234-8234-123456789abe",
+			"packageFormatVersion": 1,
+			"release": {
+				"originalGameId": "12345678-1234-4234-8234-123456789abc",
+				"contentVersion": "1.0.0",
+				"contentHash": "5c416cd5418cbff7c8e2f40eb485f16571756dbebb0d615b0f780a0c785e88be",
+				"createdAt": "2026-11-23T00:00:00.000Z",
+				"content": {
+					"title": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+					"genre": "Fantasy",
+					"description": "Public",
+					"settings": {
+						"description": "Instructions",
+						"firstMessage": "Welcome",
+						"authorNote": ""
+					},
+					"schema": {
+						"type": "object",
+						"properties": {},
+						"additionalProperties": false
+					},
+					"initialState": {},
+					"regex": [],
+					"resources": {},
+					"scripts": {}
+				}
+			}
+		},
+		"expect": {
+			"accepted": true,
+			"normalizedContent": {
+				"title": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+				"genre": "Fantasy",
+				"description": "Public",
+				"settings": {
+					"description": "Instructions",
+					"firstMessage": "Welcome",
+					"authorNote": ""
+				},
+				"schema": {
+					"type": "object",
+					"properties": {},
+					"additionalProperties": false
+				},
+				"initialState": {},
+				"regex": [],
+				"resources": {},
+				"scripts": {}
+			},
+			"contentHash": "5c416cd5418cbff7c8e2f40eb485f16571756dbebb0d615b0f780a0c785e88be"
+		}
+	},
+	{
+		"name": "creator keys surrogates and IEEE754",
+		"request": {
+			"kind": "install",
+			"gameId": "12345678-1234-4234-8234-123456789abd",
+			"sessionId": "12345678-1234-4234-8234-123456789abe",
+			"packageFormatVersion": 1,
+			"release": {
+				"originalGameId": "12345678-1234-4234-8234-123456789abc",
+				"contentVersion": "1.0.0",
+				"contentHash": "50a150a14a0c6150d56da464fe6c7d46f058bdc36d894dea24cb929f2da8b8ca",
+				"createdAt": "2026-11-23T00:00:00.000Z",
+				"content": {
+					"title": "Adventure",
+					"genre": "Fantasy",
+					"description": "Public",
+					"settings": {
+						"description": "Instructions",
+						"firstMessage": "Welcome",
+						"authorNote": ""
+					},
+					"schema": {
+						"type": "object",
+						"properties": {
+							"label": {
+								"type": "string"
+							},
+							"tiny": {
+								"type": "number"
+							},
+							"large": {
+								"type": "number"
+							},
+							"😀": {
+								"type": "number"
+							},
+							"\ud800": {
+								"type": "string"
+							},
+							"": {
+								"type": "number"
+							}
+						},
+						"additionalProperties": false
+					},
+					"initialState": {
+						"label": "한글 é 🌌",
+						"tiny": 1e-7,
+						"large": 9007199254740992,
+						"😀": 0,
+						"\ud800": "\udfff",
+						"": 1e21
+					},
+					"regex": [],
+					"resources": {},
+					"scripts": {}
+				}
+			}
+		},
+		"expect": {
+			"accepted": true,
+			"normalizedContent": {
+				"title": "Adventure",
+				"genre": "Fantasy",
+				"description": "Public",
+				"settings": {
+					"description": "Instructions",
+					"firstMessage": "Welcome",
+					"authorNote": ""
+				},
+				"schema": {
+					"type": "object",
+					"properties": {
+						"label": {
+							"type": "string"
+						},
+						"tiny": {
+							"type": "number"
+						},
+						"large": {
+							"type": "number"
+						},
+						"😀": {
+							"type": "number"
+						},
+						"\ud800": {
+							"type": "string"
+						},
+						"": {
+							"type": "number"
+						}
+					},
+					"additionalProperties": false
+				},
+				"initialState": {
+					"label": "한글 é 🌌",
+					"tiny": 1e-7,
+					"large": 9007199254740992,
+					"😀": 0,
+					"\ud800": "\udfff",
+					"": 1e21
+				},
+				"regex": [],
+				"resources": {},
+				"scripts": {}
+			},
+			"contentHash": "50a150a14a0c6150d56da464fe6c7d46f058bdc36d894dea24cb929f2da8b8ca"
+		}
+	},
+	{
+		"name": "code and scripts",
+		"request": {
+			"kind": "install",
+			"gameId": "12345678-1234-4234-8234-123456789abd",
+			"sessionId": "12345678-1234-4234-8234-123456789abe",
+			"packageFormatVersion": 1,
+			"release": {
+				"originalGameId": "12345678-1234-4234-8234-123456789abc",
+				"contentVersion": "1.0.0",
+				"contentHash": "b341648c91145473a29dcae05185af7a34f84fb3d1dd74c3bbf506b3eba6d7d4",
+				"createdAt": "2026-11-23T00:00:00.000Z",
+				"content": {
+					"title": "Adventure",
+					"genre": "Fantasy",
+					"description": "Public",
+					"settings": {
+						"description": "Instructions",
+						"firstMessage": "Welcome",
+						"authorNote": ""
+					},
+					"schema": {
+						"type": "object",
+						"properties": {},
+						"additionalProperties": false
+					},
+					"initialState": {},
+					"regex": [],
+					"resources": {},
+					"code": {
+						"version": 1,
+						"entry": "main.ts",
+						"files": {
+							"main.ts": {
+								"language": "typescript",
+								"source": "export {};"
+							}
+						}
+					},
+					"scripts": {}
+				}
+			}
+		},
+		"expect": {
+			"accepted": false,
+			"errorCode": "nonCanonical"
+		}
+	},
+	{
+		"name": "neither code nor scripts",
+		"request": {
+			"kind": "install",
+			"gameId": "12345678-1234-4234-8234-123456789abd",
+			"sessionId": "12345678-1234-4234-8234-123456789abe",
+			"packageFormatVersion": 1,
+			"release": {
+				"originalGameId": "12345678-1234-4234-8234-123456789abc",
+				"contentVersion": "1.0.0",
+				"contentHash": "a7552d931bd6f3f5c6764ab1eef72c3d403c9a480d43209c6c46ba27dfafba7e",
+				"createdAt": "2026-11-23T00:00:00.000Z",
+				"content": {
+					"title": "Adventure",
+					"genre": "Fantasy",
+					"description": "Public",
+					"settings": {
+						"description": "Instructions",
+						"firstMessage": "Welcome",
+						"authorNote": ""
+					},
+					"schema": {
+						"type": "object",
+						"properties": {},
+						"additionalProperties": false
+					},
+					"initialState": {},
+					"regex": [],
+					"resources": {}
+				}
+			}
+		},
+		"expect": {
+			"accepted": false,
+			"errorCode": "nonCanonical"
+		}
+	},
+	{
+		"name": "installation key schemaVersion",
+		"request": {
+			"kind": "install",
+			"gameId": "12345678-1234-4234-8234-123456789abd",
+			"sessionId": "12345678-1234-4234-8234-123456789abe",
+			"packageFormatVersion": 1,
+			"release": {
+				"originalGameId": "12345678-1234-4234-8234-123456789abc",
+				"contentVersion": "1.0.0",
+				"contentHash": "a7552d931bd6f3f5c6764ab1eef72c3d403c9a480d43209c6c46ba27dfafba7e",
+				"createdAt": "2026-11-23T00:00:00.000Z",
+				"content": {
+					"title": "Adventure",
+					"genre": "Fantasy",
+					"description": "Public",
+					"settings": {
+						"description": "Instructions",
+						"firstMessage": "Welcome",
+						"authorNote": ""
+					},
+					"schema": {
+						"type": "object",
+						"properties": {},
+						"additionalProperties": false
+					},
+					"initialState": {},
+					"regex": [],
+					"resources": {},
+					"scripts": {},
+					"schemaVersion": null
+				}
+			}
+		},
+		"expect": {
+			"accepted": false,
+			"errorCode": "installOnlyKey"
+		}
+	},
+	{
+		"name": "installation key id",
+		"request": {
+			"kind": "install",
+			"gameId": "12345678-1234-4234-8234-123456789abd",
+			"sessionId": "12345678-1234-4234-8234-123456789abe",
+			"packageFormatVersion": 1,
+			"release": {
+				"originalGameId": "12345678-1234-4234-8234-123456789abc",
+				"contentVersion": "1.0.0",
+				"contentHash": "a7552d931bd6f3f5c6764ab1eef72c3d403c9a480d43209c6c46ba27dfafba7e",
+				"createdAt": "2026-11-23T00:00:00.000Z",
+				"content": {
+					"title": "Adventure",
+					"genre": "Fantasy",
+					"description": "Public",
+					"settings": {
+						"description": "Instructions",
+						"firstMessage": "Welcome",
+						"authorNote": ""
+					},
+					"schema": {
+						"type": "object",
+						"properties": {},
+						"additionalProperties": false
+					},
+					"initialState": {},
+					"regex": [],
+					"resources": {},
+					"scripts": {},
+					"id": null
+				}
+			}
+		},
+		"expect": {
+			"accepted": false,
+			"errorCode": "installOnlyKey"
+		}
+	},
+	{
+		"name": "installation key originalGameId",
+		"request": {
+			"kind": "install",
+			"gameId": "12345678-1234-4234-8234-123456789abd",
+			"sessionId": "12345678-1234-4234-8234-123456789abe",
+			"packageFormatVersion": 1,
+			"release": {
+				"originalGameId": "12345678-1234-4234-8234-123456789abc",
+				"contentVersion": "1.0.0",
+				"contentHash": "a7552d931bd6f3f5c6764ab1eef72c3d403c9a480d43209c6c46ba27dfafba7e",
+				"createdAt": "2026-11-23T00:00:00.000Z",
+				"content": {
+					"title": "Adventure",
+					"genre": "Fantasy",
+					"description": "Public",
+					"settings": {
+						"description": "Instructions",
+						"firstMessage": "Welcome",
+						"authorNote": ""
+					},
+					"schema": {
+						"type": "object",
+						"properties": {},
+						"additionalProperties": false
+					},
+					"initialState": {},
+					"regex": [],
+					"resources": {},
+					"scripts": {},
+					"originalGameId": null
+				}
+			}
+		},
+		"expect": {
+			"accepted": false,
+			"errorCode": "installOnlyKey"
+		}
+	},
+	{
+		"name": "installation key activeSessionId",
+		"request": {
+			"kind": "install",
+			"gameId": "12345678-1234-4234-8234-123456789abd",
+			"sessionId": "12345678-1234-4234-8234-123456789abe",
+			"packageFormatVersion": 1,
+			"release": {
+				"originalGameId": "12345678-1234-4234-8234-123456789abc",
+				"contentVersion": "1.0.0",
+				"contentHash": "a7552d931bd6f3f5c6764ab1eef72c3d403c9a480d43209c6c46ba27dfafba7e",
+				"createdAt": "2026-11-23T00:00:00.000Z",
+				"content": {
+					"title": "Adventure",
+					"genre": "Fantasy",
+					"description": "Public",
+					"settings": {
+						"description": "Instructions",
+						"firstMessage": "Welcome",
+						"authorNote": ""
+					},
+					"schema": {
+						"type": "object",
+						"properties": {},
+						"additionalProperties": false
+					},
+					"initialState": {},
+					"regex": [],
+					"resources": {},
+					"scripts": {},
+					"activeSessionId": null
+				}
+			}
+		},
+		"expect": {
+			"accepted": false,
+			"errorCode": "installOnlyKey"
+		}
+	},
+	{
+		"name": "installation key createdAt",
+		"request": {
+			"kind": "install",
+			"gameId": "12345678-1234-4234-8234-123456789abd",
+			"sessionId": "12345678-1234-4234-8234-123456789abe",
+			"packageFormatVersion": 1,
+			"release": {
+				"originalGameId": "12345678-1234-4234-8234-123456789abc",
+				"contentVersion": "1.0.0",
+				"contentHash": "a7552d931bd6f3f5c6764ab1eef72c3d403c9a480d43209c6c46ba27dfafba7e",
+				"createdAt": "2026-11-23T00:00:00.000Z",
+				"content": {
+					"title": "Adventure",
+					"genre": "Fantasy",
+					"description": "Public",
+					"settings": {
+						"description": "Instructions",
+						"firstMessage": "Welcome",
+						"authorNote": ""
+					},
+					"schema": {
+						"type": "object",
+						"properties": {},
+						"additionalProperties": false
+					},
+					"initialState": {},
+					"regex": [],
+					"resources": {},
+					"scripts": {},
+					"createdAt": null
+				}
+			}
+		},
+		"expect": {
+			"accepted": false,
+			"errorCode": "installOnlyKey"
+		}
+	},
+	{
+		"name": "installation key updatedAt",
+		"request": {
+			"kind": "install",
+			"gameId": "12345678-1234-4234-8234-123456789abd",
+			"sessionId": "12345678-1234-4234-8234-123456789abe",
+			"packageFormatVersion": 1,
+			"release": {
+				"originalGameId": "12345678-1234-4234-8234-123456789abc",
+				"contentVersion": "1.0.0",
+				"contentHash": "a7552d931bd6f3f5c6764ab1eef72c3d403c9a480d43209c6c46ba27dfafba7e",
+				"createdAt": "2026-11-23T00:00:00.000Z",
+				"content": {
+					"title": "Adventure",
+					"genre": "Fantasy",
+					"description": "Public",
+					"settings": {
+						"description": "Instructions",
+						"firstMessage": "Welcome",
+						"authorNote": ""
+					},
+					"schema": {
+						"type": "object",
+						"properties": {},
+						"additionalProperties": false
+					},
+					"initialState": {},
+					"regex": [],
+					"resources": {},
+					"scripts": {},
+					"updatedAt": null
+				}
+			}
+		},
+		"expect": {
+			"accepted": false,
+			"errorCode": "installOnlyKey"
+		}
+	},
+	{
+		"name": "installation key trashedAt",
+		"request": {
+			"kind": "install",
+			"gameId": "12345678-1234-4234-8234-123456789abd",
+			"sessionId": "12345678-1234-4234-8234-123456789abe",
+			"packageFormatVersion": 1,
+			"release": {
+				"originalGameId": "12345678-1234-4234-8234-123456789abc",
+				"contentVersion": "1.0.0",
+				"contentHash": "a7552d931bd6f3f5c6764ab1eef72c3d403c9a480d43209c6c46ba27dfafba7e",
+				"createdAt": "2026-11-23T00:00:00.000Z",
+				"content": {
+					"title": "Adventure",
+					"genre": "Fantasy",
+					"description": "Public",
+					"settings": {
+						"description": "Instructions",
+						"firstMessage": "Welcome",
+						"authorNote": ""
+					},
+					"schema": {
+						"type": "object",
+						"properties": {},
+						"additionalProperties": false
+					},
+					"initialState": {},
+					"regex": [],
+					"resources": {},
+					"scripts": {},
+					"trashedAt": null
+				}
+			}
+		},
+		"expect": {
+			"accepted": false,
+			"errorCode": "installOnlyKey"
+		}
+	},
+	{
+		"name": "installation key installedFrom",
+		"request": {
+			"kind": "install",
+			"gameId": "12345678-1234-4234-8234-123456789abd",
+			"sessionId": "12345678-1234-4234-8234-123456789abe",
+			"packageFormatVersion": 1,
+			"release": {
+				"originalGameId": "12345678-1234-4234-8234-123456789abc",
+				"contentVersion": "1.0.0",
+				"contentHash": "a7552d931bd6f3f5c6764ab1eef72c3d403c9a480d43209c6c46ba27dfafba7e",
+				"createdAt": "2026-11-23T00:00:00.000Z",
+				"content": {
+					"title": "Adventure",
+					"genre": "Fantasy",
+					"description": "Public",
+					"settings": {
+						"description": "Instructions",
+						"firstMessage": "Welcome",
+						"authorNote": ""
+					},
+					"schema": {
+						"type": "object",
+						"properties": {},
+						"additionalProperties": false
+					},
+					"initialState": {},
+					"regex": [],
+					"resources": {},
+					"scripts": {},
+					"installedFrom": null
+				}
+			}
+		},
+		"expect": {
+			"accepted": false,
+			"errorCode": "installOnlyKey"
+		}
+	},
+	{
+		"name": "installation key editLock",
+		"request": {
+			"kind": "install",
+			"gameId": "12345678-1234-4234-8234-123456789abd",
+			"sessionId": "12345678-1234-4234-8234-123456789abe",
+			"packageFormatVersion": 1,
+			"release": {
+				"originalGameId": "12345678-1234-4234-8234-123456789abc",
+				"contentVersion": "1.0.0",
+				"contentHash": "a7552d931bd6f3f5c6764ab1eef72c3d403c9a480d43209c6c46ba27dfafba7e",
+				"createdAt": "2026-11-23T00:00:00.000Z",
+				"content": {
+					"title": "Adventure",
+					"genre": "Fantasy",
+					"description": "Public",
+					"settings": {
+						"description": "Instructions",
+						"firstMessage": "Welcome",
+						"authorNote": ""
+					},
+					"schema": {
+						"type": "object",
+						"properties": {},
+						"additionalProperties": false
+					},
+					"initialState": {},
+					"regex": [],
+					"resources": {},
+					"scripts": {},
+					"editLock": null
+				}
+			}
+		},
+		"expect": {
+			"accepted": false,
+			"errorCode": "installOnlyKey"
+		}
+	},
+	{
+		"name": "compiled script compiled",
+		"request": {
+			"kind": "install",
+			"gameId": "12345678-1234-4234-8234-123456789abd",
+			"sessionId": "12345678-1234-4234-8234-123456789abe",
+			"packageFormatVersion": 1,
+			"release": {
+				"originalGameId": "12345678-1234-4234-8234-123456789abc",
+				"contentVersion": "1.0.0",
+				"contentHash": "5302d84d84391fd78a2d7cb1b170655703a3bc283e3025423b47ac3dd5fb7371",
+				"createdAt": "2026-11-23T00:00:00.000Z",
+				"content": {
+					"title": "Adventure",
+					"genre": "Fantasy",
+					"description": "Public",
+					"settings": {
+						"description": "Instructions",
+						"firstMessage": "Welcome",
+						"authorNote": ""
+					},
+					"schema": {
+						"type": "object",
+						"properties": {},
+						"additionalProperties": false
+					},
+					"initialState": {},
+					"regex": [],
+					"resources": {},
+					"scripts": {
+						"main": {
+							"language": "typescript",
+							"source": "export {};",
+							"compiled": "derived"
+						}
+					}
+				}
+			}
+		},
+		"expect": {
+			"accepted": false,
+			"errorCode": "nonCanonical"
+		}
+	},
+	{
+		"name": "compiled script compiledFor",
+		"request": {
+			"kind": "install",
+			"gameId": "12345678-1234-4234-8234-123456789abd",
+			"sessionId": "12345678-1234-4234-8234-123456789abe",
+			"packageFormatVersion": 1,
+			"release": {
+				"originalGameId": "12345678-1234-4234-8234-123456789abc",
+				"contentVersion": "1.0.0",
+				"contentHash": "236ac897017517cf35e26e1cdc1521272cea8ed9b5dde7d9081a9dd2d1fd5f25",
+				"createdAt": "2026-11-23T00:00:00.000Z",
+				"content": {
+					"title": "Adventure",
+					"genre": "Fantasy",
+					"description": "Public",
+					"settings": {
+						"description": "Instructions",
+						"firstMessage": "Welcome",
+						"authorNote": ""
+					},
+					"schema": {
+						"type": "object",
+						"properties": {},
+						"additionalProperties": false
+					},
+					"initialState": {},
+					"regex": [],
+					"resources": {},
+					"scripts": {
+						"main": {
+							"language": "typescript",
+							"source": "export {};",
+							"compiledFor": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+						}
+					}
+				}
+			}
+		},
+		"expect": {
+			"accepted": false,
+			"errorCode": "nonCanonical"
+		}
+	},
+	{
+		"name": "compiled script artifact",
+		"request": {
+			"kind": "install",
+			"gameId": "12345678-1234-4234-8234-123456789abd",
+			"sessionId": "12345678-1234-4234-8234-123456789abe",
+			"packageFormatVersion": 1,
+			"release": {
+				"originalGameId": "12345678-1234-4234-8234-123456789abc",
+				"contentVersion": "1.0.0",
+				"contentHash": "3d21f39d273a386be6fd5197ecbb07f9b4e35903772739bdc351a8437cc9b5d3",
+				"createdAt": "2026-11-23T00:00:00.000Z",
+				"content": {
+					"title": "Adventure",
+					"genre": "Fantasy",
+					"description": "Public",
+					"settings": {
+						"description": "Instructions",
+						"firstMessage": "Welcome",
+						"authorNote": ""
+					},
+					"schema": {
+						"type": "object",
+						"properties": {},
+						"additionalProperties": false
+					},
+					"initialState": {},
+					"regex": [],
+					"resources": {},
+					"scripts": {
+						"main": {
+							"language": "typescript",
+							"source": "export {};",
+							"artifact": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+						}
+					}
+				}
+			}
+		},
+		"expect": {
+			"accepted": false,
+			"errorCode": "nonCanonical"
+		}
+	},
+	{
+		"name": "null scripts",
+		"request": {
+			"kind": "install",
+			"gameId": "12345678-1234-4234-8234-123456789abd",
+			"sessionId": "12345678-1234-4234-8234-123456789abe",
+			"packageFormatVersion": 1,
+			"release": {
+				"originalGameId": "12345678-1234-4234-8234-123456789abc",
+				"contentVersion": "1.0.0",
+				"contentHash": "a544c267a4f4024cb1ef50098532f10c23fd65060201382108503481838914fb",
+				"createdAt": "2026-11-23T00:00:00.000Z",
+				"content": {
+					"title": "Adventure",
+					"genre": "Fantasy",
+					"description": "Public",
+					"settings": {
+						"description": "Instructions",
+						"firstMessage": "Welcome",
+						"authorNote": ""
+					},
+					"schema": {
+						"type": "object",
+						"properties": {},
+						"additionalProperties": false
+					},
+					"initialState": {},
+					"regex": [],
+					"resources": {},
+					"scripts": null
+				}
+			}
+		},
+		"expect": {
+			"accepted": false,
+			"errorCode": "content"
+		}
+	},
+	{
+		"name": "unknown root field",
+		"request": {
+			"kind": "install",
+			"gameId": "12345678-1234-4234-8234-123456789abd",
+			"sessionId": "12345678-1234-4234-8234-123456789abe",
+			"packageFormatVersion": 1,
+			"release": {
+				"originalGameId": "12345678-1234-4234-8234-123456789abc",
+				"contentVersion": "1.0.0",
+				"contentHash": "a7552d931bd6f3f5c6764ab1eef72c3d403c9a480d43209c6c46ba27dfafba7e",
+				"createdAt": "2026-11-23T00:00:00.000Z",
+				"content": {
+					"title": "Adventure",
+					"genre": "Fantasy",
+					"description": "Public",
+					"settings": {
+						"description": "Instructions",
+						"firstMessage": "Welcome",
+						"authorNote": ""
+					},
+					"schema": {
+						"type": "object",
+						"properties": {},
+						"additionalProperties": false
+					},
+					"initialState": {},
+					"regex": [],
+					"resources": {},
+					"scripts": {},
+					"unknown": true
+				}
+			}
+		},
+		"expect": {
+			"accepted": false,
+			"errorCode": "nonCanonical"
+		}
+	},
+	{
+		"name": "unknown settings field",
+		"request": {
+			"kind": "install",
+			"gameId": "12345678-1234-4234-8234-123456789abd",
+			"sessionId": "12345678-1234-4234-8234-123456789abe",
+			"packageFormatVersion": 1,
+			"release": {
+				"originalGameId": "12345678-1234-4234-8234-123456789abc",
+				"contentVersion": "1.0.0",
+				"contentHash": "a7552d931bd6f3f5c6764ab1eef72c3d403c9a480d43209c6c46ba27dfafba7e",
+				"createdAt": "2026-11-23T00:00:00.000Z",
+				"content": {
+					"title": "Adventure",
+					"genre": "Fantasy",
+					"description": "Public",
+					"settings": {
+						"description": "Instructions",
+						"firstMessage": "Welcome",
+						"authorNote": "",
+						"unknown": true
+					},
+					"schema": {
+						"type": "object",
+						"properties": {},
+						"additionalProperties": false
+					},
+					"initialState": {},
+					"regex": [],
+					"resources": {},
+					"scripts": {}
+				}
+			}
+		},
+		"expect": {
+			"accepted": false,
+			"errorCode": "nonCanonical"
+		}
+	},
+	{
+		"name": "unknown code file field",
+		"request": {
+			"kind": "install",
+			"gameId": "12345678-1234-4234-8234-123456789abd",
+			"sessionId": "12345678-1234-4234-8234-123456789abe",
+			"packageFormatVersion": 1,
+			"release": {
+				"originalGameId": "12345678-1234-4234-8234-123456789abc",
+				"contentVersion": "1.0.0",
+				"contentHash": "aa13af2781863c88048d80587b0e8b151ac58465b0509497ec5cfe9916b38221",
+				"createdAt": "2026-11-23T00:00:00.000Z",
+				"content": {
+					"title": "Adventure",
+					"genre": "Fantasy",
+					"description": "Public",
+					"settings": {
+						"description": "Instructions",
+						"firstMessage": "Welcome",
+						"authorNote": ""
+					},
+					"schema": {
+						"type": "object",
+						"properties": {},
+						"additionalProperties": false
+					},
+					"initialState": {},
+					"regex": [],
+					"resources": {},
+					"code": {
+						"version": 1,
+						"entry": "main.ts",
+						"files": {
+							"main.ts": {
+								"language": "typescript",
+								"source": "export {};",
+								"unknown": true
+							}
+						}
+					}
+				}
+			}
+		},
+		"expect": {
+			"accepted": false,
+			"errorCode": "nonCanonical"
+		}
+	},
+	{
+		"name": "unknown code field",
+		"request": {
+			"kind": "install",
+			"gameId": "12345678-1234-4234-8234-123456789abd",
+			"sessionId": "12345678-1234-4234-8234-123456789abe",
+			"packageFormatVersion": 1,
+			"release": {
+				"originalGameId": "12345678-1234-4234-8234-123456789abc",
+				"contentVersion": "1.0.0",
+				"contentHash": "ad437553928df98efd8e280d8798b4f093f8625f2e7892e0a8a63c3330eec08b",
+				"createdAt": "2026-11-23T00:00:00.000Z",
+				"content": {
+					"title": "Adventure",
+					"genre": "Fantasy",
+					"description": "Public",
+					"settings": {
+						"description": "Instructions",
+						"firstMessage": "Welcome",
+						"authorNote": ""
+					},
+					"schema": {
+						"type": "object",
+						"properties": {},
+						"additionalProperties": false
+					},
+					"initialState": {},
+					"regex": [],
+					"resources": {},
+					"code": {
+						"version": 1,
+						"entry": "main.ts",
+						"files": {
+							"main.ts": {
+								"language": "typescript",
+								"source": "export {};"
+							}
+						},
+						"unknown": true
+					}
+				}
+			}
+		},
+		"expect": {
+			"accepted": false,
+			"errorCode": "nonCanonical"
+		}
+	},
+	{
+		"name": "unknown legacy UI field",
+		"request": {
+			"kind": "install",
+			"gameId": "12345678-1234-4234-8234-123456789abd",
+			"sessionId": "12345678-1234-4234-8234-123456789abe",
+			"packageFormatVersion": 1,
+			"release": {
+				"originalGameId": "12345678-1234-4234-8234-123456789abc",
+				"contentVersion": "1.0.0",
+				"contentHash": "d5dcbf1e4a8fe8346ef3888ee7cbc08669296ff0c4cb377084852956cc8dbea7",
+				"createdAt": "2026-11-23T00:00:00.000Z",
+				"content": {
+					"title": "별빛 이야기 🌌",
+					"genre": "Adventure",
+					"description": "Public description",
+					"settings": {
+						"description": "Authored instructions\n",
+						"firstMessage": "Welcome",
+						"authorNote": "Stay in character"
+					},
+					"schema": {
+						"type": "object",
+						"properties": {
+							"": {
+								"type": "number"
+							},
+							"tiny": {
+								"type": "number"
+							},
+							"large": {
+								"type": "number"
+							},
+							"label": {
+								"type": "string"
+							},
+							"😀": {
+								"type": "number"
+							}
+						},
+						"additionalProperties": false
+					},
+					"initialState": {
+						"": 1.25,
+						"tiny": 1e-7,
+						"large": 1e21,
+						"label": "é 한글  ",
+						"😀": 0
+					},
+					"ai": {
+						"version": 1,
+						"lorebook": [
+							{
+								"id": "lore-1",
+								"name": "World",
+								"keys": ["forest"],
+								"content": "Ancient forest",
+								"order": 0,
+								"always": true,
+								"enabled": true,
+								"caseSensitive": false
+							}
+						],
+						"folders": ["World"]
+					},
+					"regex": [
+						{
+							"id": "rule-1",
+							"name": "Display",
+							"enabled": true,
+							"stage": "display",
+							"roles": ["assistant"],
+							"pattern": "forest",
+							"replacement": "woods",
+							"flags": "g"
+						}
+					],
+					"resources": {
+						"portrait": {
+							"name": "images/portrait.png",
+							"mime": "image/png",
+							"data": "data:image/png;base64,AAEC/w=="
+						},
+						"music": {
+							"name": "audio/theme.ogg",
+							"mime": "audio/ogg",
+							"data": "data:audio/ogg;base64,AQID"
+						}
+					},
+					"scripts": {
+						"rules": {
+							"language": "typescript",
+							"source": "export const rules = {};"
+						}
+					},
+					"ui": {
+						"version": 1,
+						"entry": "main.tsx",
+						"modules": {
+							"main.tsx": {
+								"language": "tsx",
+								"source": "export default () => <p>Hello</p>;"
+							}
+						},
+						"styles": "p { color: red; }",
+						"layout": {
+							"kind": "panel",
+							"id": "main"
+						},
+						"chatDock": "right",
+						"chatRatio": 0.3,
+						"chatStyle": {
+							"color": "white"
+						},
+						"unknown": true
+					}
+				}
+			}
+		},
+		"expect": {
+			"accepted": false,
+			"errorCode": "nonCanonical"
+		}
+	},
+	{
+		"name": "compiled legacy UI",
+		"request": {
+			"kind": "install",
+			"gameId": "12345678-1234-4234-8234-123456789abd",
+			"sessionId": "12345678-1234-4234-8234-123456789abe",
+			"packageFormatVersion": 1,
+			"release": {
+				"originalGameId": "12345678-1234-4234-8234-123456789abc",
+				"contentVersion": "1.0.0",
+				"contentHash": "252d73eb4a7c81340a005242e9888cc8df3af89e2c15442c59d3376c4d833217",
+				"createdAt": "2026-11-23T00:00:00.000Z",
+				"content": {
+					"title": "별빛 이야기 🌌",
+					"genre": "Adventure",
+					"description": "Public description",
+					"settings": {
+						"description": "Authored instructions\n",
+						"firstMessage": "Welcome",
+						"authorNote": "Stay in character"
+					},
+					"schema": {
+						"type": "object",
+						"properties": {
+							"": {
+								"type": "number"
+							},
+							"tiny": {
+								"type": "number"
+							},
+							"large": {
+								"type": "number"
+							},
+							"label": {
+								"type": "string"
+							},
+							"😀": {
+								"type": "number"
+							}
+						},
+						"additionalProperties": false
+					},
+					"initialState": {
+						"": 1.25,
+						"tiny": 1e-7,
+						"large": 1e21,
+						"label": "é 한글  ",
+						"😀": 0
+					},
+					"ai": {
+						"version": 1,
+						"lorebook": [
+							{
+								"id": "lore-1",
+								"name": "World",
+								"keys": ["forest"],
+								"content": "Ancient forest",
+								"order": 0,
+								"always": true,
+								"enabled": true,
+								"caseSensitive": false
+							}
+						],
+						"folders": ["World"]
+					},
+					"regex": [
+						{
+							"id": "rule-1",
+							"name": "Display",
+							"enabled": true,
+							"stage": "display",
+							"roles": ["assistant"],
+							"pattern": "forest",
+							"replacement": "woods",
+							"flags": "g"
+						}
+					],
+					"resources": {
+						"portrait": {
+							"name": "images/portrait.png",
+							"mime": "image/png",
+							"data": "data:image/png;base64,AAEC/w=="
+						},
+						"music": {
+							"name": "audio/theme.ogg",
+							"mime": "audio/ogg",
+							"data": "data:audio/ogg;base64,AQID"
+						}
+					},
+					"scripts": {
+						"rules": {
+							"language": "typescript",
+							"source": "export const rules = {};"
+						}
+					},
+					"ui": {
+						"version": 1,
+						"entry": "main.tsx",
+						"modules": {
+							"main.tsx": {
+								"language": "tsx",
+								"source": "export default () => <p>Hello</p>;"
+							}
+						},
+						"styles": "p { color: red; }",
+						"layout": {
+							"kind": "panel",
+							"id": "main"
+						},
+						"chatDock": "right",
+						"chatRatio": 0.3,
+						"chatStyle": {
+							"color": "white"
+						},
+						"artifact": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+					}
+				}
+			}
+		},
+		"expect": {
+			"accepted": false,
+			"errorCode": "nonCanonical"
+		}
+	},
+	{
+		"name": "unknown resource field",
+		"request": {
+			"kind": "install",
+			"gameId": "12345678-1234-4234-8234-123456789abd",
+			"sessionId": "12345678-1234-4234-8234-123456789abe",
+			"packageFormatVersion": 1,
+			"release": {
+				"originalGameId": "12345678-1234-4234-8234-123456789abc",
+				"contentVersion": "1.0.0",
+				"contentHash": "5ba509f5be8ba6c63a7277db062024ce782a95ded804f264ca68091a12d4043a",
+				"createdAt": "2026-11-23T00:00:00.000Z",
+				"content": {
+					"title": "별빛 이야기 🌌",
+					"genre": "Adventure",
+					"description": "Public description",
+					"settings": {
+						"description": "Authored instructions\n",
+						"firstMessage": "Welcome",
+						"authorNote": "Stay in character"
+					},
+					"schema": {
+						"type": "object",
+						"properties": {
+							"": {
+								"type": "number"
+							},
+							"tiny": {
+								"type": "number"
+							},
+							"large": {
+								"type": "number"
+							},
+							"label": {
+								"type": "string"
+							},
+							"😀": {
+								"type": "number"
+							}
+						},
+						"additionalProperties": false
+					},
+					"initialState": {
+						"": 1.25,
+						"tiny": 1e-7,
+						"large": 1e21,
+						"label": "é 한글  ",
+						"😀": 0
+					},
+					"ai": {
+						"version": 1,
+						"lorebook": [
+							{
+								"id": "lore-1",
+								"name": "World",
+								"keys": ["forest"],
+								"content": "Ancient forest",
+								"order": 0,
+								"always": true,
+								"enabled": true,
+								"caseSensitive": false
+							}
+						],
+						"folders": ["World"]
+					},
+					"regex": [
+						{
+							"id": "rule-1",
+							"name": "Display",
+							"enabled": true,
+							"stage": "display",
+							"roles": ["assistant"],
+							"pattern": "forest",
+							"replacement": "woods",
+							"flags": "g"
+						}
+					],
+					"resources": {
+						"portrait": {
+							"name": "images/portrait.png",
+							"mime": "image/png",
+							"data": "data:image/png;base64,AAEC/w==",
+							"unknown": true
+						},
+						"music": {
+							"name": "audio/theme.ogg",
+							"mime": "audio/ogg",
+							"data": "data:audio/ogg;base64,AQID"
+						},
+						"copy": {
+							"name": "copy.png",
+							"mime": "image/png",
+							"data": "data:image/png;base64,AAEC/w=="
+						}
+					},
+					"scripts": {
+						"rules": {
+							"language": "typescript",
+							"source": "export const rules = {};"
+						}
+					},
+					"ui": {
+						"version": 1,
+						"entry": "main.tsx",
+						"modules": {
+							"main.tsx": {
+								"language": "tsx",
+								"source": "export default () => <p>Hello</p>;"
+							}
+						},
+						"styles": "p { color: red; }",
+						"layout": {
+							"kind": "panel",
+							"id": "main"
+						},
+						"chatDock": "right",
+						"chatRatio": 0.3,
+						"chatStyle": {
+							"color": "white"
+						}
+					}
+				}
+			}
+		},
+		"expect": {
+			"accepted": false,
+			"errorCode": "nonCanonical"
+		}
+	},
+	{
+		"name": "unknown presentation field",
+		"request": {
+			"kind": "install",
+			"gameId": "12345678-1234-4234-8234-123456789abd",
+			"sessionId": "12345678-1234-4234-8234-123456789abe",
+			"packageFormatVersion": 1,
+			"release": {
+				"originalGameId": "12345678-1234-4234-8234-123456789abc",
+				"contentVersion": "1.0.0",
+				"contentHash": "1e2925ffe497dece387d2b66334b2829ec8561b7e9cc1644f6f7297b68f8a16e",
+				"createdAt": "2026-11-23T00:00:00.000Z",
+				"content": {
+					"title": "Adventure",
+					"genre": "Fantasy",
+					"description": "Public",
+					"settings": {
+						"description": "Instructions",
+						"firstMessage": "Welcome",
+						"authorNote": ""
+					},
+					"schema": {
+						"type": "object",
+						"properties": {},
+						"additionalProperties": false
+					},
+					"initialState": {},
+					"regex": [],
+					"resources": {},
+					"code": {
+						"version": 1,
+						"entry": "main.ts",
+						"files": {
+							"main.ts": {
+								"language": "typescript",
+								"source": "export {};"
+							}
+						},
+						"presentation": {
+							"chatDock": "right",
+							"chatRatio": 0.4,
+							"unknown": true
+						}
+					}
+				}
+			}
+		},
+		"expect": {
+			"accepted": false,
+			"errorCode": "content"
+		}
+	},
+	{
+		"name": "invalid layout kind",
+		"request": {
+			"kind": "install",
+			"gameId": "12345678-1234-4234-8234-123456789abd",
+			"sessionId": "12345678-1234-4234-8234-123456789abe",
+			"packageFormatVersion": 1,
+			"release": {
+				"originalGameId": "12345678-1234-4234-8234-123456789abc",
+				"contentVersion": "1.0.0",
+				"contentHash": "1b28a0cd47bd0c83d3f4ce9c044a74b6f50e9b012a4a8a9054d87b25a678e22d",
+				"createdAt": "2026-11-23T00:00:00.000Z",
+				"content": {
+					"title": "Adventure",
+					"genre": "Fantasy",
+					"description": "Public",
+					"settings": {
+						"description": "Instructions",
+						"firstMessage": "Welcome",
+						"authorNote": ""
+					},
+					"schema": {
+						"type": "object",
+						"properties": {},
+						"additionalProperties": false
+					},
+					"initialState": {},
+					"regex": [],
+					"resources": {},
+					"code": {
+						"version": 1,
+						"entry": "main.ts",
+						"files": {
+							"main.ts": {
+								"language": "typescript",
+								"source": "export {};"
+							}
+						},
+						"presentation": {
+							"chatDock": "right",
+							"chatRatio": 0.4,
+							"layout": {
+								"kind": "unknown"
+							}
+						}
+					}
+				}
+			}
+		},
+		"expect": {
+			"accepted": false,
+			"errorCode": "content"
+		}
+	},
+	{
+		"name": "title needs trimming",
+		"request": {
+			"kind": "install",
+			"gameId": "12345678-1234-4234-8234-123456789abd",
+			"sessionId": "12345678-1234-4234-8234-123456789abe",
+			"packageFormatVersion": 1,
+			"release": {
+				"originalGameId": "12345678-1234-4234-8234-123456789abc",
+				"contentVersion": "1.0.0",
+				"contentHash": "a7552d931bd6f3f5c6764ab1eef72c3d403c9a480d43209c6c46ba27dfafba7e",
+				"createdAt": "2026-11-23T00:00:00.000Z",
+				"content": {
+					"title": " Adventure ",
+					"genre": "Fantasy",
+					"description": "Public",
+					"settings": {
+						"description": "Instructions",
+						"firstMessage": "Welcome",
+						"authorNote": ""
+					},
+					"schema": {
+						"type": "object",
+						"properties": {},
+						"additionalProperties": false
+					},
+					"initialState": {},
+					"regex": [],
+					"resources": {},
+					"scripts": {}
+				}
+			}
+		},
+		"expect": {
+			"accepted": false,
+			"errorCode": "nonCanonical"
+		}
+	},
+	{
+		"name": "non ECMAScript whitespace preserved",
+		"request": {
+			"kind": "install",
+			"gameId": "12345678-1234-4234-8234-123456789abd",
+			"sessionId": "12345678-1234-4234-8234-123456789abe",
+			"packageFormatVersion": 1,
+			"release": {
+				"originalGameId": "12345678-1234-4234-8234-123456789abc",
+				"contentVersion": "1.0.0",
+				"contentHash": "3db47ae5769015f7b185a322c16c92845d8d7c31b1fb9c4de9d4fb1eb4c30103",
+				"createdAt": "2026-11-23T00:00:00.000Z",
+				"content": {
+					"title": "Adventure",
+					"genre": "Fantasy",
+					"description": "Public",
+					"settings": {
+						"description": "Instructions",
+						"firstMessage": "Welcome",
+						"authorNote": ""
+					},
+					"schema": {
+						"type": "object",
+						"properties": {},
+						"additionalProperties": false
+					},
+					"initialState": {},
+					"regex": [],
+					"resources": {},
+					"scripts": {}
+				}
+			}
+		},
+		"expect": {
+			"accepted": true,
+			"normalizedContent": {
+				"title": "Adventure",
+				"genre": "Fantasy",
+				"description": "Public",
+				"settings": {
+					"description": "Instructions",
+					"firstMessage": "Welcome",
+					"authorNote": ""
+				},
+				"schema": {
+					"type": "object",
+					"properties": {},
+					"additionalProperties": false
+				},
+				"initialState": {},
+				"regex": [],
+				"resources": {},
+				"scripts": {}
+			},
+			"contentHash": "3db47ae5769015f7b185a322c16c92845d8d7c31b1fb9c4de9d4fb1eb4c30103"
+		}
+	},
+	{
+		"name": "ECMAScript whitespace needs trimming",
+		"request": {
+			"kind": "install",
+			"gameId": "12345678-1234-4234-8234-123456789abd",
+			"sessionId": "12345678-1234-4234-8234-123456789abe",
+			"packageFormatVersion": 1,
+			"release": {
+				"originalGameId": "12345678-1234-4234-8234-123456789abc",
+				"contentVersion": "1.0.0",
+				"contentHash": "a7552d931bd6f3f5c6764ab1eef72c3d403c9a480d43209c6c46ba27dfafba7e",
+				"createdAt": "2026-11-23T00:00:00.000Z",
+				"content": {
+					"title": " Adventure ",
+					"genre": "Fantasy",
+					"description": "Public",
+					"settings": {
+						"description": "Instructions",
+						"firstMessage": "Welcome",
+						"authorNote": ""
+					},
+					"schema": {
+						"type": "object",
+						"properties": {},
+						"additionalProperties": false
+					},
+					"initialState": {},
+					"regex": [],
+					"resources": {},
+					"scripts": {}
+				}
+			}
+		},
+		"expect": {
+			"accepted": false,
+			"errorCode": "nonCanonical"
+		}
+	},
+	{
+		"name": "invalid release hash",
+		"request": {
+			"kind": "install",
+			"gameId": "12345678-1234-4234-8234-123456789abd",
+			"sessionId": "12345678-1234-4234-8234-123456789abe",
+			"packageFormatVersion": 1,
+			"release": {
+				"originalGameId": "12345678-1234-4234-8234-123456789abc",
+				"contentVersion": "1.0.0",
+				"contentHash": "a7552d931bd6f3f5c6764ab1eef72c3d403c9a480d43209c6c46ba27dfafba7",
+				"createdAt": "2026-11-23T00:00:00.000Z",
+				"content": {
+					"title": "Adventure",
+					"genre": "Fantasy",
+					"description": "Public",
+					"settings": {
+						"description": "Instructions",
+						"firstMessage": "Welcome",
+						"authorNote": ""
+					},
+					"schema": {
+						"type": "object",
+						"properties": {},
+						"additionalProperties": false
+					},
+					"initialState": {},
+					"regex": [],
+					"resources": {},
+					"scripts": {}
+				}
+			}
+		},
+		"expect": {
+			"accepted": false,
+			"errorCode": "content"
+		}
+	},
+	{
+		"name": "uppercase release hash",
+		"request": {
+			"kind": "install",
+			"gameId": "12345678-1234-4234-8234-123456789abd",
+			"sessionId": "12345678-1234-4234-8234-123456789abe",
+			"packageFormatVersion": 1,
+			"release": {
+				"originalGameId": "12345678-1234-4234-8234-123456789abc",
+				"contentVersion": "1.0.0",
+				"contentHash": "A7552D931BD6F3F5C6764AB1EEF72C3D403C9A480D43209C6C46BA27DFAFBA7E",
+				"createdAt": "2026-11-23T00:00:00.000Z",
+				"content": {
+					"title": "Adventure",
+					"genre": "Fantasy",
+					"description": "Public",
+					"settings": {
+						"description": "Instructions",
+						"firstMessage": "Welcome",
+						"authorNote": ""
+					},
+					"schema": {
+						"type": "object",
+						"properties": {},
+						"additionalProperties": false
+					},
+					"initialState": {},
+					"regex": [],
+					"resources": {},
+					"scripts": {}
+				}
+			}
+		},
+		"expect": {
+			"accepted": false,
+			"errorCode": "content"
+		}
+	},
+	{
+		"name": "hash mismatch",
+		"request": {
+			"kind": "install",
+			"gameId": "12345678-1234-4234-8234-123456789abd",
+			"sessionId": "12345678-1234-4234-8234-123456789abe",
+			"packageFormatVersion": 1,
+			"release": {
+				"originalGameId": "12345678-1234-4234-8234-123456789abc",
+				"contentVersion": "1.0.0",
+				"contentHash": "0000000000000000000000000000000000000000000000000000000000000000",
+				"createdAt": "2026-11-23T00:00:00.000Z",
+				"content": {
+					"title": "Adventure",
+					"genre": "Fantasy",
+					"description": "Public",
+					"settings": {
+						"description": "Instructions",
+						"firstMessage": "Welcome",
+						"authorNote": ""
+					},
+					"schema": {
+						"type": "object",
+						"properties": {},
+						"additionalProperties": false
+					},
+					"initialState": {},
+					"regex": [],
+					"resources": {},
+					"scripts": {}
+				}
+			}
+		},
+		"expect": {
+			"accepted": false,
+			"errorCode": "integrity"
+		}
+	},
+	{
+		"name": "uppercase UUID",
+		"request": {
+			"kind": "install",
+			"gameId": "12345678-1234-4234-8234-123456789abd",
+			"sessionId": "12345678-1234-4234-8234-123456789abe",
+			"packageFormatVersion": 1,
+			"release": {
+				"originalGameId": "12345678-1234-4234-8234-123456789ABC",
+				"contentVersion": "1.0.0",
+				"contentHash": "a7552d931bd6f3f5c6764ab1eef72c3d403c9a480d43209c6c46ba27dfafba7e",
+				"createdAt": "2026-11-23T00:00:00.000Z",
+				"content": {
+					"title": "Adventure",
+					"genre": "Fantasy",
+					"description": "Public",
+					"settings": {
+						"description": "Instructions",
+						"firstMessage": "Welcome",
+						"authorNote": ""
+					},
+					"schema": {
+						"type": "object",
+						"properties": {},
+						"additionalProperties": false
+					},
+					"initialState": {},
+					"regex": [],
+					"resources": {},
+					"scripts": {}
+				}
+			}
+		},
+		"expect": {
+			"accepted": false,
+			"errorCode": "format"
+		}
+	}
+]

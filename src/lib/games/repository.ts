@@ -8,6 +8,8 @@ import { createGameRepository } from './repository-core.js';
 export const {
 	listGames,
 	createGame,
+	installPreview,
+	install,
 	getGameVersioning,
 	createGameRelease,
 	getGameRelease,

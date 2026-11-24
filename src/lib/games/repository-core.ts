@@ -1,4 +1,5 @@
 import type { TransactionValidator } from '#lib/games/state/workspace.js';
+import type { InstallRequest, InstallResult, InstallPreviewEntry } from '#lib/storage/install.js';
 
 import { createSessionEvents } from '#lib/games/scripting/events.js';
 import { executeSessionWork, type ExecutionReport } from '#lib/games/scripting/execution.js';
@@ -744,6 +745,30 @@ class GameRepository {
 			throw Error('Missing game versioning');
 		}
 		return reply.versioning;
+	};
+	installPreview = async (
+		originalGameId: string,
+		contentVersion: string
+	): Promise<InstallPreviewEntry[]> => {
+		const reply = await this.transport({ kind: 'installPreview', originalGameId, contentVersion });
+		if (!reply.installPreview) {
+			throw Error('Missing install preview');
+		}
+		return reply.installPreview;
+	};
+	install = async (
+		input: Omit<InstallRequest, 'kind' | 'gameId' | 'sessionId'>
+	): Promise<InstallResult> => {
+		const reply = await this.transport({
+			...input,
+			kind: 'install',
+			gameId: crypto.randomUUID(),
+			sessionId: crypto.randomUUID()
+		});
+		if (!reply.installResult) {
+			throw Error('Missing install result');
+		}
+		return reply.installResult;
 	};
 	createGameRelease = async (
 		gameId: string,

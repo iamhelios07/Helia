@@ -9,6 +9,10 @@ import { parseGame } from './model.js';
 import { gameReleaseContent } from './release-content.js';
 import { originalGameId, parseSemVer } from './versioning.js';
 
+export const CONTENT_NODE_LIMIT = 100000;
+export const CONTENT_CHARACTER_LIMIT = 16 * 1024 * 1024;
+export const CONTENT_DEPTH_LIMIT = 64;
+
 function object(value: unknown): Record<string, unknown> {
 	if (!value || typeof value !== 'object' || Array.isArray(value)) {
 		throw Error('Invalid versioning object');
@@ -114,13 +118,13 @@ export function parseCreateGameReleaseResult(value: unknown): CreateGameReleaseR
 /** Bound traversal before model parsers recurse or inspect large media/source documents. */
 function boundContent(value: unknown, budget = { nodes: 0, characters: 0 }, depth = 0): void {
 	budget.nodes++;
-	if (depth > 64 || budget.nodes > 100000) {
+	if (depth > CONTENT_DEPTH_LIMIT || budget.nodes > CONTENT_NODE_LIMIT) {
 		throw Error('Release content too complex');
 	}
 	if (typeof value === 'string') {
 		budget.characters += value.length;
 	}
-	if (budget.characters > 16 * 1024 * 1024) {
+	if (budget.characters > CONTENT_CHARACTER_LIMIT) {
 		throw Error('Release content too large');
 	}
 	if (typeof value === 'object' && value) {
@@ -133,7 +137,9 @@ export function parseGameRelease(value: unknown): GameRelease {
 	const row = object(value),
 		summary = parseGameReleaseSummary(row);
 	boundContent(row.content);
-	const content = object(row.content);
+	// Legacy release inputs ignore install-only provenance, even when malformed.
+	const { installedFrom: _ignored, ...content } = object(row.content);
+	void _ignored;
 	const game = parseGame({
 		...content,
 		scripts: content.scripts ?? {},

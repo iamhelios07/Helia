@@ -276,13 +276,23 @@ it('exports frozen authored content without installation data, secrets, player t
 	const sentinels = [
 		'secret-api-key',
 		'private-session-text',
-		'private-installation-origin',
+		'1901-01-01T00:00:00.000Z',
 		'generated-only-artifact'
 	];
 	Object.assign(source, {
 		apiKey: sentinels[0],
 		session: { message: sentinels[1] },
-		installedFrom: sentinels[2]
+		installedFrom: {
+			kind: 'package',
+			packageFormatVersion: 1,
+			packageRelease: {
+				contentVersion: '0.1.0',
+				contentHash: 'a'.repeat(64),
+				createdAt: sentinels[2]
+			},
+			versionChanged: false,
+			installedAt: sentinels[2]
+		}
 	});
 	Object.assign(source.scripts, {
 		derived: { language: 'typescript', source: sentinels[3], compiled: sentinels[3] }

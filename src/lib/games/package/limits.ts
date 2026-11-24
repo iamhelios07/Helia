@@ -1,10 +1,6 @@
-/**
- * Mirrors `boundContent` in versioning-validation.ts. Specs pin this to that
- * module's actual boundary, so the cheap preflight cannot drift from it.
- */
-export const CONTENT_NODE_LIMIT = 100000;
-/** Also mirrors `boundContent`'s UTF-16 string budget, spent before base64 restoration. */
-export const CONTENT_CHARACTER_LIMIT = 16 * 1024 * 1024;
+import { CONTENT_NODE_LIMIT } from '../versioning-validation.js';
+
+export { CONTENT_NODE_LIMIT, CONTENT_CHARACTER_LIMIT } from '../versioning-validation.js';
 
 /** Format v1 limits, independent of the application's stricter content limits. */
 export const PACKAGE_LIMITS = {
@@ -24,7 +20,8 @@ export type GamePackageErrorCode =
 	| 'content'
 	| 'nonCanonical'
 	| 'installOnlyKey'
-	| 'newerHeliaRequired';
+	| 'newerHeliaRequired'
+	| 'staleAcknowledgement';
 
 const messages: Record<GamePackageErrorCode, string> = {
 	format: '게임 패키지 형식이 올바르지 않아요.',
@@ -34,8 +31,13 @@ const messages: Record<GamePackageErrorCode, string> = {
 	content: '게임 패키지의 콘텐츠가 올바르지 않아요.',
 	nonCanonical: '정규형 콘텐츠가 아니에요. 더 새 Helia가 필요할 수 있어요.',
 	installOnlyKey: '게임 콘텐츠에 설치 전용 정보가 들어 있어요.',
-	newerHeliaRequired: '이 게임 패키지를 열려면 더 새 Helia가 필요해요.'
+	newerHeliaRequired: '이 게임 패키지를 열려면 더 새 Helia가 필요해요.',
+	staleAcknowledgement: '설치 확인 정보가 바뀌었어요. 다시 확인해 주세요.'
 };
+
+export function isGamePackageErrorCode(value: unknown): value is GamePackageErrorCode {
+	return typeof value === 'string' && Object.hasOwn(messages, value);
+}
 
 export class GamePackageError extends Error {
 	constructor(public readonly code: GamePackageErrorCode) {

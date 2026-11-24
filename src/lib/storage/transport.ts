@@ -1,3 +1,4 @@
+import { GamePackageError, isGamePackageErrorCode } from '#lib/games/package/limits.js';
 import { isDesktopBuild, isTauri } from '#lib/platform/index.js';
 
 import { synchronizedStorage } from './sync-client.js';
@@ -20,6 +21,15 @@ async function send(request: unknown): Promise<unknown> {
 	});
 	const result: unknown = await response.json().catch(() => null);
 	if (!response.ok) {
+		if (
+			response.status === 400 &&
+			typeof result === 'object' &&
+			result !== null &&
+			'errorCode' in result &&
+			isGamePackageErrorCode(result.errorCode)
+		) {
+			throw new GamePackageError(result.errorCode);
+		}
 		throw new Error(
 			typeof result === 'object' &&
 				result !== null &&

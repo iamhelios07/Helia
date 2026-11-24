@@ -31,6 +31,16 @@ import {
 	type GameReleaseOptions
 } from '#lib/games/versioning.js';
 
+import {
+	parseInstallRequest,
+	parseInstallResult,
+	parseInstallPreview,
+	type InstallRequest,
+	type InstallPreviewRequest,
+	type InstallResult,
+	type InstallPreviewEntry
+} from './install.js';
+
 export const tables = [
 	'games',
 	'sessions',
@@ -60,6 +70,8 @@ export interface GamePatch {
 	remove: string[];
 }
 export type StorageRequest =
+	| InstallRequest
+	| InstallPreviewRequest
 	| { kind: 'versioning'; gameId: string; action: 'read' }
 	| { kind: 'versioning'; gameId: string; action: 'getRelease'; releaseId: string }
 	| ({
@@ -91,6 +103,8 @@ export interface StorageReply {
 	versioning?: GameVersioning;
 	release?: GameRelease;
 	releaseResult?: CreateGameReleaseResult;
+	installResult?: InstallResult;
+	installPreview?: InstallPreviewEntry[];
 }
 export type StorageTransport = (request: StorageRequest) => Promise<StorageReply>;
 export const CONFLICT = 'STORAGE_CONFLICT';
@@ -247,6 +261,9 @@ function assertPortableResources(value: unknown) {
 
 export function parseRequest(value: unknown): StorageRequest {
 	const input = record(value);
+	if (input.kind === 'install' || input.kind === 'installPreview') {
+		return parseInstallRequest(input);
+	}
 	if (input.kind === 'list') {
 		return { kind: 'list', ...(input.includeTrashed === true ? { includeTrashed: true } : {}) };
 	}
@@ -287,6 +304,12 @@ export function parseReply(value: unknown): StorageReply {
 	return {
 		version: counter(input.version),
 		records: parseRecords(input.records),
+		...(input.installResult === undefined
+			? {}
+			: { installResult: parseInstallResult(input.installResult) }),
+		...(input.installPreview === undefined
+			? {}
+			: { installPreview: parseInstallPreview(input.installPreview) }),
 		...(Array.isArray(input.games) ? { games: input.games.map(gameSummary) } : {}),
 		...(input.versioning === undefined
 			? {}

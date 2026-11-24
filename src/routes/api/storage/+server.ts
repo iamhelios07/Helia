@@ -1,7 +1,8 @@
 import { json } from '@sveltejs/kit';
 
+import { GamePackageError } from '#lib/games/package/limits.js';
 import { serverStorage } from '#lib/server/sqlite.js';
-import { storageSync } from '#lib/server/storage-sync.js';
+import { storageSyncAsync } from '#lib/server/storage-sync.js';
 import { CONFLICT } from '#lib/storage/protocol.js';
 
 import type { RequestHandler } from './$types';
@@ -20,8 +21,13 @@ export const POST: RequestHandler = async ({ request, url }) => {
 		return json({ error: '저장 요청을 읽을 수 없어요.' }, { status: 400 });
 	}
 	try {
-		return json(storageSync(serverStorage(), input), { headers: { 'cache-control': 'no-store' } });
+		return json(await storageSyncAsync(serverStorage(), input), {
+			headers: { 'cache-control': 'no-store' }
+		});
 	} catch (error) {
+		if (error instanceof GamePackageError) {
+			return json({ error: error.message, errorCode: error.code }, { status: 400 });
+		}
 		if (error instanceof Error && error.message === CONFLICT) {
 			return json({ error: CONFLICT }, { status: 409 });
 		}

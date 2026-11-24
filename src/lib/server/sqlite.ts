@@ -6,6 +6,7 @@ import { dirname, resolve } from 'node:path';
 
 import { hostAILeases } from '#lib/games/ai/leases.js';
 import { gameSummary } from '#lib/games/model.js';
+import { record } from '#lib/games/state/model.js';
 import migration from '#lib/storage/migrations/0000_initial.sql?raw';
 import {
 	CONFLICT,
@@ -21,6 +22,7 @@ import { pruneRecords } from '#lib/storage/prune.js';
 import fileSchema from '#lib/storage/session-files.sql?raw';
 import { validateStoredHistory } from '#lib/storage/validate-history.js';
 
+import { installGame, installPreview, prepareInstall } from './game-install.js';
 import { gameReleases, initializeGameReleases, preserveOriginalGameId } from './game-releases.js';
 
 type PruneRequest = Extract<StorageRequest, { kind: 'prune' }>;
@@ -346,6 +348,12 @@ class Storage {
 		return { version: command.kind === 'create' ? 0 : command.version + 1, records: [] };
 	}
 	private execute(command: StorageRequest): StorageReply {
+		if (command.kind === 'install') {
+			throw Error('Install requires requestAsync for authoritative verification');
+		}
+		if (command.kind === 'installPreview') {
+			return installPreview(this.connection, command);
+		}
 		if (command.kind === 'versioning') {
 			return gameReleases(this.connection, command);
 		}
@@ -412,8 +420,23 @@ class Storage {
 		const command = parseRequest(input);
 		hostAILeases.guard(command);
 		return this.db.transaction(() => this.execute(command), {
-			behavior: command.kind === 'read' || command.kind === 'list' ? 'deferred' : 'immediate'
+			behavior:
+				command.kind === 'read' || command.kind === 'list' || command.kind === 'installPreview'
+					? 'deferred'
+					: 'immediate'
 		});
+	};
+	/** The verified private copy is the only request used after the async boundary. */
+	requestAsync = async (input: unknown): Promise<StorageReply> => {
+		if (record(input).kind !== 'install') {
+			return this.request(input);
+		}
+		const command = structuredClone(parseRequest(input));
+		if (command.kind !== 'install') {
+			throw Error('Invalid install request');
+		}
+		const prepared = await prepareInstall(command);
+		return this.connection.transaction(() => installGame(this.connection, prepared)).immediate();
 	};
 	close = () => this.connection.close();
 }

@@ -13,11 +13,27 @@ import { RuntimeContent } from './runtime-content.js';
 type Store = ReturnType<typeof openStorage>;
 const hash = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 
+/** Package operations are sent directly, outside the content-cache sync envelope. */
+export async function storageSyncAsync(
+	store: Store,
+	input: unknown
+): Promise<StorageReply | SyncReply> {
+	const envelope = record(input);
+	if (envelope.kind === 'install') {
+		return store.requestAsync(input);
+	}
+	return storageSync(store, input);
+}
+
 /** Portable persisted records stay unchanged; only the transport is projected. */
 export function storageSync(store: Store, input: unknown): StorageReply | SyncReply {
 	const envelope = record(input);
 	if (envelope.kind !== 'sync') {
 		return store.request(input);
+	}
+	const kind = record(envelope.request).kind;
+	if (kind === 'install' || kind === 'installPreview') {
+		throw Error('Package requests must be sent directly');
 	}
 	const known = syncKnown(envelope.known);
 	const request = expandGamePatches(store, envelope.request);

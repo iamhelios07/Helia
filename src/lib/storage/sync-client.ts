@@ -104,7 +104,11 @@ class StorageSynchronization {
 		return new Map([...values].filter(([hash]) => view.hashes.has(hash)));
 	}
 	request: StorageTransport = async (request) => {
-		if (request.kind === 'versioning') {
+		if (
+			request.kind === 'versioning' ||
+			request.kind === 'install' ||
+			request.kind === 'installPreview'
+		) {
 			return parseReply(await this.send(request));
 		}
 		if (request.kind !== 'read' && request.kind !== 'list') {

@@ -1,10 +1,15 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
+import { GamePackageError, isGamePackageErrorCode } from '#lib/games/package/limits.js';
+import errorCodes from '#lib/storage/fixtures/install/error-codes.json';
+
 import { POST } from './+server.js';
 
 const execute = vi.hoisted(() => vi.fn());
 afterEach(() => vi.unstubAllEnvs());
-vi.mock('#lib/server/sqlite.js', () => ({ serverStorage: () => ({ request: execute }) }));
+vi.mock('#lib/server/sqlite.js', () => ({
+	serverStorage: () => ({ request: execute, requestAsync: execute })
+}));
 beforeEach(() => {
 	execute.mockReset();
 	execute.mockReturnValue({ version: 0, records: [] });
@@ -50,6 +55,27 @@ it('returns conflicts with status 409 and hides raw database errors', async () =
 it('rejects malformed JSON before accessing storage', async () => {
 	expect((await POST(event('http://localhost', '{'))).status).toBe(400);
 	expect(execute).not.toHaveBeenCalled();
+});
+it.each(errorCodes)(
+	'returns package error code %s from asynchronous installation',
+	async (code) => {
+		if (!isGamePackageErrorCode(code)) {
+			throw Error('Unknown shared error code');
+		}
+		const error = new GamePackageError(code);
+		execute.mockRejectedValueOnce(error);
+		const response = await POST(event('http://localhost', '{"kind":"install"}'));
+		expect(response.status).toBe(400);
+		expect(await response.json()).toEqual({ error: error.message, errorCode: code });
+	}
+);
+it('does not treat an ordinary error message as a package error code', async () => {
+	execute.mockImplementationOnce(() => {
+		throw Error('staleAcknowledgement');
+	});
+	const response = await POST(event('http://localhost'));
+	expect(response.status).toBe(400);
+	expect(await response.json()).toEqual({ error: '게임 데이터를 저장하거나 읽을 수 없어요.' });
 });
 it('uses an explicitly configured public origin behind a proxy', async () => {
 	vi.stubEnv('HELIA_ORIGIN', 'http://127.0.0.1:3000');
