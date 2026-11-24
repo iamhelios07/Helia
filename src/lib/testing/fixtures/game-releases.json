@@ -751,5 +751,325 @@
 			}
 		},
 		"hash": "8d117adf5603c2c7843734c4230004fc05956d2273c411a8feba80d6d9e79b17"
+	},
+	{
+		"name": "D1 legacy migration declaration",
+		"game": {
+			"schemaVersion": 2,
+			"id": "fixture-installation",
+			"originalGameId": "12345678-1234-4234-8234-123456789abc",
+			"activeSessionId": "fixture-session",
+			"title": "Migration digest fixture",
+			"genre": "Test",
+			"description": "Migration content",
+			"createdAt": "2026-11-23T00:00:00.000Z",
+			"updatedAt": "2026-11-23T00:00:00.000Z",
+			"settings": {
+				"description": "Authored instructions\n",
+				"firstMessage": "Welcome",
+				"authorNote": "Stay in character"
+			},
+			"schema": {
+				"type": "object",
+				"properties": {
+					"coins": {
+						"type": "number"
+					}
+				},
+				"additionalProperties": false
+			},
+			"initialState": {
+				"coins": 0
+			},
+			"scripts": {
+				"main": {
+					"language": "typescript",
+					"source": "helia.defineMigration({name:'gold-to-coins',from:'>=1.0.0 <2.0.0',run({previous,migrated}){return {...migrated,coins:previous.gold};}});",
+					"compiled": "derived migration"
+				}
+			}
+		},
+		"content": {
+			"title": "Migration digest fixture",
+			"genre": "Test",
+			"description": "Migration content",
+			"settings": {
+				"description": "Authored instructions\n",
+				"firstMessage": "Welcome",
+				"authorNote": "Stay in character"
+			},
+			"schema": {
+				"type": "object",
+				"properties": {
+					"coins": {
+						"type": "number"
+					}
+				},
+				"additionalProperties": false
+			},
+			"initialState": {
+				"coins": 0
+			},
+			"regex": [],
+			"resources": {},
+			"scripts": {
+				"main": {
+					"language": "typescript",
+					"source": "helia.defineMigration({name:'gold-to-coins',from:'>=1.0.0 <2.0.0',run({previous,migrated}){return {...migrated,coins:previous.gold};}});"
+				}
+			}
+		},
+		"hash": "fe46a752745ea3be55881a586f76d69ae82de182a273a62dda3fecec33609608"
+	},
+	{
+		"name": "D1 migration range changes digest",
+		"game": {
+			"schemaVersion": 2,
+			"id": "fixture-installation",
+			"originalGameId": "12345678-1234-4234-8234-123456789abc",
+			"activeSessionId": "fixture-session",
+			"title": "Migration digest fixture",
+			"genre": "Test",
+			"description": "Migration content",
+			"createdAt": "2026-11-23T00:00:00.000Z",
+			"updatedAt": "2026-11-23T00:00:00.000Z",
+			"settings": {
+				"description": "Authored instructions\n",
+				"firstMessage": "Welcome",
+				"authorNote": "Stay in character"
+			},
+			"schema": {
+				"type": "object",
+				"properties": {
+					"coins": {
+						"type": "number"
+					}
+				},
+				"additionalProperties": false
+			},
+			"initialState": {
+				"coins": 0
+			},
+			"scripts": {
+				"main": {
+					"language": "typescript",
+					"source": "helia.defineMigration({name:'gold-to-coins',from:'>=1.0.0 <3.0.0',run({previous,migrated}){return {...migrated,coins:previous.gold};}});",
+					"compiled": "derived migration"
+				}
+			}
+		},
+		"content": {
+			"title": "Migration digest fixture",
+			"genre": "Test",
+			"description": "Migration content",
+			"settings": {
+				"description": "Authored instructions\n",
+				"firstMessage": "Welcome",
+				"authorNote": "Stay in character"
+			},
+			"schema": {
+				"type": "object",
+				"properties": {
+					"coins": {
+						"type": "number"
+					}
+				},
+				"additionalProperties": false
+			},
+			"initialState": {
+				"coins": 0
+			},
+			"regex": [],
+			"resources": {},
+			"scripts": {
+				"main": {
+					"language": "typescript",
+					"source": "helia.defineMigration({name:'gold-to-coins',from:'>=1.0.0 <3.0.0',run({previous,migrated}){return {...migrated,coins:previous.gold};}});"
+				}
+			}
+		},
+		"hash": "567651e7520323ea7dccb577f34c645e8673c1b995dd60e4728f8094e7fd9d0f"
+	},
+	{
+		"name": "D2 code project migration declaration",
+		"game": {
+			"schemaVersion": 2,
+			"id": "fixture-installation",
+			"originalGameId": "12345678-1234-4234-8234-123456789abc",
+			"activeSessionId": "fixture-session",
+			"title": "Migration digest fixture",
+			"genre": "Test",
+			"description": "Migration content",
+			"createdAt": "2026-11-23T00:00:00.000Z",
+			"updatedAt": "2026-11-23T00:00:00.000Z",
+			"settings": {
+				"description": "Authored instructions\n",
+				"firstMessage": "Welcome",
+				"authorNote": "Stay in character"
+			},
+			"schema": {
+				"type": "object",
+				"properties": {
+					"coins": {
+						"type": "number"
+					}
+				},
+				"additionalProperties": false
+			},
+			"initialState": {
+				"coins": 0
+			},
+			"scripts": {
+				"main": {
+					"language": "typescript",
+					"source": "helia.defineMigration({name:'gold-to-coins',from:'>=1.0.0 <2.0.0',run({previous,migrated}){return {...migrated,coins:previous.gold};}});",
+					"compiled": "derived migration"
+				}
+			},
+			"code": {
+				"version": 1,
+				"entry": "main.ts",
+				"files": {
+					"main.ts": {
+						"language": "typescript",
+						"source": "import './migration';"
+					},
+					"migration.ts": {
+						"language": "typescript",
+						"source": "helia.defineMigration({name:'gold-to-coins',from:'>=1.0.0 <2.0.0',run({previous,migrated}){return {...migrated,coins:previous.gold};}});"
+					}
+				}
+			}
+		},
+		"content": {
+			"title": "Migration digest fixture",
+			"genre": "Test",
+			"description": "Migration content",
+			"settings": {
+				"description": "Authored instructions\n",
+				"firstMessage": "Welcome",
+				"authorNote": "Stay in character"
+			},
+			"schema": {
+				"type": "object",
+				"properties": {
+					"coins": {
+						"type": "number"
+					}
+				},
+				"additionalProperties": false
+			},
+			"initialState": {
+				"coins": 0
+			},
+			"regex": [],
+			"resources": {},
+			"code": {
+				"version": 1,
+				"entry": "main.ts",
+				"files": {
+					"main.ts": {
+						"language": "typescript",
+						"source": "import './migration';"
+					},
+					"migration.ts": {
+						"language": "typescript",
+						"source": "helia.defineMigration({name:'gold-to-coins',from:'>=1.0.0 <2.0.0',run({previous,migrated}){return {...migrated,coins:previous.gold};}});"
+					}
+				}
+			}
+		},
+		"hash": "b1941b5ef2054d167c64b348b44f8b5edc0e361fb9856648ac3674ae4f077a30"
+	},
+	{
+		"name": "D2 generated migration output excluded",
+		"game": {
+			"schemaVersion": 2,
+			"id": "fixture-installation",
+			"originalGameId": "12345678-1234-4234-8234-123456789abc",
+			"activeSessionId": "fixture-session",
+			"title": "Migration digest fixture",
+			"genre": "Test",
+			"description": "Migration content",
+			"createdAt": "2026-11-23T00:00:00.000Z",
+			"updatedAt": "2026-11-23T00:00:00.000Z",
+			"settings": {
+				"description": "Authored instructions\n",
+				"firstMessage": "Welcome",
+				"authorNote": "Stay in character"
+			},
+			"schema": {
+				"type": "object",
+				"properties": {
+					"coins": {
+						"type": "number"
+					}
+				},
+				"additionalProperties": false
+			},
+			"initialState": {
+				"coins": 0
+			},
+			"scripts": {
+				"main": {
+					"language": "typescript",
+					"source": "different generated source",
+					"compiled": "different generated output"
+				}
+			},
+			"code": {
+				"version": 1,
+				"entry": "main.ts",
+				"files": {
+					"main.ts": {
+						"language": "typescript",
+						"source": "import './migration';"
+					},
+					"migration.ts": {
+						"language": "typescript",
+						"source": "helia.defineMigration({name:'gold-to-coins',from:'>=1.0.0 <2.0.0',run({previous,migrated}){return {...migrated,coins:previous.gold};}});"
+					}
+				}
+			}
+		},
+		"content": {
+			"title": "Migration digest fixture",
+			"genre": "Test",
+			"description": "Migration content",
+			"settings": {
+				"description": "Authored instructions\n",
+				"firstMessage": "Welcome",
+				"authorNote": "Stay in character"
+			},
+			"schema": {
+				"type": "object",
+				"properties": {
+					"coins": {
+						"type": "number"
+					}
+				},
+				"additionalProperties": false
+			},
+			"initialState": {
+				"coins": 0
+			},
+			"regex": [],
+			"resources": {},
+			"code": {
+				"version": 1,
+				"entry": "main.ts",
+				"files": {
+					"main.ts": {
+						"language": "typescript",
+						"source": "import './migration';"
+					},
+					"migration.ts": {
+						"language": "typescript",
+						"source": "helia.defineMigration({name:'gold-to-coins',from:'>=1.0.0 <2.0.0',run({previous,migrated}){return {...migrated,coins:previous.gold};}});"
+					}
+				}
+			}
+		},
+		"hash": "b1941b5ef2054d167c64b348b44f8b5edc0e361fb9856648ac3674ae4f077a30"
 	}
 ]

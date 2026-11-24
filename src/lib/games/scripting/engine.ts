@@ -114,8 +114,9 @@ class ActionSandbox {
 		const begin = this.vm.getProp(control, 'beginScript'),
 			list = this.vm.getProp(control, 'list'),
 			invoke = this.vm.getProp(control, 'invoke'),
-			install = this.vm.getProp(control, 'installWeb');
-		this.handles.push(begin, list, invoke, install);
+			install = this.vm.getProp(control, 'installWeb'),
+			migrationStatus = this.vm.getProp(control, 'migrationRegistrationFailed');
+		this.handles.push(begin, list, invoke, install, migrationStatus);
 		const factory = this.keep(
 			this.budget.run(() => this.vm.evalCode(WEB_BOOTSTRAP, 'helia-web.js', { type: 'global' })),
 			'unavailable'
@@ -128,6 +129,15 @@ class ActionSandbox {
 		);
 		for (const script of compiled) {
 			this.call(begin, [script.id], 'registration');
+			this.registerScript(script, migrationStatus);
+		}
+		const metadata: unknown = JSON.parse(readString(this.vm, this.call(list, [], 'registration')));
+		return evaluateRules(input, metadata, (kind, definition, context) =>
+			this.invoke(invoke, kind, definition, context)
+		);
+	}
+	private registerScript(script: { id: string; source: string }, migrationStatus: QuickJSHandle) {
+		try {
 			this.keep(
 				this.budget.run(() =>
 					this.vm.evalCode(`(function(){"use strict";\n${script.source}\n})()`, `${script.id}.js`, {
@@ -137,11 +147,15 @@ class ActionSandbox {
 				'script',
 				{ name: '', scriptId: script.id }
 			);
+		} catch (error) {
+			if (error instanceof CreatorRuntimeError && error.code === 'script') {
+				// Preserve existing script failures; classify only invalid migration declarations here.
+				if (readString(this.vm, this.call(migrationStatus, [], 'registration')) === 'true') {
+					throw new CreatorRuntimeError('registration', script.id);
+				}
+			}
+			throw error;
 		}
-		const metadata: unknown = JSON.parse(readString(this.vm, this.call(list, [], 'registration')));
-		return evaluateRules(input, metadata, (kind, definition, context) =>
-			this.invoke(invoke, kind, definition, context)
-		);
 	}
 	private async invoke(
 		fn: QuickJSHandle,

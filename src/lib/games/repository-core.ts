@@ -24,6 +24,7 @@ import {
 	contentHash,
 	counter,
 	identifier,
+	record,
 	parseAction,
 	parseGameSnapshot,
 	parseMemory,
@@ -34,7 +35,12 @@ import {
 	transactionMessageIds,
 	type SessionHistory
 } from '#lib/games/state/model.js';
-import { emptyStateDocument, parseStateDocument } from '#lib/games/state/schema.js';
+import {
+	emptyStateDocument,
+	parseObjectSchema,
+	parseStateDocument,
+	validateState
+} from '#lib/games/state/schema.js';
 import { parseGameState, sameValue } from '#lib/games/state/value.js';
 import { storedRecord, type StorageRequest, type StorageTransport } from '#lib/storage/protocol.js';
 import { useStorage, type StorageUnit } from '#lib/storage/unit.js';
@@ -56,6 +62,8 @@ import { aiError } from './ai/protocol.js';
 import { compileCodeProject, compileAuthoringGame } from './code-project.js';
 import { assertEditOperation } from './edit-lock.js';
 import { editorContent, type GameEditorContent } from './editor.js';
+import { migrationStates, type StateResolver } from './migration/inputs.js';
+import { defaultResolver } from './migration/precompute.js';
 import {
 	parseGame,
 	parseSession,
@@ -75,7 +83,7 @@ import {
 } from './model.js';
 import { runtimeReady } from './runtime-ready.js';
 import { gameActions } from './scripting/game-scope.js';
-import { migrateState } from './state/migration.js';
+import { NO_BASELINES, type MigrationSource } from './state/baseline.js';
 import { parseGameUI } from './ui/runtime/model.js';
 function makeSession(gameId: string): Session {
 	const now = new Date().toISOString();
@@ -1026,66 +1034,50 @@ class GameRepository {
 						parseGameState({ ...editorContent(game), regex: [] })
 					)
 				) {
-					this.migrateSessions(unit, game);
+					this.migrateSessions(
+						{ unit, baselines: NO_BASELINES },
+						game,
+						defaultResolver({
+							game,
+							schemaOf: (id) => parseObjectSchema(record(unit.get('snapshots', id)).schema)
+						})
+					);
 				}
 				unit.put('games', game);
 				return game;
 			}
 		);
 	};
-	private migrateSessions = (unit: StorageUnit, game: Game) => {
-		const gameId = game.id;
-		for (const raw of unit.all('sessions')) {
-			const session = parseSession(raw);
-			const saved = unit.get('progress', session.id);
-			if (saved === undefined) {
-				continue;
-			}
-			if (isSessionBusy(gameId, session.id)) {
+	private migrateSessions = (source: MigrationSource, game: Game, resolve: StateResolver) => {
+		const { unit } = source;
+		let snapshotId = '';
+		for (const input of migrationStates(source)) {
+			const { sessionId, role } = input;
+			if (isSessionBusy(game.id, sessionId)) {
 				throw Error('실행 중인 작업이 끝난 뒤 적용해주세요.');
 			}
-			const progress = parseSessionState(saved);
-			const snapshot = parseGameSnapshot(unit.get('snapshots', progress.snapshotId));
-			const transactions = unit
-				.all('transactions')
-				.map(parseTransaction)
-				.filter((node) => node.sessionId === session.id);
-			const history: SessionHistory = {
-				snapshot,
-				progress,
-				transactions,
-				checkpoints: unit
-					.all('checkpoints')
-					.map(parseSnapshotCheckpoint)
-					.filter((row) => row.snapshotId === snapshot.id && row.sessionId === session.id),
-				resources: snapshotResources(unit, snapshot.id)
-			};
-			const transform = (state: import('./state/value.js').GameState) =>
-				migrateState(state, snapshot.schema, game.schema, game.initialState);
-			// The migrated content becomes a new shared snapshot row; per-event checkpoints
-			// live in their own table so prune can drop rows instead of rewriting documents.
-			const nextSnapshot = contentSnapshot(unit, gameId, {
-				...game,
-				schema: game.schema,
-				initialState: transform(snapshot.initialState)
-			});
-			for (const node of transactions) {
+			const state = validateState(game.schema, resolve(input), 'load');
+			if (role === 'initial') {
+				snapshotId = contentSnapshot(unit, game.id, { ...game, initialState: state }).id;
+			} else if (role === 'checkpoint') {
 				unit.put('checkpoints', {
 					schemaVersion: 1,
-					id: node.id,
-					transactionId: node.id,
-					snapshotId: nextSnapshot.id,
-					gameId,
-					sessionId: session.id,
-					state: transform(stateAt(history, node.id))
+					id: input.transactionId!,
+					transactionId: input.transactionId!,
+					snapshotId,
+					gameId: game.id,
+					sessionId,
+					state
+				});
+			} else {
+				const progress = parseSessionState(unit.get('progress', sessionId));
+				unit.put('progress', {
+					...progress,
+					snapshotId,
+					revision: counter(progress.revision + 1),
+					state
 				});
 			}
-			unit.put('progress', {
-				...progress,
-				snapshotId: nextSnapshot.id,
-				revision: counter(progress.revision + 1),
-				state: transform(stateAt(history))
-			});
 		}
 	};
 

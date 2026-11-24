@@ -21,7 +21,9 @@ export const SANDBOX_LIMITS = Object.freeze({
 	hookCount: 128,
 	depth: 16,
 	eventCount: 128,
-	independentCount: 16
+	independentCount: 16,
+	migrationCount: 16,
+	migrationBatchSize: 256
 });
 export const FAILURE_CODES = [
 	'input',

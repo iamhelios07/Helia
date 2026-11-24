@@ -8,14 +8,17 @@ export const BOOTSTRAP = String.raw`
   const prototype = Object.getPrototypeOf, setPrototype = Object.setPrototypeOf;
   const names = Object.getOwnPropertyNames, symbols = Object.getOwnPropertySymbols;
   const descriptor = Object.getOwnPropertyDescriptor, isArray = Array.isArray;
+  const own = Object.hasOwn;
   const objectPrototype = Object.prototype, finite = Number.isFinite;
+  const string = String;
   const apply = Reflect.apply;
   const resolvePromise = Promise.resolve.bind(Promise), then = Promise.prototype.then;
   const definitions = new Map();
   const put = Map.prototype.set.bind(definitions), get = Map.prototype.get.bind(definitions);
   const has = Map.prototype.has.bind(definitions);
-  const metadata = {actions:[],queries:[],filters:[],hooks:[]};
+  const metadata = {actions:[],queries:[],filters:[],hooks:[],migrations:[]};
   let sealed = false, failed = false, scriptId = null, phase = null, events = [];
+  let badMigrationRegistration = false;
   let webFetch;
   const checkWeb = () => {if(phase !== 'action'){failed=true;throw Error('Web IO requires an Action');}};
   const fetch = (...args) => {checkWeb();return webFetch(...args);};
@@ -25,24 +28,28 @@ export const BOOTSTRAP = String.raw`
     if (depth > 256) throw Error('value-depth');
     if (value === null || typeof value === 'string' || typeof value === 'boolean') return value;
     if (typeof value === 'number' && finite(value)) return value;
-    if (typeof value !== 'object' || value === null || ancestors.includes(value)) throw Error('invalid-json');
+    if (typeof value !== 'object' || value === null) throw Error('invalid-json');
+    for (let index = 0; index < ancestors.length; index++) if (ancestors[index] === value) throw Error('invalid-json');
     const array = isArray(value), proto = prototype(value);
     if ((!array && proto !== objectPrototype && proto !== null) || symbols(value).length) throw Error('invalid-json');
     const result = array ? setPrototype([], null) : create(null);
     const keys = names(value);
-    const next = [...ancestors, value];
+    const next = setPrototype([], null);
+    for (let index = 0; index < ancestors.length; index++) next[index] = ancestors[index];
+    next[ancestors.length] = value;
     if (array) {
       if (keys.length !== value.length + 1) throw Error('invalid-array');
       for (let index = 0; index < value.length; index++) {
-        const item = descriptor(value, String(index));
-        if (!item || !('value' in item)) throw Error('invalid-array');
+        const item = descriptor(value, string(index));
+        if (!item || !own(item, 'value')) throw Error('invalid-array');
         result[index] = copy(item.value, next, depth + 1);
       }
     } else {
-      for (const key of keys) {
+      for (let index = 0; index < keys.length; index++) {
+        const key = keys[index];
         if (key === '__proto__' || key === 'prototype' || key === 'constructor') throw Error('invalid-key');
         const item = descriptor(value, key);
-        if (!item.enumerable || !('value' in item)) throw Error('invalid-property');
+        if (!item.enumerable || !own(item, 'value')) throw Error('invalid-property');
         result[key] = copy(item.value, next, depth + 1);
       }
     }
@@ -50,7 +57,8 @@ export const BOOTSTRAP = String.raw`
   }
   function readonly(value) {
     if (value !== null && typeof value === 'object') {
-      for (const key of names(value)) readonly(value[key]);
+      const keys = names(value);
+      for (let index = 0; index < keys.length; index++) readonly(value[keys[index]]);
       freeze(value);
     }
     return value;
@@ -58,7 +66,7 @@ export const BOOTSTRAP = String.raw`
   const define = (kind, definition) => {
     try {
       const entries = metadata[kind === 'query' ? 'queries' : kind + 's'];
-      if (sealed || entries.length >= 256 || !definition || typeof definition !== 'object') throw Error('registration');
+      if (sealed || entries.length >= (kind === 'migration' ? 16 : 256) || !definition || typeof definition !== 'object') throw Error('registration');
       const {name, arguments: args, description, run} = definition;
       const key = kind + ':' + name;
       if (typeof name !== 'string' || !name.trim() || name.length > 128 || has(key) || typeof run !== 'function') throw Error('registration');
@@ -66,7 +74,13 @@ export const BOOTSTRAP = String.raw`
       if (description !== undefined && (typeof description !== 'string' || !description.trim() || description.length > 1024)) throw Error('description');
       const info = {name,scriptId};
       if (kind === 'action' || kind === 'query') {info.arguments = copy(args === undefined ? {type:'object',properties:{},additionalProperties:false} : args);info.ai = definition.ai === true;}
-      else {
+      else if (kind === 'migration') {
+        const from = definition.from;
+        if (from !== undefined) {
+          if (typeof from !== 'string' || from.length > 256) throw Error('from');
+          info.from = from;
+        }
+      } else {
         info.priority = definition.priority === undefined ? 0 : definition.priority;
         info.actions = definition.actions === undefined ? null : copy(definition.actions);
         if (kind === 'hook') info.mode = definition.mode === undefined ? 'included' : definition.mode;
@@ -74,7 +88,7 @@ export const BOOTSTRAP = String.raw`
       if (description !== undefined) info.description = description;
       put(key, run);
       entries[entries.length] = copy(info);
-    } catch (error) { failed = true; throw error; }
+    } catch (error) { if(kind === 'migration')badMigrationRegistration = true; failed = true; throw error; }
   };
   const emit = (name, payload = {}) => {
     try {
@@ -88,6 +102,7 @@ export const BOOTSTRAP = String.raw`
     defineQuery: definition => define('query',definition),
     defineFilter: definition => define('filter',definition),
     defineHook: definition => define('hook',definition),
+    defineMigration: definition => define('migration',definition),
     emit,
     appendMessage: message => emit('$helia.message', message),
     queueTurn,
@@ -95,6 +110,15 @@ export const BOOTSTRAP = String.raw`
     secrets:freeze({has:name=>{checkWeb();return webFetch.secrets.has(name);},ref:name=>{checkWeb();return webFetch.secrets.ref(name);}})
   }), writable: false, configurable: false});
   return freeze({
+    migrationRegistrationFailed() {return badMigrationRegistration ? 'true' : 'false';},
+    migrationMode() {
+      if (sealed || scriptId !== null) throw Error('registration');
+      const forbidden = () => {throw Error('Non-deterministic API');};
+      Object.defineProperty(Math,'random',{value:forbidden,writable:false,configurable:false});
+      for (const key of ['now','parse','UTC']) Object.defineProperty(forbidden,key,{value:forbidden});
+      Object.defineProperty(globalThis,'Date',{value:forbidden,writable:false,configurable:false});
+      for (const key of ['WeakRef','FinalizationRegistry']) Object.defineProperty(globalThis,key,{value:undefined,writable:false,configurable:false});
+    },
     installWeb(factory,sync,async,encode,decode) {
       if(sealed || webFetch)throw Error('Web registration');
       webFetch=apply(factory,undefined,[sync,async,encode,decode,checkWeb]);
@@ -123,6 +147,10 @@ export const BOOTSTRAP = String.raw`
         }
         if (kind === 'hook' && value === undefined) value = [];
         if (failed) throw Error('invocation');
+        if (kind === 'migration') {
+          try {return stringify(copy({ok:true,value}));}
+          catch {return stringify(copy({ok:false,reason:'non-json'}));}
+        }
         return stringify(copy({value, events}));
       } finally {if(kind !== 'action'){phase = null; events = [];}}
     }

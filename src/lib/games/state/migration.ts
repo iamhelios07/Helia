@@ -2,6 +2,8 @@ import {
 	schemaType,
 	validateValue,
 	validateState,
+	StateValidationError,
+	type ValidationPhase,
 	type ValueSchema,
 	type ObjectSchema
 } from './schema.js';
@@ -25,7 +27,7 @@ interface MigrationStep {
 	old: ValueSchema;
 	target: ValueSchema;
 	fallback: StateValue | undefined;
-	path: string[];
+	path: (string | number)[];
 }
 function migrateValue(
 	value: StateValue,
@@ -39,9 +41,9 @@ function migrateValue(
 			return null;
 		}
 		if (fallback === undefined) {
-			throw Error('새 초기값이 필요해요: ' + path.join('.'));
+			throw new DefaultMigrationError('새 초기값이 필요해요: ', path);
 		}
-		return validateValue(target, fallback, 'initial');
+		return validateAt(target, fallback, 'initial', path);
 	}
 	if (
 		type === 'object' &&
@@ -57,13 +59,13 @@ function migrateValue(
 				old: old.items,
 				target: target.items,
 				fallback: arrayFallback(fallback, index),
-				path: [...path, String(index)]
+				path: [...path, index]
 			})
 		);
 	} else if (type !== oldType) {
 		return convertValue(value, target, fallback, path);
 	}
-	return validateValue(target, candidate, 'load');
+	return validateAt(target, candidate, 'load', path);
 }
 function migrateObject(
 	value: GameState,
@@ -91,7 +93,7 @@ function migrateObject(
 			result[key] = structuredClone(childFallback);
 		} else if (target.required?.includes(key)) {
 			if (childFallback === undefined) {
-				throw Error('새 필드의 초기값이 필요해요: ' + [...path, key].join('.'));
+				throw new DefaultMigrationError('새 필드의 초기값이 필요해요: ', [...path, key]);
 			}
 			result[key] = structuredClone(childFallback);
 		}
@@ -102,7 +104,7 @@ function convertValue(
 	value: StateValue,
 	target: ValueSchema,
 	fallback: StateValue | undefined,
-	path: string[]
+	path: (string | number)[]
 ): StateValue {
 	const type = schemaType(target);
 	let candidate = value;
@@ -121,12 +123,12 @@ function convertValue(
 		candidate = false;
 	}
 	try {
-		return validateValue(target, candidate, 'load');
+		return validateAt(target, candidate, 'load', path);
 	} catch {
 		if (fallback === undefined) {
-			throw Error('타입 변경에 사용할 초기값이 필요해요: ' + path.join('.'));
+			throw new DefaultMigrationError('타입 변경에 사용할 초기값이 필요해요: ', path);
 		}
-		return validateValue(target, fallback, 'initial');
+		return validateAt(target, fallback, 'initial', path);
 	}
 }
 
@@ -142,4 +144,34 @@ function objectFallback(fallback: StateValue | undefined, key: string): StateVal
 		return undefined;
 	}
 	return fallback[key];
+}
+
+/** Preserve existing Apply wording while exposing a structured path to migration callers. */
+export class DefaultMigrationError extends StateValidationError {
+	constructor(
+		readonly prefix:
+			| '새 초기값이 필요해요: '
+			| '새 필드의 초기값이 필요해요: '
+			| '타입 변경에 사용할 초기값이 필요해요: ',
+		path: (string | number)[]
+	) {
+		super('load', path, 'missing-initial');
+		this.message = prefix + path.join('.');
+	}
+}
+
+function validateAt(
+	schema: ValueSchema,
+	value: StateValue,
+	phase: ValidationPhase,
+	path: (string | number)[]
+): StateValue {
+	try {
+		return validateValue(schema, value, phase);
+	} catch (error) {
+		if (error instanceof StateValidationError) {
+			throw new StateValidationError(error.phase, [...path, ...error.path], error.code);
+		}
+		throw error;
+	}
 }

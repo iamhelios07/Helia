@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import ts from 'typescript';
 import { expect, it } from 'vitest';
@@ -5,7 +6,7 @@ import { expect, it } from 'vitest';
 import { authoringBindings } from './environment.js';
 import { HELIA_AUTHORING_DECLARATIONS, HELIA_AUTHORING_LIBRARIES } from './runtime.js';
 
-function diagnostics(files: Record<string, string>) {
+function diagnostics(files: Record<string, string>, stateType?: string) {
 	const root = path.resolve('data/authoring-typecheck').replaceAll('\\', '/') + '/';
 	const sources = new Map(Object.entries(files).map(([file, source]) => [root + file, source]));
 	for (const [file, binding] of authoringBindings(ts, sources)) {
@@ -14,7 +15,8 @@ function diagnostics(files: Record<string, string>) {
 	sources.set(root + '.helia/runtime.d.ts', HELIA_AUTHORING_DECLARATIONS);
 	sources.set(
 		root + '.helia/GameState.d.ts',
-		`export type GameState = {
+		stateType ??
+			`export type GameState = {
 		gold: number; optional?: { hp: number }; nullable: { hp: number } | null;
 		list: { hp: number }[];
 	};`
@@ -55,6 +57,31 @@ function diagnostics(files: Record<string, string>) {
 				`${item.file?.fileName}:${item.file && item.start !== undefined ? item.file.getLineAndCharacterOfPosition(item.start).line + 1 : ''}: ${ts.flattenDiagnosticMessageText(item.messageText, ' ')}`
 		);
 }
+
+it('typechecks the documented migration example in legacy and imported logic modules', () => {
+	const docs = readFileSync('docs/scripting.md', 'utf8');
+	const example = docs.split('## Save migrations')[1].split('```ts')[1].split('```')[0];
+	const coins = 'export type GameState = {coins:number};';
+	expect(diagnostics({ 'main.ts': example }, coins)).toEqual([]);
+	expect(
+		diagnostics({ 'main.ts': "import './migration';", 'migration.ts': example }, coins)
+	).toEqual([]);
+	expect(
+		diagnostics({
+			'main.ts': `helia.defineMigration({name:'typed',run({previous,migrated,previousSchema,from}) {
+ from.toUpperCase(); previousSchema.properties;
+ // @ts-expect-error old state fields require narrowing
+ previous.gold.toFixed();
+ // @ts-expect-error contexts are deeply readonly
+ previous.gold=1;
+ if(!migrated)throw Error();
+ // @ts-expect-error cannot change default state in place
+ migrated.gold=1;
+ return {...migrated,list:migrated.list.map(item=>({...item}))};
+ }});`
+		})
+	).toEqual([]);
+});
 
 it('separates logic and UI contracts, including imported UI helpers and shared modules', () => {
 	expect(

@@ -53,6 +53,34 @@ helia.defineAction({
 
 State, messages and events remain provisional across `await`. Filters and included Hook Actions finish before committing. A rejection, cancellation, invalid result or revision conflict discards those provisional changes. A Hook may enqueue an asynchronous Action, but its own `run` stays synchronous. Fetch is forbidden during registration, Queries, Filters and Hooks. Await external work before returning; unfinished Web operations reject the Action. An external service's side effects cannot be rolled back by a rejected game transaction.
 
+## Save migrations
+
+Register a save migration with `helia.defineMigration` in a logic script. In legacy games this is one of the `scripts` entries. In a code project, put it in `main.ts` or a module reachable through its logic imports. A UI-only module or an unreferenced file does not register migrations. Migration source is part of released game content.
+
+For example, after changing the state field `gold` to `coins`:
+
+```ts
+helia.defineMigration({
+	name: 'gold-to-coins',
+	from: '>=1.0.0 <2.0.0',
+	description: 'Preserve saved currency after renaming gold.',
+	run({ previous, migrated }) {
+		if (!migrated || typeof previous.gold !== 'number') {
+			throw new Error('Currency cannot be migrated');
+		}
+		return { ...migrated, coins: previous.gold };
+	}
+});
+```
+
+The deeply read-only context contains `previous` (the old saved JSON object), `previousSchema`, `from` (the selected release version), and `migrated` (the default migration result, or `null` if the default rules failed). Old fields are untyped JSON; narrow their types before using them. Return the complete new Game State synchronously. The result must satisfy the new schema; missing fields are not filled afterward. Promises, accessors, non-finite numbers and other non-JSON values are rejected.
+
+`from` is optional. A range uses full SemVer versions prefixed by `<`, `<=`, `>`, `>=` or `=`, separated by spaces; every comparison must match. Prereleases follow SemVer precedence and build metadata is ignored. Partial versions, wildcards, `^`, `~` and `||` are unsupported. Set an upper bound such as `<2.0.0` so a migration retained in future releases does not accidentally apply to newer saves. No match uses default rules; multiple matches cancel the entire operation. Up to 16 migrations may be registered, with at most eight comparisons and 256 characters in each range.
+
+Migrations run against initial state, every historical branch and current state with the same rule. Each distinct input runs in a fresh isolated context. The context exposes no session identity, network, credentials, messages or events. `Math.random`, `Date`, `WeakRef` and `FinalizationRegistry` are unavailable. Registration and execution together have the same per-input CPU and memory ceilings as Actions. Cancellation or any migration failure aborts the operation without a partial save.
+
+For a released game, structural Apply recalculates baseline-origin saves from the selected release baseline. Records created while playing a later draft receive only default rules. Repeated Apply therefore starts from the baseline again. Unreleased games use default rules. During normal play, declarations are validated but migrations are not invoked.
+
 ## UI scripts
 
 UI scripts register Preact panels and connect player interactions to game logic. Start UI modules with `'use ui';`. The following APIs are available both on global `helia` and as named exports from `@helia/ui`.

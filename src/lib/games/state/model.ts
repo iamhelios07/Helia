@@ -304,7 +304,7 @@ export function blobId(value: unknown): string {
 }
 
 /** Canonical JSON with sorted object keys; the input of the content fingerprint. */
-function canonical(value: unknown): string {
+export function canonical(value: unknown): string {
 	if (Array.isArray(value)) {
 		return `[${value.map(canonical).join(',')}]`;
 	}

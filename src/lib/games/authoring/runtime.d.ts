@@ -153,6 +153,19 @@ interface HookDefinition extends RuleDefinition {
 	run(context: RuleContext): readonly GameAction[] | void;
 }
 
+interface MigrationContext {
+	readonly previous: ReadonlyState<JsonObject>;
+	readonly migrated: ReadonlyState<GameState> | null;
+	readonly previousSchema: ReadonlyState<ArgumentSchema>;
+	readonly from: string;
+}
+interface MigrationDefinition {
+	name: string;
+	from?: string;
+	description?: string;
+	run(context: MigrationContext): GameState;
+}
+
 /** QuickJS logic API. Only Actions may await Web IO; state comes from each operation's context. */
 interface HeliaRuntime {
 	/** Scoped to this game. References can only be used in headers for their saved HTTPS URL. */
@@ -168,6 +181,7 @@ interface HeliaRuntime {
 	defineQuery(definition: SchemaQueryDefinition): void;
 	defineFilter(definition: FilterDefinition): void;
 	defineHook(definition: HookDefinition): void;
+	defineMigration(definition: MigrationDefinition): void;
 	emit(name: string, payload?: JsonObject): void;
 	/** Buffer a message in the current Action or Hook's transaction. */
 	appendMessage(message: ChatMessageInput): void;

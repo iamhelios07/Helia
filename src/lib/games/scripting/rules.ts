@@ -5,6 +5,7 @@ import { parseObjectSchema, validateState, type ObjectSchema } from '#lib/games/
 import { parseGameState, parseStateValue, type GameState } from '#lib/games/state/value.js';
 import { createWorkspace } from '#lib/games/state/workspace.js';
 
+import { parseMigrationRange } from '../migration/range.js';
 import {
 	CreatorRuntimeError,
 	SANDBOX_LIMITS,
@@ -18,6 +19,9 @@ export interface Definition {
 	name: string;
 	scriptId: string;
 	description?: string;
+}
+export interface MigrationDefinition extends Definition {
+	from?: string;
 }
 interface ActionDefinition extends Definition {
 	arguments: ObjectSchema;
@@ -42,11 +46,26 @@ interface RuleResult {
 	value: unknown;
 	events: UIEvent[];
 }
-function definitions(value: unknown) {
+function base(item: GameState): Definition {
+	if (
+		item.description !== undefined &&
+		(typeof item.description !== 'string' ||
+			!item.description.trim() ||
+			item.description.length > 1024)
+	) {
+		throw Error('description');
+	}
+	return {
+		name: shortName(item.name),
+		scriptId: shortName(item.scriptId),
+		...(item.description === undefined ? {} : { description: item.description })
+	};
+}
+export function definitions(value: unknown) {
 	try {
 		const input = parseGameState(value);
 		function list(key: string): GameState[] {
-			const items = input[key] ?? (key === 'queries' ? [] : undefined);
+			const items = input[key] ?? (key === 'queries' || key === 'migrations' ? [] : undefined);
 			if (!Array.isArray(items) || items.length > SANDBOX_LIMITS.ruleCount) {
 				throw Error('definitions');
 			}
@@ -55,21 +74,6 @@ function definitions(value: unknown) {
 				throw Error('duplicates');
 			}
 			return rows;
-		}
-		function base(item: GameState): Definition {
-			if (
-				item.description !== undefined &&
-				(typeof item.description !== 'string' ||
-					!item.description.trim() ||
-					item.description.length > 1024)
-			) {
-				throw Error('description');
-			}
-			return {
-				name: shortName(item.name),
-				scriptId: shortName(item.scriptId),
-				...(item.description === undefined ? {} : { description: item.description })
-			};
 		}
 		function filter(item: GameState): FilterDefinition {
 			if (
@@ -112,7 +116,19 @@ function definitions(value: unknown) {
 				return { ...filter(item), mode: item.mode };
 			})
 			.sort((a, b) => a.priority - b.priority);
-		return { actions, queries, filters, hooks };
+		const migrations: MigrationDefinition[] = list('migrations').map((item) => {
+			if (item.from !== undefined) {
+				if (typeof item.from !== 'string') {
+					throw Error('from');
+				}
+				parseMigrationRange(item.from);
+			}
+			return { ...base(item), ...(item.from === undefined ? {} : { from: item.from }) };
+		});
+		if (migrations.length > SANDBOX_LIMITS.migrationCount) {
+			throw Error('migrations');
+		}
+		return { actions, queries, filters, hooks, migrations };
 	} catch {
 		throw new CreatorRuntimeError('registration');
 	}

@@ -18,8 +18,7 @@ import {
 	type ActionRunner,
 	type CreatorFailureCode
 } from './protocol.js';
-
-let active = 0;
+import { tryWorkerSlot } from './worker-slots.js';
 /** The Worker supplies termination and UI responsiveness; QuickJS supplies the capability boundary. */
 export const runCreatorAction: ActionRunner = async (input, options = {}) => {
 	if (options.signal?.aborted) {
@@ -28,10 +27,10 @@ export const runCreatorAction: ActionRunner = async (input, options = {}) => {
 	if (typeof Worker === 'undefined') {
 		throw new CreatorRuntimeError('unavailable');
 	}
-	if (active >= 4) {
+	const release = tryWorkerSlot();
+	if (!release) {
 		throw new CreatorRuntimeError('busy');
 	}
-	active++;
 	try {
 		let request = encodeInput(input);
 		const captured = parseInput(JSON.parse(request));
@@ -52,7 +51,7 @@ export const runCreatorAction: ActionRunner = async (input, options = {}) => {
 		}
 		throw error instanceof CreatorRuntimeError ? error : new CreatorRuntimeError('protocol');
 	} finally {
-		active--;
+		release();
 	}
 };
 function createWorker(): Worker {
