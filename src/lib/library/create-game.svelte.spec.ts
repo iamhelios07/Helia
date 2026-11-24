@@ -10,7 +10,7 @@ import type {} from '#lib/testing/message-frame-command.js';
 import { aiSettingsRequest } from '#lib/app/settings/settings-transport.js';
 import { memoryAISettingsTransport } from '#lib/testing/ai-settings.js';
 
-import type { Message, Game, Session, SessionConversation } from '../games/model.js';
+import type { Message, Game, GameSummary, Session, SessionConversation } from '../games/model.js';
 import type { SessionTimeline } from '../games/state/history.js';
 
 import Home from '../../routes/+page.svelte';
@@ -22,6 +22,7 @@ import { saveAISettings } from '../app/settings/repository.js';
 import { beginSessionActivity, publishSessionAIEvent } from '../games/ai/activity.js';
 import { invokeSessionAI } from '../games/ai/browser.js';
 import { loadMetadataDraft, storeMetadataDraft } from '../games/metadata-draft.js';
+import { isNetworkGrantRemembered, rememberNetworkGrant } from '../games/network/grants.js';
 import {
 	listGames,
 	createGame,
@@ -33,7 +34,9 @@ import {
 	renameSession,
 	deleteSession,
 	getSessionConversation,
-	getSessionTimeline
+	getSessionTimeline,
+	trashGame,
+	purgeGame
 } from '../games/repository.js';
 import { loadSettingsDraft, storeSettingsDraft } from '../games/settings-draft.js';
 import GameWorkspace from '../games/ui/GameWorkspace.svelte';
@@ -772,6 +775,40 @@ describe('new game creation', () => {
 		await expect.element(page.getByLabelText('표시된 게임 수')).toHaveTextContent('0');
 		expect(page.getByRole('list', { name: '게임 목록' }).query()).toBeNull();
 		expect(page.getByRole('button', { name: /샘플 (숨기기|보기)/ }).query()).toBeNull();
+	});
+});
+
+describe('library trash', () => {
+	it('keeps remembered network grants when trashing a game and removes them on permanent deletion', async () => {
+		let summaries: GameSummary[] = [game];
+		vi.mocked(listGames).mockImplementation(async (includeTrashed = false) =>
+			includeTrashed ? summaries : summaries.filter((item) => item.trashedAt === undefined)
+		);
+		vi.mocked(trashGame).mockImplementation(async (id) => {
+			const trashedAt = '2026-11-20T00:00:00.000Z';
+			summaries = summaries.map((item) => (item.id === id ? { ...item, trashedAt } : item));
+			return { ...game, trashedAt };
+		});
+		vi.mocked(purgeGame).mockImplementation(async (id) => {
+			summaries = summaries.filter((item) => item.id !== id);
+		});
+		rememberNetworkGrant(game.id, 'https://api.example');
+		render(Home);
+		await page.getByRole('button', { name: `${game.title} 휴지통으로 이동` }).click();
+		await expect
+			.element(page.getByRole('dialog', { name: '휴지통' }))
+			.toHaveTextContent(game.title);
+		expect(isNetworkGrantRemembered(game.id, 'https://api.example')).toBe(true);
+		await page
+			.getByRole('dialog', { name: '휴지통' })
+			.getByRole('button', { name: '영구 삭제', exact: true })
+			.click();
+		await page
+			.getByRole('dialog', { name: '영구 삭제' })
+			.getByRole('button', { name: '영구 삭제', exact: true })
+			.click();
+		await expect.element(page.getByText('휴지통이 비어 있어요.')).toBeVisible();
+		expect(isNetworkGrantRemembered(game.id, 'https://api.example')).toBe(false);
 	});
 });
 

@@ -75,6 +75,28 @@ it('explains when nothing is remembered', async () => {
 	await openNetwork();
 	await expect.element(page.getByText('다시 묻지 않기로 한 주소가 없어요.')).toBeInTheDocument();
 });
+it('moves focus to the next row, then the previous row, then the heading when cancelling a grant', async () => {
+	rememberNetworkGrant('game-a', 'https://api.example');
+	rememberNetworkGrant('game-a', 'https://other.example');
+	rememberNetworkGrant('missing-game', 'https://api.example');
+	await openNetwork();
+	const list = page.getByRole('list', { name: '허용한 외부 주소 목록' });
+	const api = page.getByRole('button', { name: '별의 항해의 https://api.example 허용 취소' });
+	const other = page.getByRole('button', { name: '별의 항해의 https://other.example 허용 취소' });
+	const missing = page.getByRole('button', {
+		name: '찾을 수 없는 게임의 https://api.example 허용 취소'
+	});
+	await api.click();
+	await expect.element(other).toHaveFocus();
+	await missing.click();
+	await expect.element(other).toHaveFocus();
+	await other.click();
+	await expect.element(page.getByText('다시 묻지 않기로 한 주소가 없어요.')).toBeInTheDocument();
+	await expect
+		.element(page.getByRole('heading', { name: '다시 묻지 않기로 한 주소' }))
+		.toHaveFocus();
+	expect(list.query()).toBeNull();
+});
 it('reports a failed cancellation and keeps the grant listed', async () => {
 	rememberNetworkGrant('missing-game', 'https://api.example');
 	await openNetwork();

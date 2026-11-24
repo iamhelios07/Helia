@@ -68,6 +68,11 @@ it('runs fetch inside an Action through the actual Worker and commits only after
 	const { promise } = execute(current);
 	const dialog = page.getByRole('dialog', { name: '외부 연결 허용' });
 	await expect.element(dialog).toHaveTextContent('이번 작업이 끝날 때까지');
+	await expect
+		.element(dialog)
+		.toHaveTextContent(
+			"'다시 묻지 않기'를 선택하면 설정의 '외부 연결'에서 취소할 때까지 이 게임에서는 이 주소를 다시 묻지 않습니다."
+		);
 	expect(networkHop).not.toHaveBeenCalled();
 	await dialog.getByRole('button', { name: '허용', exact: true }).click();
 	await expect.poll(() => networkHop).toHaveBeenCalledOnce();

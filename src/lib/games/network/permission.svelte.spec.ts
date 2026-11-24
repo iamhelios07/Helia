@@ -37,6 +37,15 @@ it('does not remember an unchecked allow or a checked denial', async () => {
 	await expect(result).resolves.toBe(false);
 	expect(localStorage.getItem(NETWORK_GRANTS_KEY)).toBeNull();
 });
+it('keeps the shorter wording when the game is unknown, so nothing can be remembered', async () => {
+	const result = requestNetworkPermission(origin, new AbortController().signal);
+	const dialog = page.getByRole('dialog', { name: '외부 연결 허용' });
+	await expect.element(dialog).toHaveTextContent('이번 작업이 끝날 때까지 허용합니다.');
+	await expect.element(dialog.getByRole('checkbox')).not.toBeInTheDocument();
+	await expect.element(dialog).not.toHaveTextContent('다시 묻지 않기');
+	await dialog.getByRole('button', { name: '취소' }).click();
+	await expect(result).resolves.toBe(false);
+});
 it('asks again for a different game', async () => {
 	localStorage.clear();
 	const first = requestNetworkPermission(origin, new AbortController().signal, 'game-1');

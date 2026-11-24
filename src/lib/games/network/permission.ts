@@ -19,6 +19,13 @@ export function requestNetworkPermission(
 	);
 	return result;
 }
+function consentDetail(canRemember: boolean): string {
+	const base = '이번 작업이 끝날 때까지 허용합니다.';
+	if (!canRemember) {
+		return base;
+	}
+	return `${base} '다시 묻지 않기'를 선택하면 설정의 '외부 연결'에서 취소할 때까지 이 게임에서는 이 주소를 다시 묻지 않습니다.`;
+}
 function showPermission(
 	origin: string,
 	signal: AbortSignal,
@@ -42,7 +49,7 @@ function showPermission(
 			target: document.body,
 			props: {
 				title: '외부 연결 허용',
-				message: `이 게임이 다음 주소로 데이터를 보내고 응답을 받으려고 합니다.\n\n${origin}\n\n이번 작업이 끝날 때까지 허용합니다.`,
+				message: `이 게임이 다음 주소로 데이터를 보내고 응답을 받으려고 합니다.\n\n${origin}\n\n${consentDetail(canRemember)}`,
 				confirmLabel: '허용',
 				tone: 'default',
 				optionLabel: canRemember ? '이 주소에 대해 다시 묻지 않기' : '',

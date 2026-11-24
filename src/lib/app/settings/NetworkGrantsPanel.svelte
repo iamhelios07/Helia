@@ -1,18 +1,36 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onMount, tick } from 'svelte';
 
-	import { NetworkGrantsController } from './network-grants-controller.svelte.js';
+	import {
+		NetworkGrantsController,
+		type NetworkGrantRow
+	} from './network-grants-controller.svelte.js';
 	const controller = new NetworkGrantsController();
 	onMount(() => {
 		void controller.load();
 		return controller.dispose;
 	});
+	/** Revoking removes the clicked row, so move focus somewhere sensible instead of dropping it. */
+	async function revoke(row: NetworkGrantRow, button: HTMLButtonElement) {
+		const count = controller.rows.length;
+		const section = button.closest('section');
+		const index = [...(button.closest('ul')?.querySelectorAll('button') ?? [])].indexOf(button);
+		controller.revoke(row);
+		await tick();
+		if (controller.rows.length === count) {
+			return;
+		}
+		const buttons = section?.querySelectorAll<HTMLButtonElement>('.grant-list button') ?? [];
+		const target =
+			buttons[Math.min(index, buttons.length - 1)] ?? section?.querySelector<HTMLElement>('h3');
+		target?.focus();
+	}
 </script>
 
 <svelte:window onstorage={controller.storageChanged} />
 
 <section class="network-grants" aria-labelledby="network-grants-heading">
-	<h3 id="network-grants-heading">다시 묻지 않기로 한 주소</h3>
+	<h3 id="network-grants-heading" tabindex="-1">다시 묻지 않기로 한 주소</h3>
 	<p class="help">
 		게임마다 허용해 둔 외부 주소예요. 취소하면 그 게임이 해당 주소에 연결할 때 다시 물어봅니다.
 	</p>
@@ -29,7 +47,7 @@
 					<button
 						type="button"
 						aria-label={`${row.title}의 ${row.origin} 허용 취소`}
-						onclick={() => controller.revoke(row)}>허용 취소</button
+						onclick={(event) => void revoke(row, event.currentTarget)}>허용 취소</button
 					>
 				</li>
 			{/each}
