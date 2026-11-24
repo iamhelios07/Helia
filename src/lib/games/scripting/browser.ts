@@ -72,7 +72,7 @@ class WorkerExecution {
 		private options: import('./protocol.js').RunOptions
 	) {
 		this.network = new FetchBridge(
-			requestNetworkPermission,
+			(origin, signal) => requestNetworkPermission(origin, signal, options.gameId),
 			this.activity,
 			(count) => this.watchdog.touch(count),
 			(request, signal) => networkHop(request, signal, options.gameId)

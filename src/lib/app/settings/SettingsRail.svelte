@@ -52,6 +52,15 @@
 			onclick={() => controller.switchSection('personas')}
 			><Icon name="user" size={18} />페르소나</button
 		>
+		<button
+			class={{ selected: controller.section === 'network' }}
+			type="button"
+			aria-label="외부 연결"
+			aria-current={controller.section === 'network' ? 'page' : undefined}
+			disabled={controller.busy || controller.promptPanel?.isBusy()}
+			onclick={() => controller.switchSection('network')}
+			><Icon name="send" size={18} />외부 연결</button
+		>
 	</nav>
 	<div class="rail-footer"><Icon name="sun" size={19} /><span>Helia</span></div>
 </aside>
@@ -158,11 +167,13 @@
 		}
 		nav {
 			flex-direction: row;
+			flex-wrap: wrap;
 			gap: 8px;
 		}
 		nav button {
 			min-height: 37px;
-			flex: 1;
+			min-width: 0;
+			flex: 1 1 auto;
 			justify-content: center;
 			font-size: 12px;
 		}

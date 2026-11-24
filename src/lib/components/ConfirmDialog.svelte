@@ -6,6 +6,7 @@
 		disabled = false,
 		error = '',
 		tone = 'danger',
+		optionLabel = '',
 		onconfirm,
 		oncancel
 	}: {
@@ -15,10 +16,13 @@
 		disabled?: boolean;
 		error?: string;
 		tone?: 'danger' | 'default';
-		onconfirm: () => void;
+		/** Shows an unchecked checkbox; its state is passed to onconfirm and ignored on cancel. */
+		optionLabel?: string;
+		onconfirm: (option: boolean) => void;
 		oncancel: () => void;
 	} = $props();
 	const id = $props.id();
+	let option = $state(false);
 	function open(element: HTMLDialogElement) {
 		const previousFocus = document.activeElement;
 		element.showModal();
@@ -44,10 +48,13 @@
 >
 	<h2 id={`${id}-title`}>{title}</h2>
 	<p id={`${id}-message`}>{message}</p>
+	{#if optionLabel}<label class="option"
+			><input type="checkbox" bind:checked={option} {disabled} /><span>{optionLabel}</span></label
+		>{/if}
 	{#if error}<p class="error" role="alert">{error}</p>{/if}
 	<div class="actions">
 		<button type="button" {disabled} onclick={oncancel}>취소</button>
-		<button type="button" class={['confirm', tone]} {disabled} onclick={onconfirm}
+		<button type="button" class={['confirm', tone]} {disabled} onclick={() => onconfirm(option)}
 			>{confirmLabel}</button
 		>
 	</div>
@@ -102,6 +109,25 @@
 	}
 	.error {
 		color: var(--danger, #ef9b9b);
+	}
+	.option {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		margin-top: 16px;
+		color: var(--text);
+		font-size: 13px;
+		cursor: pointer;
+	}
+	.option input {
+		width: 16px;
+		height: 16px;
+		margin: 0;
+		accent-color: var(--text);
+	}
+	.option input:focus-visible {
+		outline: 2px solid var(--text);
+		outline-offset: 3px;
 	}
 	button:focus-visible {
 		outline: 2px solid var(--text);

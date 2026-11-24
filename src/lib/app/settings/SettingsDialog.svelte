@@ -7,6 +7,7 @@
 	import ConnectionSettingsForm from './ConnectionSettingsForm.svelte';
 	import { selectDefaultModel, selectAuxiliaryModel } from './model.js';
 	import ModelPicker from './ModelPicker.svelte';
+	import NetworkGrantsPanel from './NetworkGrantsPanel.svelte';
 	import PersonaSettingsPanel from './PersonaSettingsPanel.svelte';
 	import PromptSettingsPanel from './PromptSettingsPanel.svelte';
 	import { SERVICE_PRESETS, getServicePreset } from './services.js';
@@ -36,12 +37,8 @@
 		<main class="settings-main">
 			<div class="page-heading">
 				<div>
-					<h2>
-						{controller.sectionHeading.title}
-					</h2>
-					<p>
-						{controller.sectionHeading.description}
-					</p>
+					<h2>{controller.sectionHeading.title}</h2>
+					<p>{controller.sectionHeading.description}</p>
 				</div>
 				{#if controller.section === 'connections'}<button
 						class="primary-button"
@@ -55,6 +52,8 @@
 					bind:this={controller.personaPanel}
 					requestChange={controller.changeView}
 				/>
+			{:else if controller.section === 'network'}
+				<NetworkGrantsPanel />
 			{:else if controller.section === 'prompts'}
 				<PromptSettingsPanel
 					bind:this={controller.promptPanel}

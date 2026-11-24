@@ -84,6 +84,39 @@ it('waits beyond the CPU watchdog for gated IO and cancels the outstanding permi
 	channel.port1.close();
 	channel.port2.close();
 });
+it('gives the permission gate the running game ID, and nothing else from the sandbox', async () => {
+	vi.mocked(requestNetworkPermission).mockResolvedValue(false);
+	const abort = new AbortController();
+	const pending = runCreatorAction(input, { signal: abort.signal, gameId: 'game-1' });
+	const assertion = expect(pending).rejects.toMatchObject({ code: 'canceled' });
+	const channel = new MessageChannel();
+	TestWorker.instances[0].respond(
+		{
+			kind: 'fetch',
+			gameId: 'forged-game',
+			remember: true,
+			request: {
+				url: 'https://api.example',
+				method: 'GET',
+				headers: [],
+				body: null,
+				redirect: 'follow'
+			}
+		},
+		[channel.port2]
+	);
+	await vi.waitFor(() =>
+		expect(requestNetworkPermission).toHaveBeenCalledWith(
+			'https://api.example',
+			expect.any(AbortSignal),
+			'game-1'
+		)
+	);
+	abort.abort();
+	await assertion;
+	channel.port1.close();
+	channel.port2.close();
+});
 it('terminates on cancellation and ignores late worker replies', async () => {
 	const controller = new AbortController();
 	const pending = runCreatorAction(input, { signal: controller.signal });

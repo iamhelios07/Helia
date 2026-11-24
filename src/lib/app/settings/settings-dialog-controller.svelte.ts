@@ -20,7 +20,7 @@ import {
 import { loadAISettings, saveAISettings } from './repository.js';
 import { SERVICE_PRESETS, getServicePreset, type ServiceId } from './services.js';
 import { parseServiceAccountJson, vertexBaseUrl } from './vertex.js';
-type Section = 'connections' | 'models' | 'prompts' | 'personas';
+type Section = 'connections' | 'models' | 'prompts' | 'personas' | 'network';
 type Confirmation = { heading: string; message: string; label: string; action: () => void };
 const SECTION_HEADINGS = {
 	personas: {
@@ -29,7 +29,11 @@ const SECTION_HEADINGS = {
 	},
 	connections: { title: 'API 연결', description: 'AI 서비스를 연결하고 사용할 모델을 추가하세요.' },
 	prompts: { title: '프롬프트', description: '프롬프트 프리셋과 전송 순서를 관리하세요.' },
-	models: { title: '모델', description: '추가한 모델을 관리하고 기본 모델을 선택하세요.' }
+	models: { title: '모델', description: '추가한 모델을 관리하고 기본 모델을 선택하세요.' },
+	network: {
+		title: '외부 연결',
+		description: '게임이 외부 주소에 연결하도록 다시 묻지 않기로 한 허용을 확인하고 취소하세요.'
+	}
 };
 export class SettingsDialogController {
 	get keyHelp() {

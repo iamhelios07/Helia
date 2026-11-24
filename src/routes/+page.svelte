@@ -8,6 +8,7 @@
 	import { configureAppSidebar } from '#lib/app/sidebar.svelte.js';
 	import ConfirmDialog from '#lib/components/ConfirmDialog.svelte';
 	import Icon from '#lib/components/Icon.svelte';
+	import { forgetNetworkGrants } from '#lib/games/network/grants.js';
 	import {
 		listGames,
 		createGame,
@@ -176,6 +177,8 @@
 		trashBusy = true;
 		try {
 			await purgeGame(target.id);
+			// Remembered network consents belong to the deleted game ID only.
+			forgetNetworkGrants(target.id);
 			await openTrash();
 			await loadLibrary();
 		} catch {
