@@ -1,0 +1,25 @@
+{
+	"originalGameId": "12345678-1234-4234-8234-123456789abc",
+	"contentVersion": "1.0.0",
+	"contentHash": "a7552d931bd6f3f5c6764ab1eef72c3d403c9a480d43209c6c46ba27dfafba7e",
+	"createdAt": "2026-11-23T00:00:00.000Z",
+	"content": {
+		"title": "Adventure",
+		"genre": "Fantasy",
+		"description": "Public",
+		"settings": {
+			"description": "Instructions",
+			"firstMessage": "Welcome",
+			"authorNote": ""
+		},
+		"schema": {
+			"type": "object",
+			"properties": {},
+			"additionalProperties": false
+		},
+		"initialState": {},
+		"regex": [],
+		"resources": {},
+		"scripts": {}
+	}
+}
