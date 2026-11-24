@@ -1166,7 +1166,12 @@ pub(crate) fn execute_request(path: &Path, input: Value) -> Result<Value, String
         Request::List { include_trashed } => {
             let mut records = read_rows(&transaction, Table::Games, None, None)?;
             if !include_trashed {
-                records.retain(|row| row.value.get("trashedAt").is_none());
+                records.retain(|row| {
+                    row.value
+                        .get("trashedAt")
+                        .map(Value::is_null)
+                        .unwrap_or(true)
+                });
             }
             let games: Vec<Value> = records
                 .iter()
@@ -2136,6 +2141,44 @@ mod tests {
     }
     fn commit(version: u64, records: &[Value]) -> Value {
         json!({ "kind": "commit", "gameId": "game", "version": version, "records": records, "deleteSessions": [] })
+    }
+    #[test]
+    fn restored_games_rejoin_active_listings_and_accept_commits() {
+        let fixture = Fixture::new();
+        fixture.create();
+        fixture
+            .request(json!({"kind":"trash","gameId":"game"}))
+            .unwrap();
+        let trashed = fixture
+            .request(json!({"kind":"list","includeTrashed":false}))
+            .unwrap();
+        assert!(trashed["games"].as_array().unwrap().is_empty());
+        // Restore stores trashedAt: null, which must count as "not trashed" everywhere.
+        fixture
+            .request(json!({"kind":"restore","gameId":"game"}))
+            .unwrap();
+        let restored = fixture
+            .request(json!({"kind":"list","includeTrashed":false}))
+            .unwrap();
+        assert_eq!(restored["games"][0]["id"], "game");
+        assert!(restored["games"][0]["trashedAt"].is_null());
+        assert_eq!(
+            fixture.read()["records"][0]["value"]["trashedAt"],
+            Value::Null
+        );
+        assert_eq!(
+            fixture
+                .request(json!({"kind":"purge","gameId":"game"}))
+                .unwrap_err(),
+            "휴지통에 있는 게임만 삭제할 수 있어요."
+        );
+        fixture.request(commit(0, &[])).unwrap();
+        assert_eq!(
+            fixture
+                .request(json!({"kind":"read","gameId":"game"}))
+                .unwrap()["version"],
+            1
+        );
     }
     fn branched_fixture() -> Fixture {
         let fixture = Fixture::new();

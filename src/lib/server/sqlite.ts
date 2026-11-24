@@ -178,7 +178,7 @@ class Storage {
 		if (!game || game.version >= Number.MAX_SAFE_INTEGER) {
 			throw new Error('게임을 찾을 수 없어요.');
 		}
-		if ((JSON.parse(game.value) as { trashedAt?: string }).trashedAt !== undefined) {
+		if ((JSON.parse(game.value) as { trashedAt?: string | null }).trashedAt != null) {
 			throw new Error('휴지통에 있는 게임은 변경할 수 없어요.');
 		}
 		const read = () => [
@@ -271,7 +271,7 @@ class Storage {
 		if (!game) {
 			throw new Error('게임을 찾을 수 없어요.');
 		}
-		if ((JSON.parse(game.value) as { trashedAt?: string }).trashedAt !== undefined) {
+		if ((JSON.parse(game.value) as { trashedAt?: string | null }).trashedAt != null) {
 			throw new Error('휴지통에 있는 게임은 변경할 수 없어요.');
 		}
 		const activeId = (JSON.parse(game.value) as { activeSessionId: string }).activeSessionId;
@@ -368,7 +368,7 @@ class Storage {
 			const rows = command.includeTrashed
 				? this.readRows('games')
 				: this.readRows('games').filter(
-						(row) => (row.value as { trashedAt?: string }).trashedAt === undefined
+						(row) => (row.value as { trashedAt?: string | null }).trashedAt == null
 					);
 			return { version: 0, records: [], games: rows.map((row) => gameSummary(row.value)) };
 		}
@@ -411,8 +411,8 @@ class Storage {
 		if (!game) {
 			throw new Error('게임을 찾을 수 없어요.');
 		}
-		const trashedAt = (JSON.parse(game.value) as { trashedAt?: string }).trashedAt;
-		if (trashedAt === undefined) {
+		const trashedAt = (JSON.parse(game.value) as { trashedAt?: string | null }).trashedAt;
+		if (trashedAt == null) {
 			throw new Error('휴지통에 있는 게임만 삭제할 수 있어요.');
 		}
 		if (this.db.run(sql`delete from games where id = ${command.gameId}`).changes !== 1) {
