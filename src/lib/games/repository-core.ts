@@ -39,7 +39,7 @@ import { storedRecord, type StorageRequest, type StorageTransport } from '#lib/s
 import { useStorage, type StorageUnit } from '#lib/storage/unit.js';
 
 import type { AgentWorkspaceResult } from './ai/loop.js';
-import type { GameResources } from './resources.js';
+import type { GameResource, GameResources } from './resources.js';
 import type { RuleTrigger } from './scripting/protocol.js';
 import type {
 	GameVersioning,
@@ -142,6 +142,13 @@ function messagesIn(unit: StorageUnit, session: Session): Message[] {
 	return messages;
 }
 
+function resourceBlobId(gameId: string, asset: GameResource): string {
+	if (asset.data.startsWith('helia-asset:')) {
+		return asset.data.slice(12);
+	}
+	// The blob table has a global primary key but every row has one game owner.
+	return contentHash([gameId, asset.data]);
+}
 /**
  * Returns the shared snapshot for this content, creating the row and its blob
  * references on first use. The id is the content fingerprint, so sessions that
@@ -156,7 +163,17 @@ function contentSnapshot(unit: StorageUnit, gameId: string, game: Game) {
 		...(game.ui ? { ui: game.ui } : {}),
 		...(game.ai ? { ai: game.ai } : {})
 	};
-	const id = contentHash(content);
+	const resources = Object.fromEntries(
+		Object.entries(game.resources ?? {}).map(([assetId, asset]) => [
+			assetId,
+			{
+				name: asset.name,
+				mime: asset.mime,
+				blobId: resourceBlobId(gameId, asset)
+			}
+		])
+	);
+	const id = contentHash({ ...content, resources });
 	const existing = unit.get('snapshots', id);
 	if (existing !== undefined) {
 		return parseGameSnapshot(existing);
@@ -171,9 +188,7 @@ function contentSnapshot(unit: StorageUnit, gameId: string, game: Game) {
 	unit.put('snapshots', snapshot);
 	for (const [assetId, asset] of Object.entries(game.resources ?? {})) {
 		const name = asset.name;
-		const fingerprint = asset.data.startsWith('helia-asset:')
-			? asset.data.slice(12)
-			: contentHash(asset.data);
+		const fingerprint = resources[assetId].blobId;
 		if (!asset.data.startsWith('helia-asset:') && unit.get('blobs', fingerprint) === undefined) {
 			// The blob row is game-owned; snapshots reference it through snapshot_resources.
 			unit.put('blobs', {
@@ -187,7 +202,7 @@ function contentSnapshot(unit: StorageUnit, gameId: string, game: Game) {
 		// The per-path name row keeps creator asset paths; the blob id deduplicates bytes.
 		unit.put('snapshot_resources', {
 			schemaVersion: 1,
-			id: contentHash([id, assetId, fingerprint]),
+			id: contentHash([gameId, id, assetId, fingerprint]),
 			snapshotId: id,
 			gameId,
 			blobId: fingerprint,
@@ -824,7 +839,13 @@ class GameRepository {
 			(unit) => initialize(unit, gameId, sessionId).history
 		);
 		const compiled = await (await import('./runtime-build.js')).buildRuntime(original.snapshot);
-		const id = contentHash({ ...compiled, id: undefined, createdAt: undefined, code: undefined });
+		const id = contentHash({
+			...compiled,
+			id: undefined,
+			createdAt: undefined,
+			code: undefined,
+			snapshotId: original.snapshot.id
+		});
 		return this.withHistory(gameId, sessionId, (unit, context) => {
 			if (
 				context.history.snapshot.id !== original.snapshot.id ||
@@ -838,7 +859,7 @@ class GameRepository {
 				if (resource.snapshotId === original.snapshot.id) {
 					unit.put('snapshot_resources', {
 						...resource,
-						id: contentHash([id, resource.assetId, resource.blobId]),
+						id: contentHash([gameId, id, resource.assetId, resource.blobId]),
 						snapshotId: id
 					});
 				}
