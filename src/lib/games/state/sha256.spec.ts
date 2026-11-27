@@ -1,7 +1,7 @@
 import { createHash, randomBytes, randomInt } from 'node:crypto';
 import { expect, it } from 'vitest';
 
-import { sha256 } from './sha256.js';
+import { Sha256, sha256, sha256LengthBytes } from './sha256.js';
 
 it.each(
 	[
@@ -43,4 +43,48 @@ it.each([55, 56, 63, 64])('hashes a %i-byte boundary view with a nonzero offset'
 	expect(view.byteOffset).toBe(7);
 	expect(sha256(view)).toBe(createHash('sha256').update(view).digest('hex'));
 	expect(backing).toEqual(before);
+});
+
+it.each([0, 1, 55, 56, 63, 64, 65, 119, 120, 127, 128, 129, 1024])(
+	'incrementally hashes padding/block boundary %i with offset views and empty updates',
+	(length) => {
+		const bytes = randomBytes(length + 8).subarray(7, 7 + length);
+		for (const size of [1, 7, 64, 65]) {
+			const hash = new Sha256();
+			for (let offset = 0; offset < bytes.length; offset += size) {
+				hash.update(bytes.subarray(offset, offset + size)).update(new Uint8Array(0));
+			}
+			expect(hash.digest()).toBe(sha256(bytes));
+			expect(hash.digest()).toBe(createHash('sha256').update(bytes).digest('hex'));
+			expect(() => hash.update(bytes)).toThrow('finalized');
+		}
+	}
+);
+
+it('encodes lengths above 4 GiB without allocating the payload', () => {
+	for (const length of [0n, 0x20000000n, 0x100000000n, 0x100000001n, (1n << 61n) - 1n]) {
+		const expected = Buffer.alloc(8);
+		expected.writeBigUInt64BE(length * 8n);
+		expect(sha256LengthBytes(length)).toEqual(new Uint8Array(expected));
+	}
+	expect(() => sha256LengthBytes(-1n)).toThrow('range');
+	expect(() => sha256LengthBytes(1n << 61n)).toThrow('range');
+});
+
+it('copies a partial input block before its caller reuses the buffer', () => {
+	const bytes = new Uint8Array([1, 2, 3]);
+	const expected = sha256(bytes);
+	const hash = new Sha256().update(bytes);
+	bytes.fill(0);
+	expect(hash.digest()).toBe(expected);
+});
+
+it('rejects incremental updates at the SHA-256 length limit', () => {
+	const hash = new Sha256();
+	const counter = hash as unknown as { length: bigint };
+	counter.length = (1n << 61n) - 2n;
+	hash.update(new Uint8Array([1]));
+	expect(counter.length).toBe((1n << 61n) - 1n);
+	expect(() => hash.update(new Uint8Array([2]))).toThrow('SHA-256 length out of range');
+	expect(counter.length).toBe((1n << 61n) - 1n);
 });

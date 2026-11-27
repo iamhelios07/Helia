@@ -73,3 +73,70 @@ export function sha256(bytes: Uint8Array): string {
 	}
 	return Array.from(state, (word) => word.toString(16).padStart(8, '0')).join('');
 }
+
+/** SHA-256's unsigned 64-bit bit count; byte counts never pass through bitwise JS math. */
+export function sha256LengthBytes(byteLength: bigint): Uint8Array {
+	if (byteLength < 0n || byteLength >= 1n << 61n) {
+		throw Error('SHA-256 length out of range');
+	}
+	const bytes = new Uint8Array(8);
+	new DataView(bytes.buffer).setBigUint64(0, byteLength * 8n);
+	return bytes;
+}
+
+/** Bounded-memory SHA-256. digest is repeatable; update after digest is an error. */
+export class Sha256 {
+	private state = new Uint32Array([
+		0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19
+	]);
+	private words = new Uint32Array(64);
+	private pending = new Uint8Array(64);
+	private used = 0;
+	private length = 0n;
+	private result?: string;
+
+	update(bytes: Uint8Array): this {
+		if (this.result !== undefined) {
+			throw Error('SHA-256 already finalized');
+		}
+		const length = this.length + BigInt(bytes.length);
+		if (length < 0n || length >= 1n << 61n) {
+			throw Error('SHA-256 length out of range');
+		}
+		this.length = length;
+		let offset = 0;
+		if (this.used) {
+			const count = Math.min(64 - this.used, bytes.length);
+			this.pending.set(bytes.subarray(0, count), this.used);
+			this.used += count;
+			offset = count;
+			if (this.used < 64) {
+				return this;
+			}
+			compress(new DataView(this.pending.buffer), 0, this.state, this.words);
+			this.used = 0;
+		}
+		const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+		for (; offset + 64 <= bytes.length; offset += 64) {
+			compress(view, offset, this.state, this.words);
+		}
+		this.pending.set(bytes.subarray(offset));
+		this.used = bytes.length - offset;
+		return this;
+	}
+
+	digest(): string {
+		if (this.result !== undefined) {
+			return this.result;
+		}
+		const tail = new Uint8Array(this.used < 56 ? 64 : 128);
+		tail.set(this.pending.subarray(0, this.used));
+		tail[this.used] = 0x80;
+		tail.set(sha256LengthBytes(this.length), tail.length - 8);
+		for (let offset = 0; offset < tail.length; offset += 64) {
+			compress(new DataView(tail.buffer), offset, this.state, this.words);
+		}
+		this.result = Array.from(this.state, (word) => word.toString(16).padStart(8, '0')).join('');
+		return this.result;
+	}
+}

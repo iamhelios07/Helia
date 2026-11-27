@@ -25,6 +25,22 @@ export function crc32(bytes: Uint8Array): number {
 	return (crc ^ 0xffffffff) >>> 0;
 }
 
+/** Incremental IEEE CRC-32, using the same polynomial and final XOR as crc32. */
+export class Crc32 {
+	private value = 0xffffffff;
+
+	update(bytes: Uint8Array): this {
+		for (const byte of bytes) {
+			this.value = crcTable[(this.value ^ byte) & 255] ^ (this.value >>> 8);
+		}
+		return this;
+	}
+
+	digest(): number {
+		return (this.value ^ 0xffffffff) >>> 0;
+	}
+}
+
 function equalBytes(left: Uint8Array, right: Uint8Array): boolean {
 	return left.length === right.length && left.every((byte, index) => byte === right[index]);
 }

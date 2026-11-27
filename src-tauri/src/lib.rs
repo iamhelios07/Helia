@@ -50,6 +50,8 @@ mod game_secrets;
 #[cfg(any(feature = "desktop", test))]
 mod generation;
 #[cfg(any(feature = "desktop", test))]
+mod media_identity;
+#[cfg(any(feature = "desktop", test))]
 mod network;
 #[cfg(any(feature = "desktop", test))]
 mod runtime_content;

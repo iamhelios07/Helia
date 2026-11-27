@@ -1,0 +1,84 @@
+{
+	"gameId": "game-\ud55c\uae00-\ud83c\udfae-\"\\\n",
+	"mime": "image/png",
+	"chunkSizes": [1, 7, 4096],
+	"bytePattern": "(index * 37 + 11) % 256",
+	"releaseTemplate": {
+		"title": "\uacf5\uc720 \ud83c\udfae",
+		"genre": "Adventure",
+		"description": "helia-asset:outside",
+		"settings": {
+			"description": "line\n\t\u0000\"\\",
+			"firstMessage": "",
+			"authorNote": ""
+		},
+		"schema": {
+			"type": "object",
+			"properties": {},
+			"additionalProperties": false
+		},
+		"initialState": {
+			"\uff00": 1.25,
+			"\ud83d\ude00": 0,
+			"tiny": 1e-7,
+			"large": 1e21,
+			"text": "\u00e9 \ud55c\uae00 \ud83c\udfae \u2028",
+			"outside": {
+				"data": "helia-asset:outside",
+				"mime": "image/png"
+			},
+			"values": [true, false, null, 0]
+		},
+		"resources": {
+			"media": {
+				"name": "images/test.png",
+				"mime": "image/png",
+				"data": ""
+			}
+		},
+		"scripts": {},
+		"regex": []
+	},
+	"vectors": [
+		{
+			"length": 0,
+			"raw": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+			"crc": 0,
+			"blobId": "2661b6b27b9c57358a40236f269a7c3e9e9c5ced4a6b07741607c2c61c8de70a",
+			"assetHash": "c4dc92bd08a95a74abbf3bedcbb84e923b8341e23d8f2084e1d65e35d57c82e3",
+			"releaseHash": "57b36ee8cdb318fe4d4b6d6c01d31d58901b8931927d0027b68480402f917fed"
+		},
+		{
+			"length": 1,
+			"raw": "e7cf46a078fed4fafd0b5e3aff144802b853f8ae459a4f0c14add3314b7cc3a6",
+			"crc": 1171273221,
+			"blobId": "e0fcd4aa9a05d681033a42656f84f4b189629f121b7e2083f79005ad05200058",
+			"assetHash": "506fcf253958be65d916f9e2b813c51f03d31faee45b1f59e46ae816d25eea1d",
+			"releaseHash": "143a1f8a7916b32484885bdee730baadd5323d2be6fac06d5a5c4a1b23856a52"
+		},
+		{
+			"length": 2,
+			"raw": "cdc63a6325d5fa92515578c0b418e6eeec1c6d085937a24fc43c2126ea517457",
+			"crc": 2230647704,
+			"blobId": "07eed750d71a18773aa2693c1607e8c9aa60d4380966cd60377e1e545b38d623",
+			"assetHash": "a79484aa28ac2baba440d64d03076616ce7f7dfe30f9827b404c467c6172e031",
+			"releaseHash": "41d241058988553ee93da95b8cc1a370a611fe17935afa99c1244b5da1dbfdc2"
+		},
+		{
+			"length": 63,
+			"raw": "5f6401b96532c36de4e65beec0409b69b1d181864c8009b7a04f43e5d56350d1",
+			"crc": 3135637977,
+			"blobId": "cdf0d2390aa98d6a54c34e6133dc71df76cfbf2705b0d197aa184930580506f6",
+			"assetHash": "80d27393c002e3c6f56aa95dd081b1a790bea536717f17e454c4422d3061d2e7",
+			"releaseHash": "116aab93c12b8290b4d8838a407e0bcc5612e485093685055303fd85898bcf64"
+		},
+		{
+			"length": 12290,
+			"raw": "3f0576b2bfef5c8f44b0b400649e0e6b5f43022ad04d5197dae949f58b1e5d9f",
+			"crc": 1136169626,
+			"blobId": "7c971584565ceb5226648448e7ce48e62022c72571c803193c8cddcc7409586d",
+			"assetHash": "b874bbeefe04c0d1e0a1ce068c4881b14227819b778228f31222dc7e572fbcfe",
+			"releaseHash": "e1127a01cf23d7f8f0ee3f48ba77c3b6374b1aa2ccc50fc724b33ae0969937cb"
+		}
+	]
+}

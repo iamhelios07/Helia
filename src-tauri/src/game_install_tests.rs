@@ -951,10 +951,7 @@ fn installs_packages_carrying_hundreds_of_small_resources() {
             .unwrap();
         let frozen = get_release(&db, game_id, release_id).unwrap();
         assert_eq!(
-            frozen["content"]["resources"]
-                .as_object()
-                .unwrap()
-                .len(),
+            frozen["content"]["resources"].as_object().unwrap().len(),
             count
         );
         assert_eq!(frozen["content"]["resources"], resources);
