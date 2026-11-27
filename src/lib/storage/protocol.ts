@@ -5,6 +5,7 @@ import {
 	gameSummary,
 	type GameSummary
 } from '#lib/games/model.js';
+import { MEDIA_MIMES } from '#lib/games/resources.js';
 import {
 	blobId,
 	counter,
@@ -130,8 +131,27 @@ function storedSessionId(
 }
 
 /** A stored blob: game-owned immutable bytes keyed by their content fingerprint. */
-function parseBlob(value: unknown) {
+export function parseBlob(value: unknown) {
 	const input = record(value);
+	if (input.schemaVersion === 2) {
+		const id = blobId(input.id);
+		const size = counter(input.size);
+		if (size === 0) {
+			throw new Error('미디어 크기가 올바르지 않아요.');
+		}
+		const mime = identifier(input.mime);
+		if (!MEDIA_MIMES.has(mime)) {
+			throw new Error('지원하는 이미지·오디오·비디오 파일을 선택해주세요.');
+		}
+		return {
+			schemaVersion: 2 as const,
+			id,
+			gameId: identifier(input.gameId),
+			mime,
+			object: blobId(input.object),
+			size
+		};
+	}
 	if (input.schemaVersion !== 1) {
 		throw new Error('지원하지 않는 저장 데이터 버전이에요.');
 	}

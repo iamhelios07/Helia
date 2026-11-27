@@ -8,6 +8,17 @@ use std::{
 
 const MIGRATION: &str = include_str!("../../src/lib/storage/migrations/0000_initial.sql");
 const CONFLICT: &str = "STORAGE_CONFLICT";
+pub(crate) const MEDIA_MIMES: &[&str] = &[
+    "image/png",
+    "image/jpeg",
+    "image/webp",
+    "image/gif",
+    "audio/mpeg",
+    "audio/wav",
+    "audio/ogg",
+    "video/mp4",
+    "video/webm",
+];
 
 #[path = "game_releases.rs"]
 mod releases;
@@ -223,6 +234,9 @@ pub(crate) fn open(path: &Path) -> Result<Connection, String> {
     connection
         .execute_batch(crate::runtime_content::SCHEMA)
         .map_err(db_error)?;
+    connection
+        .execute_batch(crate::runtime_content::MEDIA_SCHEMA)
+        .map_err(db_error)?;
     releases::initialize(&mut connection)?;
     Ok(connection)
 }
@@ -390,6 +404,7 @@ fn validate(row: &StoredRecord, game_id: &str) -> Result<(), String> {
     }
     let expected = match row.table {
         Table::Games | Table::Progress | Table::Transactions => 2,
+        Table::Blobs if row.value["schemaVersion"] == 2 => 2,
         _ => 1,
     };
     let id_key = if row.table == Table::Progress {
@@ -406,6 +421,9 @@ fn validate(row: &StoredRecord, game_id: &str) -> Result<(), String> {
         || row.game_id != game_id
         || row.value[id_key].as_str() != Some(row.id.as_str())
         || row.value["schemaVersion"].as_u64() != Some(expected)
+        || (row.table == Table::Blobs
+            && expected == 2
+            && row.value["gameId"].as_str() != Some(game_id))
         || (session_scoped && row.value["gameId"].as_str() != Some(game_id))
     {
         return Err("저장 항목의 소유 정보나 형식이 올바르지 않아요.".into());
@@ -770,18 +788,7 @@ fn resources(value: Option<&Value>) -> bool {
                 .any(|part| part.trim().is_empty() || [".", ".."].contains(&part))
             || !paths.insert(name.to_owned())
             || entries.contains_key(name) && name != id
-            || ![
-                "image/png",
-                "image/jpeg",
-                "image/webp",
-                "image/gif",
-                "audio/mpeg",
-                "audio/wav",
-                "audio/ogg",
-                "video/mp4",
-                "video/webm",
-            ]
-            .contains(&mime)
+            || !MEDIA_MIMES.contains(&mime)
         {
             return false;
         }
@@ -818,7 +825,21 @@ fn valid_snapshot(value: &Value) -> bool {
         && game_ui(value.get("ui"))
         && code_project(value.get("code"))
 }
-fn valid_blob(value: &Value) -> bool {
+pub(crate) fn valid_blob(value: &Value) -> bool {
+    if value["schemaVersion"] == 2 {
+        return value["id"]
+            .as_str()
+            .is_some_and(crate::runtime_content::valid_hash)
+            && id(&value["gameId"])
+            && value["object"]
+                .as_str()
+                .is_some_and(crate::runtime_content::valid_hash)
+            && counter(&value["size"])
+            && value["size"].as_u64().is_some_and(|size| size > 0)
+            && value["mime"]
+                .as_str()
+                .is_some_and(|mime| MEDIA_MIMES.contains(&mime));
+    }
     blob_id(&value["id"]) && id(&value["mime"]) && !value["data"].as_str().unwrap_or("").is_empty()
 }
 fn blob_id(value: &Value) -> bool {
@@ -2268,6 +2289,39 @@ mod tests {
     }
     fn game(title: &str) -> Value {
         json!({ "schemaVersion": 2, "id": "game", "activeSessionId": "session", "title": title, "genre": "", "description": "", "settings": { "description": "", "firstMessage": "", "authorNote": "" }, "schema":{"type":"object","properties":{},"additionalProperties":false}, "initialState": {}, "scripts": {}, "createdAt": "2026-11-02T00:00:00.000Z", "updatedAt": "2026-11-02T00:00:00.000Z" })
+    }
+
+    #[test]
+    fn media_v2_blob_validation_accepts_metadata_and_rejects_invalid_values() {
+        let blob = json!({"schemaVersion":2,"id":"a".repeat(64),"gameId":"game","mime":"video/mp4","object":"b".repeat(64),"size":1});
+        let stored: StoredRecord =
+            serde_json::from_value(row("blobs", blob["id"].as_str().unwrap(), None, &blob))
+                .unwrap();
+        validate(&stored, "game").unwrap();
+        for size in [
+            json!(0),
+            json!(-1),
+            json!(0.5),
+            json!(9_007_199_254_740_992_u64),
+            json!("1"),
+        ] {
+            let mut invalid = blob.clone();
+            invalid["size"] = size;
+            assert!(!valid_value(Table::Blobs, &invalid));
+        }
+        for (key, value) in [
+            ("object", json!("A".repeat(64))),
+            ("object", json!("a".repeat(63))),
+            ("id", json!("A".repeat(64))),
+            ("mime", json!("text/html")),
+        ] {
+            let mut invalid = blob.clone();
+            invalid[key] = value;
+            assert!(!valid_value(Table::Blobs, &invalid));
+        }
+        let mut wrong_owner = stored;
+        wrong_owner.value["gameId"] = json!("other");
+        assert!(validate(&wrong_owner, "game").is_err());
     }
     fn row(table: &str, id: &str, session_id: Option<&str>, value: &Value) -> Value {
         json!({ "table": table, "id": id, "gameId": "game", "sessionId": session_id, "value": value })

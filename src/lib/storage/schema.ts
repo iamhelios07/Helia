@@ -8,7 +8,8 @@ import {
 	primaryKey,
 	sqliteTable,
 	text,
-	unique
+	unique,
+	uniqueIndex
 } from 'drizzle-orm/sqlite-core';
 
 export const games = sqliteTable(
@@ -154,6 +155,106 @@ export const blobs = sqliteTable(
 		value: text('value').notNull()
 	},
 	(t) => [index('blobs_owner').on(t.gameId), check('blobs_json', sql`json_valid(${t.value})`)]
+);
+
+/** Byte objects outlive game metadata until the incremental deletion queue reclaims them. */
+export const mediaObjects = sqliteTable(
+	'media_objects',
+	{
+		id: text('id').primaryKey(),
+		gameId: text('game_id'),
+		state: text('state').notNull(),
+		size: integer('size').notNull(),
+		chunkSize: integer('chunk_size').notNull(),
+		sha256: text('sha256'),
+		crc32: integer('crc32'),
+		createdAt: text('created_at').notNull()
+	},
+	(t) => [
+		uniqueIndex('media_objects_ready')
+			.on(t.gameId, t.sha256)
+			.where(sql`${t.state} = 'ready'`),
+		index('media_objects_state').on(t.state),
+		index('media_objects_game').on(t.gameId, t.state),
+		check(
+			'media_objects_state_check',
+			sql`${t.state} IN ('staging','verified','ready','deleting')`
+		),
+		check('media_objects_size', sql`${t.size} > 0`),
+		check('media_objects_chunk_size', sql`${t.chunkSize} > 0`),
+		check(
+			'media_objects_ready_check',
+			sql`${t.state} <> 'ready' OR (${t.gameId} IS NOT NULL AND ${t.sha256} IS NOT NULL)`
+		)
+	]
+);
+
+export const mediaChunks = sqliteTable(
+	'media_chunks',
+	{
+		objectId: text('object_id')
+			.notNull()
+			.references(() => mediaObjects.id),
+		idx: integer('idx').notNull(),
+		sha256: text('sha256').notNull(),
+		data: blob('data', { mode: 'buffer' }).notNull()
+	},
+	(t) => [
+		primaryKey({ columns: [t.objectId, t.idx] }),
+		check('media_chunks_idx', sql`${t.idx} >= 0`)
+	]
+);
+
+export const mediaUploads = sqliteTable(
+	'media_uploads',
+	{
+		id: text('id').primaryKey(),
+		scope: text('scope').notNull(),
+		purpose: text('purpose').notNull(),
+		mime: text('mime').notNull(),
+		label: text('label'),
+		operation: text('operation'),
+		size: integer('size').notNull(),
+		chunkSize: integer('chunk_size').notNull(),
+		chunkCount: integer('chunk_count').notNull(),
+		objectId: text('object_id').references(() => mediaObjects.id),
+		state: text('state').notNull(),
+		generation: integer('generation').notNull().default(0),
+		declaredSha256: text('declared_sha256'),
+		result: text('result'),
+		error: text('error'),
+		createdAt: text('created_at').notNull(),
+		expiresAt: text('expires_at').notNull()
+	},
+	(t) => [
+		index('media_uploads_scope').on(t.scope, t.state),
+		index('media_uploads_expiry').on(t.expiresAt),
+		check(
+			'media_uploads_purpose',
+			sql`${t.purpose} IN ('edit','install','package-content','document')`
+		),
+		check('media_uploads_operation', sql`${t.operation} IN ('draftSave','commit','releaseCreate')`),
+		check(
+			'media_uploads_state',
+			sql`${t.state} IN ('receiving','finishing','completed','verified','consumed','failed','cancelled')`
+		),
+		check(
+			'media_uploads_object',
+			sql`(${t.state} IN ('receiving','finishing','verified')) = (${t.objectId} IS NOT NULL)`
+		)
+	]
+);
+
+export const mediaLeases = sqliteTable(
+	'media_leases',
+	{
+		id: text('id').primaryKey(),
+		gameId: text('game_id').notNull(),
+		objectId: text('object_id'),
+		kind: text('kind').notNull(),
+		expiresAt: text('expires_at').notNull()
+	},
+	(t) => [check('media_leases_kind', sql`${t.kind} IN ('editor','read')`)]
 );
 
 /** Per-snapshot logical asset paths pointing into the shared blob store. */

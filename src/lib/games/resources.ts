@@ -41,7 +41,7 @@ export function renameResourceFolder(
 		)
 	);
 }
-const media = new Set([
+export const MEDIA_MIMES: ReadonlySet<string> = new Set([
 	'image/png',
 	'image/jpeg',
 	'image/webp',
@@ -107,7 +107,7 @@ function parseResource(id: string, input: unknown): { resource: GameResource; by
 		!row.name.trim() ||
 		row.name.length > 200 ||
 		typeof row.mime !== 'string' ||
-		!media.has(row.mime) ||
+		!MEDIA_MIMES.has(row.mime) ||
 		typeof row.data !== 'string'
 	) {
 		throw Error('지원하는 이미지·오디오·비디오 파일을 선택해주세요.');

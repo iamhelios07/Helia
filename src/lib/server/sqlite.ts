@@ -7,6 +7,7 @@ import { dirname, resolve } from 'node:path';
 import { hostAILeases } from '#lib/games/ai/leases.js';
 import { gameSummary } from '#lib/games/model.js';
 import { record } from '#lib/games/state/model.js';
+import mediaSchema from '#lib/storage/media.sql?raw';
 import migration from '#lib/storage/migrations/0000_initial.sql?raw';
 import {
 	CONFLICT,
@@ -95,6 +96,7 @@ class Storage {
 		}
 		this.db = drizzle(this.connection);
 		this.connection.exec(fileSchema);
+		this.connection.exec(mediaSchema);
 		initializeGameReleases(this.connection);
 	}
 	private readRows(table: Table, gameId?: string, sessionId?: string): StoredRecord[] {
