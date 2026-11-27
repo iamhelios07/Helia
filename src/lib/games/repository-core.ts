@@ -59,9 +59,10 @@ import { isSessionBusy } from './ai/activity.js';
 import { agentMessages } from './ai/message-echo.js';
 import { parseGameAIContent } from './ai/prompts.js';
 import { aiError } from './ai/protocol.js';
-import { compileCodeProject, compileAuthoringGame } from './code-project.js';
+import { compileCodeProject } from './code-project.js';
 import { assertEditOperation } from './edit-lock.js';
 import { editorContent, type GameEditorContent } from './editor.js';
+import { LockedPlayRuntimeCache } from './locked-play-runtime.js';
 import { migrationStates, type StateResolver } from './migration/inputs.js';
 import { defaultResolver } from './migration/precompute.js';
 import {
@@ -363,6 +364,7 @@ export function createGameRepository(
 class GameRepository {
 	private rawTransport: StorageTransport;
 	private options: GameRepositoryOptions;
+	private lockedPlayRuntime = new LockedPlayRuntimeCache();
 	constructor(rawTransport: StorageTransport, options: GameRepositoryOptions = {}) {
 		this.rawTransport = rawTransport;
 		this.options = options;
@@ -827,8 +829,10 @@ class GameRepository {
 			return { game, sessions };
 		});
 	};
-	getPlayWorkspace = async (
-		gameId: string
+	getPlayWorkspace = (gameId: string) => this.loadPlayWorkspace(gameId);
+	private loadPlayWorkspace = async (
+		gameId: string,
+		lockedRuntimePrepared = false
 	): Promise<{ game: Game; sessions: Session[]; timeline: SessionTimeline } | null> => {
 		const workspace = await useStorage(
 			(request) => (request.kind === 'read' ? this.readPlay(request) : this.transport(request)),
@@ -855,7 +859,7 @@ class GameRepository {
 			}
 		);
 		if (workspace?.game.editLock === true) {
-			return this.prepareLockedPlay(gameId, workspace);
+			return this.prepareLockedPlay(gameId, workspace, lockedRuntimePrepared);
 		}
 		if (workspace && !runtimeReady(workspace.game)) {
 			const original = (await this.getGameWorkspace(gameId))!.game;
@@ -874,21 +878,34 @@ class GameRepository {
 	/** Installed source remains immutable; only the session's derived runtime snapshot is stored. */
 	private prepareLockedPlay = async (
 		gameId: string,
-		workspace: { game: Game; sessions: Session[]; timeline: SessionTimeline }
+		workspace: { game: Game; sessions: Session[]; timeline: SessionTimeline },
+		runtimePrepared: boolean
 	) => {
-		const original = (await this.getGameWorkspace(gameId))!.game;
-		const compiled = await compileAuthoringGame(original);
-		const snapshot = workspace.timeline.history.snapshot;
-		// Play transport replaces compiled code with artifacts. Readiness and declared script IDs
-		// remain comparable; the installed source cannot change while this lock is present.
+		// Play transport strips source and build keys. Compare the portable stored runtime instead.
+		const { original, snapshot } = await useStorage(
+			this.transport,
+			gameId,
+			workspace.game.activeSessionId,
+			(unit) => ({
+				original: gameIn(unit, gameId),
+				snapshot: parseGameSnapshot(unit.get('snapshots', workspace.timeline.history.snapshot.id))
+			})
+		);
+		const compiled = await this.lockedPlayRuntime.prepare(original);
+		const normalized = {
+			scripts: parseScripts(compiled.scripts),
+			ui: compiled.ui === undefined ? undefined : parseGameUI(compiled.ui)
+		};
 		if (
 			!runtimeReady(snapshot) ||
-			contentHash(Object.keys(snapshot.scripts).sort()) !==
-				contentHash(Object.keys(compiled.scripts).sort()) ||
-			!!snapshot.ui !== !!compiled.ui
+			contentHash([snapshot.scripts, snapshot.ui]) !==
+				contentHash([normalized.scripts, normalized.ui])
 		) {
+			if (runtimePrepared) {
+				throw Error('잠긴 게임의 실행 스냅숏이 준비된 빌드와 일치하지 않아요. 다시 시도해주세요.');
+			}
 			await this.prepareRuntimeSnapshot(gameId, workspace.game.activeSessionId, compiled);
-			return this.getPlayWorkspace(gameId);
+			return this.loadPlayWorkspace(gameId, true);
 		}
 		return {
 			...workspace,
