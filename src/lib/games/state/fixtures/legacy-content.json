@@ -1,0 +1,48 @@
+{
+	"snapshot": {
+		"schemaVersion": 1,
+		"id": "4fa898a688c6b6abffea6f6201a38a17458d73be896e08ef98ce083c20d8f2dd",
+		"gameId": "game",
+		"createdAt": "2026-11-02T00:00:00.000Z",
+		"settings": {
+			"description": "",
+			"firstMessage": "",
+			"authorNote": ""
+		},
+		"initialState": {},
+		"schema": {
+			"type": "object",
+			"properties": {},
+			"additionalProperties": false
+		},
+		"scripts": {}
+	},
+	"blob": {
+		"schemaVersion": 1,
+		"id": "f8d1ee65baddef5dad95ebaa8364eb0ff0f7e0afe8679aa7f7a28a601b840485",
+		"gameId": "game",
+		"mime": "image/png",
+		"data": "data:image/png;base64,aGVsbG8="
+	},
+	"reference": {
+		"schemaVersion": 1,
+		"id": "9f9f556b5152dcec13206e63be1acd4f3c94707d648c06e7fbad527df5b8c545",
+		"snapshotId": "4fa898a688c6b6abffea6f6201a38a17458d73be896e08ef98ce083c20d8f2dd",
+		"gameId": "game",
+		"blobId": "f8d1ee65baddef5dad95ebaa8364eb0ff0f7e0afe8679aa7f7a28a601b840485",
+		"assetId": "portrait",
+		"name": "images/portrait.png"
+	},
+	"resources": {
+		"portrait": {
+			"name": "images/portrait.png",
+			"mime": "image/png",
+			"data": "data:image/png;base64,aGVsbG8="
+		}
+	},
+	"sha256Ids": {
+		"blob": "6b911eea2fd7925f503fe4c56e6234406e9739c1c17a4bb6568e67f0ed4068d3",
+		"snapshot": "5b534d9f42dbd667eec3abe0caa7c983143b86d3ed3fe4cdaddcf35198f1bc0c",
+		"reference": "8e9281b8d95ba5bf7333978549b3d1f25754b0414f10d7bbd858c9c91ee2058f"
+	}
+}

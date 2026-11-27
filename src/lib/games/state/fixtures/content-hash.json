@@ -1,0 +1,74 @@
+[
+	{
+		"name": "null",
+		"json": "null",
+		"canonicalText": "null",
+		"utf8Hex": "6e756c6c",
+		"legacyHash": "5b9bc4ba528108e41c2e884e8aa8b3e58046a55b740b896d6bcf43f84b3bda77",
+		"sha256": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b"
+	},
+	{
+		"name": "empty string",
+		"json": "\"\"",
+		"canonicalText": "\"\"",
+		"utf8Hex": "2222",
+		"legacyHash": "07cc7607b4949e259cf45729671e7e5de0a4318cfaba20a5cd74bd061c67249f",
+		"sha256": "12ae32cb1ec02d01eda3581b127c1fee3b0dc53572ed6baf239721a03d82e126"
+	},
+	{
+		"name": "ascii ab",
+		"json": "\"ab\"",
+		"canonicalText": "\"ab\"",
+		"utf8Hex": "22616222",
+		"legacyHash": "45279c83a743a3981c2e884e8aa8b3e58046a55b740b896d6bcf43f84b3bda77",
+		"sha256": "782beb2948d61c6b50ae083a2c63328c5c4d6f41c746c2fc6061d3dac370bc92"
+	},
+	{
+		"name": "ascii ac",
+		"json": "\"ac\"",
+		"canonicalText": "\"ac\"",
+		"utf8Hex": "22616322",
+		"legacyHash": "452b4683a746fa4d1c2e884e8aa8b3e58046a55b740b896d6bcf43f84b3bda77",
+		"sha256": "f07bcd23fe0302d2b39d935d097306e587e34b1f8b5a936703c9f8154421f601"
+	},
+	{
+		"name": "Korean and emoji",
+		"json": "{\"text\":\"안녕하세요 🎮\",\"nested\":[true,null,0,1e-7,1e+21]}",
+		"canonicalText": "{\"nested\":[true,null,0,1e-7,1e+21],\"text\":\"안녕하세요 🎮\"}",
+		"utf8Hex": "7b226e6573746564223a5b747275652c6e756c6c2c302c31652d372c31652b32315d2c2274657874223a22ec9588eb8595ed9598ec84b8ec9a9420f09f8eae227d",
+		"legacyHash": "fc2efdac47ba22b708e509db5843cd5f0b63619381d87577214b226a4c4a37f5",
+		"sha256": "d0a6393c34b947da6f1f6dcdcbbd339c79f0a9ae1e4bdf02898731c573a2e26d"
+	},
+	{
+		"name": "UTF-16 key order",
+		"json": "{\"\":1,\"😀\":2,\"a\":3}",
+		"canonicalText": "{\"a\":3,\"😀\":2,\"\":1}",
+		"utf8Hex": "7b2261223a332c22f09f9880223a322c22ee8080223a317d",
+		"legacyHash": "17311dbcc356e231f5183209c67c2525b6fd3d66e8c11cad82b396307770a037",
+		"sha256": "84495633024b0992798250783e7ccb01ab2875649ab22f353f14c0d6a8389fc2"
+	},
+	{
+		"name": "escapes",
+		"json": "\"\\\"\\\\\\n\\t\\u0000\"",
+		"canonicalText": "\"\\\"\\\\\\n\\t\\u0000\"",
+		"utf8Hex": "225c225c5c5c6e5c745c753030303022",
+		"legacyHash": "4f390a47e7ba07b4315dedc20a44795512777056a9bfdc5d93c45378bdee1447",
+		"sha256": "c90e7596e2a2517e70d0077002a923dde70e01ccedef2db7da7985d1f54a7c85"
+	},
+	{
+		"name": "lone surrogate",
+		"json": "\"\\ud800\"",
+		"canonicalText": "\"\\ud800\"",
+		"utf8Hex": "225c756438303022",
+		"legacyHash": "7e204daf27ad4f4c5411bed49a1310b5c6813ffb4505e2bd93da4d62c5f92167",
+		"sha256": "8c0c59dd0d275aadcd462a5fe12eb352cbdfeaf961eae4f85a4660521df7d2f5"
+	},
+	{
+		"name": "nested sorted keys",
+		"json": "{\"z\":[{\"b\":2,\"a\":1}],\"a\":{\"c\":false,\"b\":\"é\"}}",
+		"canonicalText": "{\"a\":{\"b\":\"é\",\"c\":false},\"z\":[{\"a\":1,\"b\":2}]}",
+		"utf8Hex": "7b2261223a7b2262223a22c3a9222c2263223a66616c73657d2c227a223a5b7b2261223a312c2262223a327d5d7d",
+		"legacyHash": "e60cc926775be52744283b663ce3277fc12066edd6d43c9723de80a626a13b55",
+		"sha256": "cdf5c98f804c2053f410ed2852263cb134f85f001a6794f41bd5c14da8e088cc"
+	}
+]

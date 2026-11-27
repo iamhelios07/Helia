@@ -6,6 +6,7 @@ import { parseGameAIContent } from '../ai/prompts.js';
 import { parseCodeProject } from '../code-project.js';
 import { parseGameUI } from '../ui/runtime/model.js';
 import { parseStateDocument } from './schema.js';
+import { sha256 } from './sha256.js';
 import {
 	parseGameState,
 	parseStateValue,
@@ -317,28 +318,11 @@ export function canonical(value: unknown): string {
 	return JSON.stringify(value) ?? 'null';
 }
 /**
- * Deterministic 256-bit fingerprint (four independent 64-bit FNV-1a rounds) of the value.
- * Runs synchronously in web and desktop with identical output; collision odds are
- * negligible at game-content scale, and a collision only costs a shared row, never
- * correctness: sessions verify schema fit when loading.
+ * Synchronous SHA-256 fingerprint of canonical JSON encoded as UTF-8.
+ * Web and desktop share this implementation. Stored legacy FNV IDs remain opaque
+ * references; new writes can duplicate their content under a SHA-256 ID.
+ * This identity is not an integrity boundary: untrusted records still need validation.
  */
 export function contentHash(value: unknown): string {
-	const text = canonical(value);
-	let high = 0xcbf29ce484222325n;
-	let low = 0x9e3779b97f4a7c15n;
-	let third = 0x2545f4914f6cdd1dn;
-	let fourth = 0x9e3779b185ebca87n;
-	for (let index = 0; index < text.length; index += 1) {
-		const byte = BigInt(text.charCodeAt(index));
-		high = ((high ^ byte) * 0x100000001b3n) & 0xffffffffffffffffn;
-		low = ((low ^ ((byte << 8n) & 0xffn)) * 0x100000001b3n) & 0xffffffffffffffffn;
-		third = ((third ^ ((byte << 16n) & 0xffffn)) * 0x100000001b3n) & 0xffffffffffffffffn;
-		fourth = ((fourth ^ ((byte << 24n) & 0xffffffn)) * 0x100000001b3n) & 0xffffffffffffffffn;
-	}
-	return (
-		high.toString(16).padStart(16, '0') +
-		low.toString(16).padStart(16, '0') +
-		third.toString(16).padStart(16, '0') +
-		fourth.toString(16).padStart(16, '0')
-	);
+	return sha256(new TextEncoder().encode(canonical(value)));
 }

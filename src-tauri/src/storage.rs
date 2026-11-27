@@ -81,6 +81,7 @@ enum Table {
     Transactions,
     Memories,
     Blobs,
+    #[serde(rename = "snapshot_resources")]
     SnapshotResources,
     Checkpoints,
 }
@@ -1006,7 +1007,12 @@ fn write_row(connection: &Connection, row: &StoredRecord, create: bool) -> Resul
         // Content-addressed shared rows are keyed by their own hash: identical bytes re-inserting is a no-op.
         let conflict = if create || immutable || shared {
             if shared {
-                " ON CONFLICT(id, game_id) DO NOTHING".to_owned()
+                let target = if row.table == Table::Snapshots {
+                    "id, game_id"
+                } else {
+                    "id"
+                };
+                format!(" ON CONFLICT({target}) DO NOTHING")
             } else {
                 String::new()
             }
@@ -1907,6 +1913,174 @@ pub async fn storage_request<R: tauri::Runtime>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn table_wire_names_match_typescript_protocol() {
+        for table in [
+            Table::Games,
+            Table::Sessions,
+            Table::Messages,
+            Table::Snapshots,
+            Table::Progress,
+            Table::Transactions,
+            Table::Memories,
+            Table::Blobs,
+            Table::SnapshotResources,
+            Table::Checkpoints,
+        ] {
+            let wire = json!(table.name());
+            assert_eq!(serde_json::to_value(table).unwrap(), wire);
+            assert_eq!(serde_json::from_value::<Table>(wire).unwrap(), table);
+        }
+        assert_eq!(
+            serde_json::to_value(Table::SnapshotResources).unwrap(),
+            "snapshot_resources"
+        );
+        assert_eq!(
+            serde_json::from_str::<Table>("\"snapshot_resources\"").unwrap(),
+            Table::SnapshotResources
+        );
+    }
+
+    #[test]
+    fn content_fingerprints_match_shared_utf8_sha256_vectors() {
+        use ring::digest::{SHA256, digest};
+        let vectors: Vec<Value> = serde_json::from_str(include_str!(
+            "../../src/lib/games/state/fixtures/content-hash.json"
+        ))
+        .unwrap();
+        for vector in vectors {
+            // Do not serialize `json`: TS canonical ordering/number formatting is authoritative.
+            let bytes = vector["canonicalText"].as_str().unwrap().as_bytes();
+            let encoded: String = bytes.iter().map(|byte| format!("{byte:02x}")).collect();
+            assert_eq!(encoded, vector["utf8Hex"], "{}", vector["name"]);
+            let hash: String = digest(&SHA256, bytes)
+                .as_ref()
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect();
+            assert_eq!(hash, vector["sha256"], "{}", vector["name"]);
+            assert_ne!(hash, vector["legacyHash"]);
+        }
+    }
+
+    #[test]
+    fn legacy_fnv_references_replay_and_coexist_with_sha256_rows() {
+        let fixture = Fixture::new();
+        let legacy: Value = serde_json::from_str(include_str!(
+            "../../src/lib/games/state/fixtures/legacy-content.json"
+        ))
+        .unwrap();
+        let mut initial = create();
+        initial["records"][0]["value"]["resources"] = legacy["resources"].clone();
+        fixture.request(initial).unwrap();
+        let old_id = legacy["snapshot"]["id"].as_str().unwrap();
+        let blob_id = legacy["blob"]["id"].as_str().unwrap();
+        let reference_id = legacy["reference"]["id"].as_str().unwrap();
+        let mut progress = json!({"schemaVersion":2,"sessionId":"session","gameId":"game","snapshotId":old_id,"headId":"event","revision":1,"state":{}});
+        let mut checkpoint = json!({"schemaVersion":1,"id":"event","transactionId":"event","snapshotId":old_id,"gameId":"game","sessionId":"session","state":{}});
+        let event = json!({"schemaVersion":2,"id":"event","gameId":"game","sessionId":"session","parentId":null,"createdAt":legacy["snapshot"]["createdAt"],"createdRevision":1,"action":{"name":"continue","args":{}},"changes":[]});
+        fixture
+            .request(json!({"kind":"sync", "known":[], "request":commit(
+                0,
+                &[
+                    row("snapshots", old_id, None, &legacy["snapshot"]),
+                    row("blobs", blob_id, None, &legacy["blob"]),
+                    row(
+                        "snapshot_resources",
+                        reference_id,
+                        None,
+                        &legacy["reference"],
+                    ),
+                    row("progress", "session", Some("session"), &progress),
+                    row("transactions", "event", Some("session"), &event),
+                    row("checkpoints", "event", Some("session"), &checkpoint),
+                ],
+            )}))
+            .unwrap();
+        let before = fixture.read();
+        let rows = before["records"].as_array().unwrap();
+        assert!(rows.iter().any(|r| r["table"] == "snapshot_resources"));
+        assert_eq!(
+            rows.iter().find(|r| r["table"] == "snapshots").unwrap()["id"],
+            old_id
+        );
+        let db = open(&fixture.0).unwrap();
+        assert_eq!(
+            crate::runtime_content::asset(
+                &db,
+                "game",
+                "image/png",
+                legacy["blob"]["data"].as_str().unwrap()
+            )
+            .unwrap(),
+            blob_id
+        );
+        assert_eq!(
+            crate::runtime_content::read_asset(&db, "game", blob_id)
+                .unwrap()
+                .unwrap()["data"],
+            legacy["blob"]["data"]
+        );
+        drop(db);
+
+        let new_id = legacy["sha256Ids"]["snapshot"].as_str().unwrap();
+        let new_blob_id = legacy["sha256Ids"]["blob"].as_str().unwrap();
+        let new_reference_id = legacy["sha256Ids"]["reference"].as_str().unwrap();
+        let mut snapshot = legacy["snapshot"].clone();
+        snapshot["id"] = json!(new_id);
+        let mut blob = legacy["blob"].clone();
+        blob["id"] = json!(new_blob_id);
+        let mut reference = legacy["reference"].clone();
+        reference["id"] = json!(new_reference_id);
+        reference["snapshotId"] = json!(new_id);
+        reference["blobId"] = json!(new_blob_id);
+        progress["snapshotId"] = json!(new_id);
+        progress["revision"] = json!(2);
+        checkpoint["snapshotId"] = json!(new_id);
+        fixture
+            .request(commit(
+                1,
+                &[
+                    row("snapshots", new_id, None, &snapshot),
+                    row("blobs", new_blob_id, None, &blob),
+                    row("snapshot_resources", new_reference_id, None, &reference),
+                    row("progress", "session", Some("session"), &progress),
+                    row("checkpoints", "event", Some("session"), &checkpoint),
+                ],
+            ))
+            .unwrap();
+        let after = fixture.read();
+        let rows = after["records"].as_array().unwrap();
+        assert_eq!(
+            rows.iter().find(|r| r["table"] == "progress").unwrap()["value"],
+            progress
+        );
+        assert_eq!(
+            rows.iter().find(|r| r["table"] == "transactions").unwrap()["value"],
+            event
+        );
+        // Reinserting shared content must reuse the correct per-table key.
+        fixture
+            .request(commit(
+                2,
+                &[
+                    row("snapshots", new_id, None, &snapshot),
+                    row("blobs", new_blob_id, None, &blob),
+                    row("snapshot_resources", new_reference_id, None, &reference),
+                ],
+            ))
+            .unwrap();
+        let db = open(&fixture.0).unwrap();
+        for table in ["snapshots", "blobs", "snapshot_resources"] {
+            let count: i64 = db
+                .query_row(&format!("SELECT count(*) FROM {table}"), [], |row| {
+                    row.get(0)
+                })
+                .unwrap();
+            assert_eq!(count, 2, "{table}");
+        }
+    }
 
     #[test]
     fn creates_distinct_main_frame_storage_credentials() {

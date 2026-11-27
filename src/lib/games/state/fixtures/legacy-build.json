@@ -1,0 +1,34 @@
+{
+	"schema": {
+		"type": "object",
+		"properties": {},
+		"additionalProperties": false
+	},
+	"scripts": {
+		"main": {
+			"language": "typescript",
+			"source": "const score: number = 1;",
+			"compiled": "LEGACY LOGIC",
+			"compiledFor": "38f494e3260af3cd4fd71eada97d07a7447ede75d815b0ffe5cf0f841c4dfa0d"
+		}
+	},
+	"ui": {
+		"version": 1,
+		"entry": "main.tsx",
+		"modules": {
+			"main.tsx": {
+				"language": "tsx",
+				"source": "export default function(){ return null; }"
+			}
+		},
+		"compiled": {
+			"version": 1,
+			"sourceHash": "7c95f4460e327d15c1482f293ff8de2f6d155c7396c8a2c7e73362bf0bffbae5",
+			"entry": "main.tsx",
+			"factories": "LEGACY UI",
+			"dependencies": {
+				"main.tsx": {}
+			}
+		}
+	}
+}
