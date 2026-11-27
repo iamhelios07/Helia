@@ -6,7 +6,7 @@ import { buildRuntime } from '#lib/games/runtime-build.js';
 import { evaluateAction } from '#lib/games/scripting/engine.js';
 import { synchronizedStorage } from '#lib/storage/sync-client.js';
 
-import { RuntimeContent } from './runtime-content.js';
+import { RuntimeContent, runtimeBlobId, runtimeHash } from './runtime-content.js';
 import { openStorage } from './sqlite.js';
 import { storageAsset, storageSync } from './storage-sync.js';
 
@@ -153,6 +153,56 @@ it('scopes immutable artifact and media lookups to the owning game and reuses ex
 	expect(
 		store.connection.prepare('SELECT count(*) AS n FROM blobs WHERE game_id=?').get(game.id)
 	).toEqual({ n: 1 });
+});
+
+const PNG = 'data:image/png;base64,AA==';
+// Shared with src-tauri/src/runtime_content.rs; both hosts must produce these exact values.
+const MEDIA_HASH = '9d5195c090c835cc7998e488ac91f7820df9893d128fde89778cf1c7839dd9db';
+const BLOB_ID_GAME_A = 'ded57360c9689691f2457f7730c39195339340d171dd9240f33d92af2d0776f5';
+
+it('derives game-owned blob IDs from a shared vector while keeping the media hash game-independent', () => {
+	expect(runtimeHash(PNG)).toBe(MEDIA_HASH);
+	expect(runtimeBlobId('game-a', PNG)).toBe(BLOB_ID_GAME_A);
+	expect(runtimeBlobId('game-b', PNG)).not.toBe(BLOB_ID_GAME_A);
+});
+
+it('gives two games using the same media their own blob rows that survive each other', async () => {
+	const { store, game, direct } = await fixture();
+	const other = await direct.createGame();
+	const runtime = new RuntimeContent(store.connection);
+	expect(runtime.asset(game.id, 'image/png', PNG)).toBe(runtimeBlobId(game.id, PNG));
+	expect(runtime.asset(other.id, 'image/png', PNG)).toBe(runtimeBlobId(other.id, PNG));
+	const owned = (id: string) =>
+		store.connection.prepare('SELECT count(*) AS n FROM blobs WHERE game_id=?').get(id);
+	expect(owned(game.id)).toEqual({ n: 1 });
+	expect(owned(other.id)).toEqual({ n: 1 });
+	expect(runtime.readAsset(game.id, MEDIA_HASH)?.data).toBe(PNG);
+	expect(runtime.readAsset(other.id, MEDIA_HASH)?.data).toBe(PNG);
+	await direct.trashGame(game.id);
+	await direct.purgeGame(game.id);
+	expect(runtime.readAsset(game.id, MEDIA_HASH)).toBeNull();
+	expect(runtime.readAsset(other.id, MEDIA_HASH)?.data).toBe(PNG);
+});
+
+it('keeps reading media indexed under a legacy global blob ID', async () => {
+	const { store, game, direct } = await fixture();
+	const other = await direct.createGame();
+	const runtime = new RuntimeContent(store.connection);
+	const legacy = MEDIA_HASH;
+	const row = (gameId: string) =>
+		JSON.stringify({ schemaVersion: 1, id: legacy, gameId, mime: 'image/png', data: PNG });
+	store.connection
+		.prepare('INSERT INTO blobs (id,game_id,value) VALUES (?,?,?)')
+		.run(legacy, game.id, row(game.id));
+	for (const id of [game.id, other.id]) {
+		store.connection
+			.prepare('INSERT INTO runtime_assets (game_id,hash,blob_id) VALUES (?,?,?)')
+			.run(id, MEDIA_HASH, legacy);
+	}
+	expect(runtime.asset(game.id, 'image/png', PNG)).toBe(legacy);
+	expect(runtime.readAsset(game.id, MEDIA_HASH)?.data).toBe(PNG);
+	// The legacy row belongs to the first game, so the second keeps the old null result.
+	expect(runtime.readAsset(other.id, MEDIA_HASH)).toBeNull();
 });
 
 it('prepares a legacy game once without losing either branch or its messages', async () => {

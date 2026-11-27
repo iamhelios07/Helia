@@ -15,6 +15,11 @@ pub(crate) fn hash(value: &Value) -> String {
         .map(|byte| format!("{byte:02x}"))
         .collect()
 }
+/// Game-owned blob ID for runtime media; `blobs.id` is a global primary key.
+/// Must equal the web host's `runtimeBlobId` (SHA-256 of JSON `[gameId, data]`).
+pub(crate) fn blob_id(game_id: &str, data: &str) -> String {
+    hash(&json!([game_id, data]))
+}
 fn valid_hash(value: &str) -> bool {
     value.len() == 64
         && value
@@ -66,7 +71,7 @@ pub(crate) fn asset(
             )
             .optional()
             .map_err(|_| ERROR)?;
-        let id = existing.unwrap_or_else(|| fingerprint.clone());
+        let id = existing.unwrap_or_else(|| blob_id(game_id, data));
         let value = json!({"schemaVersion":1,"id":id,"gameId":game_id,"mime":mime,"data":data});
         connection
             .execute(
@@ -231,11 +236,48 @@ pub(crate) fn media_response(path: &Path, route: &str) -> tauri::http::Response<
 mod tests {
     use super::*;
 
-    fn connection() -> Connection {
-        let db = Connection::open_in_memory().unwrap();
-        db.execute_batch("PRAGMA foreign_keys=ON; CREATE TABLE games(id TEXT PRIMARY KEY); CREATE TABLE blobs(id TEXT PRIMARY KEY,game_id TEXT,value TEXT); INSERT INTO games VALUES('one'),('two');").unwrap();
-        db.execute_batch(SCHEMA).unwrap();
-        db
+    /// SQLite opened through `storage::open`, so tests run on the real migrated schema
+    /// (including the `blobs.game_id` cascade) with games `one` and `two` installed.
+    struct TestDb {
+        connection: Option<Connection>,
+        path: std::path::PathBuf,
+    }
+
+    impl std::ops::Deref for TestDb {
+        type Target = Connection;
+        fn deref(&self) -> &Connection {
+            self.connection.as_ref().unwrap()
+        }
+    }
+
+    impl Drop for TestDb {
+        fn drop(&mut self) {
+            self.connection.take();
+            for suffix in ["", "-wal", "-shm"] {
+                let mut name = self.path.clone().into_os_string();
+                name.push(suffix);
+                let _ = std::fs::remove_file(name);
+            }
+        }
+    }
+
+    fn connection() -> TestDb {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        static NEXT: AtomicUsize = AtomicUsize::new(0);
+        let path = std::env::temp_dir().join(format!(
+            "helia-runtime-content-{}-{}.sqlite",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        let db = storage::open(&path).unwrap();
+        for id in ["one", "two"] {
+            db.execute("INSERT INTO games(id,value) VALUES(?1,'{}')", [id])
+                .unwrap();
+        }
+        TestDb {
+            connection: Some(db),
+            path,
+        }
     }
 
     #[test]
@@ -257,6 +299,80 @@ mod tests {
         assert_eq!(
             blob,
             asset(&db, "one", "image/png", "data:image/png;base64,AA==").unwrap()
+        );
+    }
+
+    const PNG: &str = "data:image/png;base64,AA==";
+    // Shared with src/lib/server/runtime-content.spec.ts; both hosts must produce these values.
+    const MEDIA_HASH: &str = "9d5195c090c835cc7998e488ac91f7820df9893d128fde89778cf1c7839dd9db";
+    const BLOB_ID_GAME_A: &str = "ded57360c9689691f2457f7730c39195339340d171dd9240f33d92af2d0776f5";
+
+    #[test]
+    fn blob_ids_match_the_web_host_vector() {
+        assert_eq!(hash(&json!(PNG)), MEDIA_HASH);
+        assert_eq!(blob_id("game-a", PNG), BLOB_ID_GAME_A);
+        assert_ne!(blob_id("game-b", PNG), BLOB_ID_GAME_A);
+    }
+
+    #[test]
+    fn games_sharing_media_own_separate_blobs_that_survive_deletion() {
+        let db = connection();
+        let one = asset(&db, "one", "image/png", PNG).unwrap();
+        let two = asset(&db, "two", "image/png", PNG).unwrap();
+        assert_eq!(one, blob_id("one", PNG));
+        assert_eq!(two, blob_id("two", PNG));
+        for game in ["one", "two"] {
+            let count: i64 = db
+                .query_row(
+                    "SELECT count(*) FROM blobs WHERE game_id=?1",
+                    [game],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(count, 1);
+            assert_eq!(
+                read_asset(&db, game, MEDIA_HASH).unwrap().unwrap()["data"],
+                PNG
+            );
+        }
+        db.execute("DELETE FROM games WHERE id='one'", []).unwrap();
+        let rows = |table: &str, game: &str| -> i64 {
+            db.query_row(
+                &format!("SELECT count(*) FROM {table} WHERE game_id=?1"),
+                [game],
+                |row| row.get(0),
+            )
+            .unwrap()
+        };
+        assert_eq!(rows("blobs", "one"), 0);
+        assert_eq!(rows("runtime_assets", "one"), 0);
+        assert_eq!(rows("blobs", "two"), 1);
+        assert!(read_asset(&db, "one", MEDIA_HASH).unwrap().is_none());
+        assert_eq!(
+            read_asset(&db, "two", MEDIA_HASH).unwrap().unwrap()["data"],
+            PNG
+        );
+    }
+
+    #[test]
+    fn legacy_global_blob_ids_keep_reading() {
+        let db = connection();
+        let value =
+            json!({"schemaVersion":1,"id":MEDIA_HASH,"gameId":"one","mime":"image/png","data":PNG});
+        db.execute(
+            "INSERT INTO blobs VALUES(?1,'one',?2)",
+            params![MEDIA_HASH, value.to_string()],
+        )
+        .unwrap();
+        db.execute(
+            "INSERT INTO runtime_assets (game_id,hash,blob_id) VALUES ('one',?1,?1)",
+            [MEDIA_HASH],
+        )
+        .unwrap();
+        assert_eq!(asset(&db, "one", "image/png", PNG).unwrap(), MEDIA_HASH);
+        assert_eq!(
+            read_asset(&db, "one", MEDIA_HASH).unwrap().unwrap()["data"],
+            PNG
         );
     }
 

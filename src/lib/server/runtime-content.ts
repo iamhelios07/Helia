@@ -8,6 +8,13 @@ export const RUNTIME_SCHEMA = schema;
 export const runtimeHash = (value: unknown) =>
 	createHash('sha256').update(JSON.stringify(value)).digest('hex');
 
+/**
+ * Game-owned blob ID for runtime media. `blobs.id` is a global primary key, so the ID must
+ * include the game. It matches `contentHash([gameId, data])` and the desktop host.
+ * The media URL hash (`runtimeHash(data)`) stays game-independent.
+ */
+export const runtimeBlobId = (gameId: string, data: string) => runtimeHash([gameId, data]);
+
 export class RuntimeContent {
 	constructor(private db: Database.Database) {
 		db.exec(RUNTIME_SCHEMA);
@@ -39,7 +46,7 @@ export class RuntimeContent {
 		const existing = this.db
 			.prepare("SELECT id FROM blobs WHERE game_id=? AND json_extract(value,'$.data')=?")
 			.get(gameId, data) as { id: string } | undefined;
-		const blobId = existing?.id ?? hash;
+		const blobId = existing?.id ?? runtimeBlobId(gameId, data);
 		if (!existing) {
 			this.db
 				.prepare('INSERT OR IGNORE INTO blobs (id,game_id,value) VALUES (?,?,?)')
