@@ -59,7 +59,7 @@
 			aria-current={controller.section === 'network' ? 'page' : undefined}
 			disabled={controller.busy || controller.promptPanel?.isBusy()}
 			onclick={() => controller.switchSection('network')}
-			><Icon name="send" size={18} />외부 연결</button
+			><Icon name="globe" size={18} />외부 연결</button
 		>
 	</nav>
 	<div class="rail-footer"><Icon name="sun" size={19} /><span>Helia</span></div>
