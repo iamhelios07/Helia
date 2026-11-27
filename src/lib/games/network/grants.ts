@@ -73,13 +73,38 @@ function validOrigins(value: unknown): string[] {
 	}
 	return [...valid];
 }
+/**
+ * Reading is the hot path: the fetch gate checks a grant for every network request, so the stored
+ * document (up to 1 MiB) must not be parsed again on every call. The cache key is the exact text
+ * read from localStorage, which also covers writes made by other tabs through the `storage` event
+ * and a missing or corrupt value: any of those produce different text and force a reparse.
+ */
+interface GrantCache {
+	raw: string | null;
+	grants: Grants;
+}
+let cache: GrantCache | null = null;
+/** Internal and read-only for callers. Writes go through {@link copyGrants}. */
 function readGrants(): Grants {
+	let raw: string | null;
 	try {
-		return parseGrants(localStorage.getItem(NETWORK_GRANTS_KEY));
+		raw = localStorage.getItem(NETWORK_GRANTS_KEY);
 	} catch {
+		// Unreadable storage must not be remembered as an empty document: the next call may succeed.
 		return new Map();
 	}
+	if (cache && cache.raw === raw) {
+		return cache.grants;
+	}
+	const grants = parseGrants(raw);
+	cache = { raw, grants };
+	return grants;
 }
+/** Editing a shared cache entry would leak into later reads when the write fails. */
+function copyGrants(grants: Grants): Grants {
+	return new Map([...grants].map(([gameId, origins]) => [gameId, [...origins]]));
+}
+/** Takes ownership of the given map and only caches it once storage accepted it. */
 function writeGrants(grants: Grants): boolean {
 	const document = JSON.stringify({
 		version: 1,
@@ -93,6 +118,7 @@ function writeGrants(grants: Grants): boolean {
 	} catch {
 		return false;
 	}
+	cache = { raw: document, grants };
 	if (typeof window !== 'undefined') {
 		window.dispatchEvent(new Event(NETWORK_GRANTS_CHANGED));
 	}
@@ -112,7 +138,7 @@ export function rememberNetworkGrant(gameId: string, origin: string): boolean {
 	if (!validGameId(gameId) || !normalized) {
 		return false;
 	}
-	const grants = readGrants();
+	const grants = copyGrants(readGrants());
 	const origins = grants.get(gameId) ?? [];
 	if (origins.includes(normalized)) {
 		return true;
@@ -122,7 +148,7 @@ export function rememberNetworkGrant(gameId: string, origin: string): boolean {
 }
 /** Returns false when storage rejects the write so callers can report that the grant remains. */
 export function revokeNetworkGrant(gameId: string, origin: string): boolean {
-	const grants = readGrants();
+	const grants = copyGrants(readGrants());
 	const origins = grants.get(gameId);
 	if (!origins?.includes(origin)) {
 		return true;
@@ -137,7 +163,7 @@ export function revokeNetworkGrant(gameId: string, origin: string): boolean {
 }
 /** Called when a game is permanently deleted. Trash keeps grants so a restored game behaves as before. */
 export function forgetNetworkGrants(gameId: string): boolean {
-	const grants = readGrants();
+	const grants = copyGrants(readGrants());
 	// A failed write must never block the deletion itself; the stale entries are harmless because
 	// the game ID is never reused, and the settings list re-reads the store every time it opens.
 	return grants.delete(gameId) ? writeGrants(grants) : true;

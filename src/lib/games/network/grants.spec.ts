@@ -113,6 +113,55 @@ it.each([
 	await resolveConsent(origin, signal(), 'game-1', prompt);
 	expect(prompt).toHaveBeenCalledOnce();
 });
+it('parses the stored document once while its text stays the same', () => {
+	rememberNetworkGrant('game-1', origin);
+	const parse = vi.spyOn(JSON, 'parse');
+	expect(isNetworkGrantRemembered('game-1', origin)).toBe(true);
+	expect(isNetworkGrantRemembered('game-1', 'https://other.example')).toBe(false);
+	expect(listNetworkGrants()).toEqual([{ gameId: 'game-1', origin }]);
+	expect(parse).not.toHaveBeenCalled();
+	parse.mockRestore();
+});
+it('shows new values right after this tab writes', () => {
+	expect(isNetworkGrantRemembered('game-1', origin)).toBe(false);
+	expect(rememberNetworkGrant('game-1', origin)).toBe(true);
+	expect(isNetworkGrantRemembered('game-1', origin)).toBe(true);
+	expect(listNetworkGrants()).toEqual([{ gameId: 'game-1', origin }]);
+	expect(revokeNetworkGrant('game-1', origin)).toBe(true);
+	expect(isNetworkGrantRemembered('game-1', origin)).toBe(false);
+	expect(listNetworkGrants()).toEqual([]);
+});
+it('parses again when another tab replaces the document', () => {
+	rememberNetworkGrant('game-1', origin);
+	expect(isNetworkGrantRemembered('game-1', origin)).toBe(true);
+	stored.set(
+		NETWORK_GRANTS_KEY,
+		JSON.stringify({ version: 1, grants: { 'game-2': ['https://other.example'] } })
+	);
+	expect(isNetworkGrantRemembered('game-2', 'https://other.example')).toBe(true);
+	expect(isNetworkGrantRemembered('game-1', origin)).toBe(false);
+});
+it('parses again when another tab removes the document', () => {
+	rememberNetworkGrant('game-1', origin);
+	stored.delete(NETWORK_GRANTS_KEY);
+	expect(isNetworkGrantRemembered('game-1', origin)).toBe(false);
+	expect(listNetworkGrants()).toEqual([]);
+});
+it('ignores a cached document that another tab corrupted', () => {
+	rememberNetworkGrant('game-1', origin);
+	stored.set(NETWORK_GRANTS_KEY, '{');
+	expect(isNetworkGrantRemembered('game-1', origin)).toBe(false);
+	expect(listNetworkGrants()).toEqual([]);
+});
+it('keeps the cached grants when a caller mutates what it was handed', () => {
+	rememberNetworkGrant('game-1', origin);
+	const listed = listNetworkGrants();
+	listed[0].origin = 'https://evil.example';
+	listed.push({ gameId: 'injected', origin });
+	listed.length = 0;
+	expect(listNetworkGrants()).toEqual([{ gameId: 'game-1', origin }]);
+	expect(isNetworkGrantRemembered('game-1', origin)).toBe(true);
+});
 it('keeps valid entries when only some stored entries are damaged', () => {
 	stored.set(
 		NETWORK_GRANTS_KEY,
