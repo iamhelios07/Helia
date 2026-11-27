@@ -6,6 +6,9 @@
 		type NetworkGrantRow
 	} from './network-grants-controller.svelte.js';
 	const controller = new NetworkGrantsController();
+	const statusText = $derived(
+		controller.loading ? '다시 묻지 않기로 한 주소를 불러오는 중…' : controller.status
+	);
 	onMount(() => {
 		void controller.load();
 		return controller.dispose;
@@ -36,7 +39,7 @@
 		게임마다 허용해 둔 외부 주소예요. 취소하면 그 게임이 해당 주소에 연결할 때 다시 물어봅니다.
 	</p>
 	{#if controller.error}<p class="notice" role="alert">{controller.error}</p>{/if}
-	<p class="status" role="status">{controller.status}</p>
+	<p class="status" role="status">{statusText}</p>
 	{#if controller.ready && controller.rows.length}
 		<ul class="grant-list" aria-label="허용한 외부 주소 목록">
 			{#each controller.rows as row (`${row.gameId}\n${row.origin}`)}

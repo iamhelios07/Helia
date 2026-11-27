@@ -3,12 +3,14 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { render } from 'vitest-browser-svelte';
 import { page } from 'vitest/browser';
 
+import { gameSummary, type GameSummary } from '#lib/games/model.js';
 import {
 	isNetworkGrantRemembered,
 	listNetworkGrants,
 	NETWORK_GRANTS_KEY,
 	rememberNetworkGrant
 } from '#lib/games/network/grants.js';
+import { listGames } from '#lib/games/repository.js';
 
 import SettingsDialog from './SettingsDialog.svelte';
 
@@ -26,14 +28,38 @@ vi.mock('./credentials.js', () => ({
 	verifyProviderCredential: vi.fn()
 }));
 vi.mock('#lib/games/repository.js', () => ({
-	listGames: vi.fn(async () => [
-		{ id: 'game-a', title: '별의 항해' },
-		{ id: 'game-b', title: '낡은 모험', trashedAt: '2026-01-01T00:00:00.000Z' }
-	])
+	listGames: vi.fn()
 }));
+
+const TIMESTAMP = '2026-01-01T00:00:00.000Z';
+const GAMES: GameSummary[] = [
+	gameSummary({
+		schemaVersion: 2,
+		id: 'game-a',
+		title: '별의 항해',
+		genre: '',
+		description: '',
+		activeSessionId: 'session-a',
+		createdAt: TIMESTAMP,
+		updatedAt: TIMESTAMP
+	}),
+	gameSummary({
+		schemaVersion: 2,
+		id: 'game-b',
+		title: '낡은 모험',
+		genre: '',
+		description: '',
+		activeSessionId: 'session-b',
+		createdAt: TIMESTAMP,
+		updatedAt: TIMESTAMP,
+		trashedAt: TIMESTAMP
+	})
+];
 
 beforeEach(async () => {
 	localStorage.clear();
+	vi.mocked(listGames).mockReset();
+	vi.mocked(listGames).mockResolvedValue(GAMES);
 	await page.viewport(1280, 900);
 });
 afterEach(() => vi.restoreAllMocks());
@@ -75,6 +101,56 @@ it('lists a grant remembered in the same tab while the panel stays open', async 
 it('explains when nothing is remembered', async () => {
 	await openNetwork();
 	await expect.element(page.getByText('다시 묻지 않기로 한 주소가 없어요.')).toBeInTheDocument();
+});
+it('shows a loading message instead of the empty list while game titles are pending', async () => {
+	rememberNetworkGrant('game-a', 'https://api.example');
+	const titles = Promise.withResolvers<GameSummary[]>();
+	vi.mocked(listGames).mockReturnValue(titles.promise);
+	await openNetwork();
+	await expect
+		.element(page.getByRole('status'))
+		.toHaveTextContent('다시 묻지 않기로 한 주소를 불러오는 중');
+	expect(page.getByText('다시 묻지 않기로 한 주소가 없어요.').query()).toBeNull();
+	expect(page.getByRole('list', { name: '허용한 외부 주소 목록' }).query()).toBeNull();
+	titles.resolve(GAMES);
+	await expect
+		.element(page.getByRole('list', { name: '허용한 외부 주소 목록' }).getByRole('listitem'))
+		.toHaveLength(1);
+	await expect.element(page.getByRole('status')).not.toHaveTextContent('불러오는 중');
+});
+it('does not flash the empty message before the first load finishes', async () => {
+	const titles = Promise.withResolvers<GameSummary[]>();
+	vi.mocked(listGames).mockReturnValue(titles.promise);
+	await openNetwork();
+	await expect.element(page.getByRole('status')).toHaveTextContent('불러오는 중');
+	expect(page.getByText('다시 묻지 않기로 한 주소가 없어요.').query()).toBeNull();
+	titles.resolve(GAMES);
+	await expect.element(page.getByText('다시 묻지 않기로 한 주소가 없어요.')).toBeInTheDocument();
+	await expect.element(page.getByRole('status')).not.toHaveTextContent('불러오는 중');
+});
+it('keeps listing grants under their fallback name when the titles fail to load', async () => {
+	rememberNetworkGrant('game-a', 'https://api.example');
+	vi.mocked(listGames).mockRejectedValueOnce(new Error('unavailable'));
+	await openNetwork();
+	const list = page.getByRole('list', { name: '허용한 외부 주소 목록' });
+	await expect.element(list.getByRole('listitem')).toHaveLength(1);
+	await expect.element(list.getByText('찾을 수 없는 게임')).toBeInTheDocument();
+	await expect.element(page.getByRole('status')).not.toHaveTextContent('불러오는 중');
+});
+it('keeps the loading message when another tab refreshes the grants mid-load', async () => {
+	rememberNetworkGrant('game-a', 'https://api.example');
+	const titles = Promise.withResolvers<GameSummary[]>();
+	vi.mocked(listGames).mockReturnValue(titles.promise);
+	await openNetwork();
+	await expect.element(page.getByRole('status')).toHaveTextContent('불러오는 중');
+	rememberNetworkGrant('game-a', 'https://other.example');
+	window.dispatchEvent(new StorageEvent('storage', { key: NETWORK_GRANTS_KEY }));
+	await expect.element(page.getByRole('status')).toHaveTextContent('불러오는 중');
+	expect(page.getByRole('list', { name: '허용한 외부 주소 목록' }).query()).toBeNull();
+	titles.resolve(GAMES);
+	const list = page.getByRole('list', { name: '허용한 외부 주소 목록' });
+	await expect.element(list.getByRole('listitem')).toHaveLength(2);
+	await expect.element(page.getByRole('status')).not.toHaveTextContent('불러오는 중');
 });
 it('moves focus to the next row, then the previous row, then the heading when cancelling a grant', async () => {
 	rememberNetworkGrant('game-a', 'https://api.example');

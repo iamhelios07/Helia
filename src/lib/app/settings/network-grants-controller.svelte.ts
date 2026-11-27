@@ -23,6 +23,7 @@ const UNKNOWN_GAME = '찾을 수 없는 게임';
 export class NetworkGrantsController {
 	rows = $state.raw<NetworkGrantRow[]>([]);
 	ready = $state(false);
+	loading = $state(false);
 	error = $state('');
 	status = $state('');
 	private labels = new SvelteMap<string, GameLabel>();
@@ -34,8 +35,9 @@ export class NetworkGrantsController {
 		this.subscribe();
 		const generation = ++this.generation;
 		this.error = '';
+		this.loading = true;
+		this.ready = false;
 		this.refresh();
-		this.ready = true;
 		try {
 			const games = await listGames(true);
 			if (this.disposed || generation !== this.generation) {
@@ -47,6 +49,12 @@ export class NetworkGrantsController {
 			this.refresh();
 		} catch {
 			// Origins stay manageable without titles; the rows fall back to a generic game label.
+		} finally {
+			// A newer load owns the loading state; a disposal no longer renders anything.
+			if (!this.disposed && generation === this.generation) {
+				this.loading = false;
+				this.ready = true;
+			}
 		}
 	};
 	refresh = () => {
