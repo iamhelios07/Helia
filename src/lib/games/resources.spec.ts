@@ -14,6 +14,22 @@ it('validates portable inert resources and rejects unsafe names, SVG and URLs', 
 	}
 });
 
+it('accepts hundreds of small resources without an item-count limit', () => {
+	for (const count of [129, 257]) {
+		const resources = Object.fromEntries(
+			Array.from({ length: count }, (_, index) => [
+				`asset-${index}`,
+				{
+					name: `images/asset-${index}.png`,
+					mime: 'image/png',
+					data: 'data:image/png;base64,AA=='
+				}
+			])
+		);
+		expect(Object.keys(parseResources(resources))).toHaveLength(count);
+	}
+});
+
 it('supports relative asset paths and rejects ambiguous paths before saving', () => {
 	const resource = {
 		name: 'images/초상화.png',

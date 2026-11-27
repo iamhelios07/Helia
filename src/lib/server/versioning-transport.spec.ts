@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it } from 'vitest';
 
 import { createEditorDraft, editorContent } from '#lib/games/editor.js';
+import { decodeGamePackage, encodeGamePackage } from '#lib/games/package/codec.js';
 import { createGameRepository } from '#lib/games/repository-core.js';
 import { CONFLICT } from '#lib/storage/protocol.js';
 import { synchronizedStorage } from '#lib/storage/sync-client.js';
@@ -118,3 +119,48 @@ it('requires a fresh content confirmation to keep both variants of the same vers
 	expect((await repo.createGameRelease(game.id, '1.0.0')).kind).toBe('released');
 	expect((await repo.getGameVersioning(game.id)).releases).toHaveLength(2);
 });
+
+function manyResources(count: number) {
+	return Object.fromEntries(
+		Array.from({ length: count }, (_, index) => [
+			`asset-${index}`,
+			{
+				name: `images/asset-${index}.png`,
+				mime: 'image/png',
+				data: 'data:image/png;base64,AA=='
+			}
+		])
+	);
+}
+
+it.each([129, 257])(
+	'saves, drafts, releases and exports %i small resources through the real transport',
+	async (count) => {
+		const game = await repo.createGame({ title: 'Many assets', genre: '', description: '' });
+		const base = editorContent(game);
+		const resources = manyResources(count);
+		const applied = await repo.applyGameDraft(game.id, {
+			baseContent: base,
+			content: { ...base, resources }
+		});
+		expect(Object.keys(applied.resources ?? {})).toHaveLength(count);
+
+		const draft = createEditorDraft(applied);
+		editorDraftStorage(store.connection).write(game.id, draft, 0);
+		expect(editorDraftStorage(store.connection).read(game.id).draft?.documents.assets).toBe(
+			draft.documents.assets
+		);
+
+		const result = await repo.createGameRelease(game.id, '1.0.0');
+		if (result.kind !== 'released' || !result.state.currentRelease) {
+			throw Error('Expected release');
+		}
+		const frozen = await repo.getGameRelease(game.id, result.state.currentRelease.id);
+		expect(Object.keys(frozen.content.resources ?? {})).toHaveLength(count);
+
+		const bytes = await encodeGamePackage({ ...frozen });
+		const decoded = await decodeGamePackage(bytes);
+		expect(Object.keys(decoded.content.resources ?? {})).toHaveLength(count);
+		expect(decoded.content.resources).toEqual(frozen.content.resources);
+	}
+);

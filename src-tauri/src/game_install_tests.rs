@@ -922,6 +922,46 @@ fn install_verifies_content_before_taking_the_write_lock() {
 }
 
 #[test]
+fn installs_packages_carrying_hundreds_of_small_resources() {
+    for count in [129usize, 257] {
+        let mut db = connection();
+        let mut value = input();
+        let resources = Value::Object(
+            (0..count)
+                .map(|index| {
+                    (
+                        format!("asset-{index}"),
+                        json!({
+                            "name": format!("images/asset-{index}.png"),
+                            "mime": "image/png",
+                            "data": "data:image/png;base64,AA=="
+                        }),
+                    )
+                })
+                .collect(),
+        );
+        value["release"]["content"]["resources"] = resources.clone();
+        value["release"]["contentHash"] =
+            json!(content_hash(&value["release"]["content"]).unwrap());
+        let reply = request(&mut db, value.clone()).unwrap();
+        assert_eq!(reply["installResult"]["kind"], "installed", "{count}");
+        let game_id = reply["installResult"]["gameId"].as_str().unwrap();
+        let release_id = reply["installResult"]["versioning"]["currentRelease"]["id"]
+            .as_str()
+            .unwrap();
+        let frozen = get_release(&db, game_id, release_id).unwrap();
+        assert_eq!(
+            frozen["content"]["resources"]
+                .as_object()
+                .unwrap()
+                .len(),
+            count
+        );
+        assert_eq!(frozen["content"]["resources"], resources);
+    }
+}
+
+#[test]
 fn blob_state_only_affects_rejected_asset_references() {
     let mut db = connection();
     let mut value = input();

@@ -739,9 +739,6 @@ fn resources(value: Option<&Value>) -> bool {
     let Some(entries) = value.as_object() else {
         return false;
     };
-    if entries.len() > 128 {
-        return false;
-    }
     let mut total = 0;
     let mut paths = std::collections::HashSet::new();
     for (id, row) in entries {
@@ -2140,6 +2137,85 @@ mod tests {
         assert!(!resources(Some(&duplicate)));
         duplicate["other"]["name"] = json!("portrait");
         assert!(!resources(Some(&duplicate)));
+    }
+    fn many_resources(count: usize) -> Value {
+        Value::Object(
+            (0..count)
+                .map(|index| {
+                    (
+                        format!("asset-{index}"),
+                        json!({
+                            "name": format!("images/asset-{index}.png"),
+                            "mime": "image/png",
+                            "data": "data:image/png;base64,AA=="
+                        }),
+                    )
+                })
+                .collect(),
+        )
+    }
+    #[test]
+    fn accepts_hundreds_of_small_resources() {
+        for count in [129usize, 257] {
+            assert!(resources(Some(&many_resources(count))), "{count}");
+        }
+    }
+    #[test]
+    fn accepts_hundreds_of_small_resources_across_save_draft_and_release() {
+        for count in [129usize, 257] {
+            let fixture = Fixture::new();
+            fixture.create();
+            let resources = many_resources(count);
+            let mut updated = fixture.read()["records"][0]["value"].clone();
+            updated["resources"] = resources.clone();
+            fixture
+                .request(commit(0, &[row("games", "game", None, &updated)]))
+                .unwrap();
+            let read = fixture.read();
+            assert_eq!(
+                read["records"][0]["value"]["resources"]
+                    .as_object()
+                    .unwrap()
+                    .len(),
+                count
+            );
+            let draft = json!({
+                "version":3,
+                "gameId":"game",
+                "baseContent":updated,
+                "documents":{
+                    "info":"{}",
+                    "instructions":"{}",
+                    "state":"{}",
+                    "code":"{}",
+                    "lorebook":"{}",
+                    "assets":serde_json::to_string(&resources).unwrap()
+                }
+            });
+            let saved = fixture
+                .request(json!({"kind":"writeDraft","gameId":"game","version":0,"draft":draft}))
+                .unwrap();
+            assert_eq!(saved["version"], 1);
+            let released = fixture
+                .request(
+                    json!({"kind":"versioning","action":"release","gameId":"game","contentVersion":"1.0.0"}),
+                )
+                .unwrap();
+            assert_eq!(released["releaseResult"]["kind"], "released", "{count}");
+            let release_id = released["releaseResult"]["state"]["currentRelease"]["id"]
+                .as_str()
+                .unwrap();
+            let frozen = fixture
+                .request(json!({"kind":"versioning","action":"getRelease","gameId":"game","releaseId":release_id}))
+                .unwrap();
+            assert_eq!(
+                frozen["release"]["content"]["resources"]
+                    .as_object()
+                    .unwrap()
+                    .len(),
+                count
+            );
+        }
     }
     #[test]
     fn validates_source_code_projects_and_current_drafts() {

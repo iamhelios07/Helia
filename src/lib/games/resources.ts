@@ -76,9 +76,6 @@ export function parseResources(value: unknown): GameResources {
 		throw Error('리소스 목록의 형식을 확인해주세요.');
 	}
 	const entries = Object.entries(value);
-	if (entries.length > 128) {
-		throw Error('리소스는 128개까지 추가할 수 있어요.');
-	}
 	const result: GameResources = {};
 	const paths = new Set<string>();
 	let total = 0;

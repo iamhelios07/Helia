@@ -4,11 +4,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
+import type { GameReleaseContent } from '#lib/games/versioning.js';
 import type { InstallRequest, InstallPreviewEntry } from '#lib/storage/install.js';
 
 import { editorContent, createEditorDraft } from '#lib/games/editor.js';
 import { parseInstalledFrom } from '#lib/games/installed-from.js';
 import { parseGame } from '#lib/games/model.js';
+import { decodeGamePackage, encodeGamePackage } from '#lib/games/package/codec.js';
 import minimal from '#lib/games/package/fixtures/minimal-release.json';
 import surrogateCases from '#lib/games/package/fixtures/surrogate-cases.json';
 import { GamePackageError } from '#lib/games/package/limits.js';
@@ -154,6 +156,47 @@ it('rolls back when final active-session validation fails', async () => {
 	await expect(store.requestAsync(request())).rejects.toThrow();
 	expect(counts()).toEqual([0, 0, 0, 0]);
 });
+it.each([129, 257])(
+	'installs packages carrying %i small resources after a package v1 round trip',
+	async (count) => {
+		const content = {
+			...structuredClone(minimal.content),
+			resources: Object.fromEntries(
+				Array.from({ length: count }, (_, index) => [
+					`asset-${index}`,
+					{
+						name: `images/asset-${index}.png`,
+						mime: 'image/png',
+						data: 'data:image/png;base64,AA=='
+					}
+				])
+			)
+		} as GameReleaseContent;
+		const release = {
+			originalGameId: minimal.originalGameId,
+			contentVersion: '1.0.0',
+			createdAt: minimal.createdAt,
+			content,
+			contentHash: await hashGameReleaseContent(content)
+		};
+		const decoded = await decodeGamePackage(await encodeGamePackage(structuredClone(release)));
+		const input = {
+			...request(),
+			release: { ...decoded.manifest.release, content: decoded.content }
+		};
+		const reply = await store.requestAsync(input);
+		if (reply.installResult?.kind !== 'installed') {
+			throw Error('Expected install');
+		}
+		const frozen = await repo.getGameRelease(
+			reply.installResult.gameId,
+			reply.installResult.versioning.currentRelease!.id
+		);
+		expect(Object.keys(frozen.content.resources ?? {})).toHaveLength(count);
+		expect(frozen.content.resources).toEqual(content.resources);
+	}
+);
+
 it('rejects a reused session id without leaving a second game', async () => {
 	const first = request();
 	await store.requestAsync(first);
