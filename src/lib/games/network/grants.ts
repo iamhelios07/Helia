@@ -138,5 +138,7 @@ export function revokeNetworkGrant(gameId: string, origin: string): boolean {
 /** Called when a game is permanently deleted. Trash keeps grants so a restored game behaves as before. */
 export function forgetNetworkGrants(gameId: string): boolean {
 	const grants = readGrants();
+	// A failed write must never block the deletion itself; the stale entries are harmless because
+	// the game ID is never reused, and the settings list re-reads the store every time it opens.
 	return grants.delete(gameId) ? writeGrants(grants) : true;
 }

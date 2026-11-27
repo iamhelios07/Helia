@@ -70,15 +70,18 @@ export class NetworkGrantsController {
 					a.origin.localeCompare(b.origin)
 			);
 	};
-	revoke = (row: NetworkGrant) => {
+	/** Returns whether the stored grants changed; a failed write re-reads the saved state. */
+	revoke = (row: NetworkGrant): boolean => {
 		this.status = '';
 		if (!revokeNetworkGrant(row.gameId, row.origin)) {
-			this.error = '허용을 취소하지 못했어요. 저장소를 확인하고 다시 시도해주세요.';
-			return;
+			this.error = `${row.origin} 허용을 취소하지 못했어요. 저장소를 확인하고 다시 시도해주세요.`;
+			this.refresh();
+			return false;
 		}
 		this.error = '';
 		this.status = `${row.origin} 허용을 취소했어요. 다음 연결부터 다시 물어봅니다.`;
 		this.refresh();
+		return true;
 	};
 	/** Another tab or window may have changed the grants. */
 	storageChanged = (event: StorageEvent) => {

@@ -2,7 +2,8 @@ import { mount, unmount } from 'svelte';
 
 import ConfirmDialog from '#lib/components/ConfirmDialog.svelte';
 
-import { resolveConsent, type ConsentAnswer } from './consent.js';
+import { NETWORK_GRANT_REMEMBER_FAILED, resolveConsent, type ConsentAnswer } from './consent.js';
+import NetworkGrantNotice from './NetworkGrantNotice.svelte';
 
 // Serialize native modal dialogs. Permissions never enter game data or history; the optional
 // "do not ask again" choice goes only to the player's own network grant store.
@@ -12,12 +13,49 @@ export function requestNetworkPermission(
 	signal: AbortSignal,
 	gameId?: string
 ): Promise<boolean> {
+	listenForRememberFailure();
 	const result = queue.then(() => resolveConsent(origin, signal, gameId, showPermission));
 	queue = result.then(
 		() => {},
 		() => {}
 	);
 	return result;
+}
+/**
+ * The app has no toast surface, so a rejected write is announced by a single body-mounted notice,
+ * following the same trusted overlay pattern as the consent dialog itself.
+ */
+let listening = false;
+function listenForRememberFailure() {
+	if (listening || typeof window === 'undefined') {
+		return;
+	}
+	listening = true;
+	window.addEventListener(NETWORK_GRANT_REMEMBER_FAILED, (event) => {
+		const origin = event instanceof CustomEvent ? event.detail : '';
+		if (typeof origin === 'string' && origin) {
+			showRememberFailure(origin);
+		}
+	});
+}
+/** It stays until the player dismisses it so keyboard and screen readers are never cut off. */
+let notice: ReturnType<typeof mount> | null = null;
+function hideNotice() {
+	if (notice) {
+		const previous = notice;
+		notice = null;
+		void unmount(previous);
+	}
+}
+function showRememberFailure(origin: string) {
+	hideNotice();
+	notice = mount(NetworkGrantNotice, {
+		target: document.body,
+		props: {
+			message: `${origin} 주소를 기억하지 못했어요. 다음에 다시 물어볼게요.`,
+			ondismiss: hideNotice
+		}
+	});
 }
 function consentDetail(canRemember: boolean): string {
 	const base = '이번 작업이 끝날 때까지 허용합니다.';

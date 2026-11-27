@@ -140,6 +140,45 @@ it('treats unreadable or unwritable storage as no memory instead of failing the 
 	await resolveConsent(origin, signal(), 'game-1', prompt);
 	expect(prompt).toHaveBeenCalledTimes(2);
 });
+const reportRecorder = () => {
+	const reported: unknown[] = [];
+	vi.stubGlobal('window', {
+		dispatchEvent: (event: Event) => {
+			reported.push((event as CustomEvent).detail);
+			return true;
+		}
+	});
+	return reported;
+};
+it('tells the player when a remembered consent cannot be saved, without denying the request', async () => {
+	const reported = reportRecorder();
+	vi.stubGlobal('localStorage', {
+		getItem: () => null,
+		setItem: () => {
+			throw new Error('full');
+		}
+	});
+	await expect(resolveConsent(origin, signal(), 'game-1', answer(true, true))).resolves.toBe(true);
+	expect(reported).toEqual([origin]);
+	expect(isNetworkGrantRemembered('game-1', origin)).toBe(false);
+});
+it('does not report a failed write when the request was allowed without remembering', async () => {
+	const reported = reportRecorder();
+	vi.stubGlobal('localStorage', {
+		getItem: () => null,
+		setItem: () => {
+			throw new Error('full');
+		}
+	});
+	await resolveConsent(origin, signal(), 'game-1', answer(true, false));
+	const abort = new AbortController();
+	const prompt = vi.fn<ConsentPrompt>().mockImplementation(async () => {
+		abort.abort();
+		return { allowed: true, remember: true };
+	});
+	await resolveConsent(origin, abort.signal, 'game-1', prompt);
+	expect(reported).toEqual([]);
+});
 it('reports a failed revoke so the grant is not shown as cancelled', () => {
 	rememberNetworkGrant('game-1', origin);
 	vi.stubGlobal('localStorage', {
@@ -150,6 +189,18 @@ it('reports a failed revoke so the grant is not shown as cancelled', () => {
 	});
 	expect(revokeNetworkGrant('game-1', origin)).toBe(false);
 	expect(isNetworkGrantRemembered('game-1', origin)).toBe(true);
+});
+it('fails quietly when a deleted game cannot forget its grants, without throwing', () => {
+	rememberNetworkGrant('game-1', origin);
+	vi.stubGlobal('localStorage', {
+		getItem: (key: string) => stored.get(key) ?? null,
+		setItem: () => {
+			throw new Error('full');
+		}
+	});
+	expect(() => forgetNetworkGrants('game-1')).not.toThrow();
+	expect(forgetNetworkGrants('game-1')).toBe(false);
+	expect(forgetNetworkGrants('never-stored')).toBe(true);
 });
 it('refuses to remember anything that is not a normalized origin', () => {
 	for (const value of ['https://api.example/path', 'ftp://api.example', 'api.example', '']) {

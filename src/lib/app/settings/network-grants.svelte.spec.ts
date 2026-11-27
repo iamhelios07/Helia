@@ -6,6 +6,7 @@ import { page } from 'vitest/browser';
 import {
 	isNetworkGrantRemembered,
 	listNetworkGrants,
+	NETWORK_GRANTS_KEY,
 	rememberNetworkGrant
 } from '#lib/games/network/grants.js';
 
@@ -106,4 +107,38 @@ it('reports a failed cancellation and keeps the grant listed', async () => {
 	await page.getByRole('button', { name: /허용 취소$/ }).click();
 	await expect.element(page.getByRole('alert')).toHaveTextContent('허용을 취소하지 못했어요');
 	await expect.element(page.getByRole('listitem')).toHaveLength(1);
+});
+it('keeps focus on the cancel button when the cancellation could not be saved', async () => {
+	rememberNetworkGrant('game-a', 'https://api.example');
+	rememberNetworkGrant('game-a', 'https://other.example');
+	await openNetwork();
+	vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+		throw new Error('full');
+	});
+	const api = page.getByRole('button', { name: '별의 항해의 https://api.example 허용 취소' });
+	await api.click();
+	await expect.element(page.getByRole('alert')).toHaveTextContent('https://api.example');
+	const list = page.getByRole('list', { name: '허용한 외부 주소 목록' });
+	await expect.element(list.getByRole('listitem')).toHaveLength(2);
+	await expect.element(api).toHaveFocus();
+	expect(isNetworkGrantRemembered('game-a', 'https://api.example')).toBe(true);
+});
+it('re-reads the saved grants instead of keeping the stale list after a failed cancellation', async () => {
+	rememberNetworkGrant('game-a', 'https://api.example');
+	rememberNetworkGrant('game-a', 'https://other.example');
+	await openNetwork();
+	const list = page.getByRole('list', { name: '허용한 외부 주소 목록' });
+	await expect.element(list.getByRole('listitem')).toHaveLength(2);
+	// Another tab removed one grant while this panel still shows both rows.
+	localStorage.setItem(
+		NETWORK_GRANTS_KEY,
+		JSON.stringify({ version: 1, grants: { 'game-a': ['https://api.example'] } })
+	);
+	vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+		throw new Error('full');
+	});
+	await page.getByRole('button', { name: '별의 항해의 https://api.example 허용 취소' }).click();
+	await expect.element(page.getByRole('alert')).toHaveTextContent('허용을 취소하지 못했어요');
+	await expect.element(list.getByRole('listitem')).toHaveLength(1);
+	expect(listNetworkGrants()).toEqual([{ gameId: 'game-a', origin: 'https://api.example' }]);
 });

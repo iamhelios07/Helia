@@ -59,3 +59,27 @@ it('asks again for a different game', async () => {
 	await dialog.getByRole('button', { name: '취소' }).click();
 	await expect(second).resolves.toBe(false);
 });
+it('allows the request and says the address could not be remembered when storage rejects it', async () => {
+	vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+		throw new Error('full');
+	});
+	const result = requestNetworkPermission(origin, new AbortController().signal, 'game-1');
+	const dialog = page.getByRole('dialog', { name: '외부 연결 허용' });
+	await dialog.getByRole('checkbox', { name: '이 주소에 대해 다시 묻지 않기' }).click();
+	await dialog.getByRole('button', { name: '허용' }).click();
+	await expect(result).resolves.toBe(true);
+	const notice = page.getByRole('alert');
+	await expect.element(notice).toHaveTextContent('주소를 기억하지 못했어요');
+	await expect.element(notice).toHaveTextContent('다음에 다시 물어볼게요');
+	await expect.element(page.getByRole('dialog')).not.toBeInTheDocument();
+	expect(isNetworkGrantRemembered('game-1', origin)).toBe(false);
+	await page.getByRole('button', { name: '알림 닫기' }).click();
+	await expect.element(notice).not.toBeInTheDocument();
+});
+it('says nothing when the player allows without remembering', async () => {
+	const result = requestNetworkPermission(origin, new AbortController().signal, 'game-1');
+	const dialog = page.getByRole('dialog', { name: '외부 연결 허용' });
+	await dialog.getByRole('button', { name: '허용' }).click();
+	await expect(result).resolves.toBe(true);
+	await expect.element(page.getByRole('alert')).not.toBeInTheDocument();
+});

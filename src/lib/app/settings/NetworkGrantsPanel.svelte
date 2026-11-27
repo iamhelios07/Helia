@@ -15,9 +15,10 @@
 		const count = controller.rows.length;
 		const section = button.closest('section');
 		const index = [...(button.closest('ul')?.querySelectorAll('button') ?? [])].indexOf(button);
-		controller.revoke(row);
+		const revoked = controller.revoke(row);
 		await tick();
-		if (controller.rows.length === count) {
+		// A failed revoke leaves the row and the button in place; focus stays where the player is.
+		if (!revoked || controller.rows.length === count) {
 			return;
 		}
 		const buttons = section?.querySelectorAll<HTMLButtonElement>('.grant-list button') ?? [];
