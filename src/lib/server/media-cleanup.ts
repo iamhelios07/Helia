@@ -8,6 +8,21 @@ import { blobId, record } from '#lib/games/state/model.js';
 
 import { deadline, type MediaLifetime } from './media-lifetime.js';
 
+class UnreadableRootsError extends Error {}
+
+/** Only decoding/validation failures belong to unreadable; database I/O stays outside. */
+function extractRoots(
+	text: string,
+	roots: Set<string>,
+	extract: (value: unknown, roots: Set<string>) => void
+) {
+	try {
+		extract(JSON.parse(text), roots);
+	} catch (cause) {
+		throw new UnreadableRootsError('Could not read stored media roots', { cause });
+	}
+}
+
 function resourceRoots(resources: unknown, roots: Set<string>) {
 	const prefix = 'helia-asset:';
 	for (const entry of Object.values(record(resources))) {
@@ -40,18 +55,18 @@ function draftRoots(draft: unknown, roots: Set<string>) {
 /** These are the persisted root locations, not a search of arbitrary JSON or runtime aliases. */
 function collectRoots(db: Database.Database, game: string, now: string, value: string) {
 	const roots = new Set<string>();
-	contentRoots(JSON.parse(value), roots);
+	extractRoots(value, roots, contentRoots);
 	for (const draft of db
 		.prepare('SELECT value FROM editor_drafts WHERE game_id=? AND value IS NOT NULL')
 		.pluck()
 		.iterate(game)) {
-		draftRoots(JSON.parse(draft as string), roots);
+		extractRoots(draft as string, roots, draftRoots);
 	}
 	for (const release of db
 		.prepare('SELECT content FROM game_releases WHERE game_id=?')
 		.pluck()
 		.iterate(game)) {
-		contentRoots(JSON.parse(release as string), roots);
+		extractRoots(release as string, roots, contentRoots);
 	}
 	const snapshotRows = db.prepare('SELECT value FROM snapshot_resources WHERE game_id=?').pluck();
 	const completions = db
@@ -61,7 +76,9 @@ function collectRoots(db: Database.Database, game: string, now: string, value: s
 		.pluck();
 	for (const rows of [snapshotRows.iterate(game), completions.iterate(game, now)]) {
 		for (const row of rows) {
-			roots.add(blobId(record(JSON.parse(row as string)).blobId));
+			extractRoots(row as string, roots, (value, roots) => {
+				roots.add(blobId(record(value).blobId));
+			});
 		}
 	}
 	return roots;
@@ -149,7 +166,8 @@ export async function cleanStorage(
 		removedBlobs: 0,
 		queuedObjects: 0,
 		skippedEditing: 0,
-		skippedUnreadable: 0
+		skippedUnreadable: 0,
+		skippedFailed: 0
 	};
 	let bytes = 0n;
 	for (const game of games) {
@@ -163,8 +181,12 @@ export async function cleanStorage(
 				totals.queuedObjects += result.queuedObjects;
 				bytes += result.bytes;
 			}
-		} catch {
-			totals.skippedUnreadable++;
+		} catch (error) {
+			if (error instanceof UnreadableRootsError) {
+				totals.skippedUnreadable++;
+			} else {
+				totals.skippedFailed++;
+			}
 		}
 		await nextTurn();
 	}

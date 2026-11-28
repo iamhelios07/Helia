@@ -96,6 +96,8 @@ export class RuntimeContent {
 		if (blob.schemaVersion !== 2 || blob.id !== blobId || blob.gameId !== gameId) {
 			throw Error('Invalid media alias');
 		}
+		// Cleanup can remove the row after validation. SELECT avoids recreating a dangling alias;
+		// returning the stable id is safe even when the now-removed asset can no longer resolve.
 		this.db
 			.prepare(
 				`INSERT OR IGNORE INTO runtime_assets (game_id,hash,blob_id)

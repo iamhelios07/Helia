@@ -290,6 +290,8 @@ pub(crate) fn project(
                 return Err(ERROR.into());
             }
             let id = input["id"].as_str().ok_or(ERROR)?;
+            // SELECT avoids a dangling alias if cleanup removed the validated blob meanwhile.
+            // Its stable id is still returned; a removed asset will no longer resolve.
             connection
                 .execute(
                     "INSERT OR IGNORE INTO runtime_assets (game_id,hash,blob_id)

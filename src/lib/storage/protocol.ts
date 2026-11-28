@@ -80,6 +80,7 @@ export interface StorageCleanupResult {
 	reclaimableBytes: string;
 	skippedEditing: number;
 	skippedUnreadable: number;
+	skippedFailed: number;
 }
 export type StorageRequest =
 	| { kind: 'cleanStorage' }
@@ -373,7 +374,8 @@ function parseStorageCleanup(value: unknown): StorageCleanupResult {
 		queuedObjects: counter(input.queuedObjects),
 		reclaimableBytes: input.reclaimableBytes,
 		skippedEditing: counter(input.skippedEditing),
-		skippedUnreadable: counter(input.skippedUnreadable)
+		skippedUnreadable: counter(input.skippedUnreadable),
+		skippedFailed: counter(input.skippedFailed)
 	};
 }
 

@@ -54,3 +54,62 @@ it('waits for an in-flight renewal and draft save before releasing on pagehide',
 	expect(wire).toHaveBeenCalledTimes(2);
 	expect(wire.mock.calls[1][0]).toEqual({ ...wire.mock.calls[0][0], action: 'release' });
 });
+
+it('waits for saves appended after pagehide until the save queue stops changing, including a rejected save', async () => {
+	vi.useFakeTimers();
+	const events = new EventTarget();
+	vi.stubGlobal('window', events);
+	const wire = vi.mocked(storageRequest).mockResolvedValue(reply);
+	const first = Promise.withResolvers<void>();
+	const last = Promise.withResolvers<void>();
+	let queue = first.promise;
+	holdEditorLease('game', () => queue);
+	events.dispatchEvent(new Event('pagehide'));
+	await vi.advanceTimersByTimeAsync(0);
+	// A later pagehide listener/teardown appends another operation while the first save runs.
+	queue = queue.then(() => last.promise);
+	first.resolve();
+	await vi.advanceTimersByTimeAsync(0);
+	expect(wire).toHaveBeenCalledOnce();
+	last.reject(Error('save failed'));
+	await vi.advanceTimersByTimeAsync(0);
+	expect(wire).toHaveBeenCalledTimes(2);
+	expect(wire.mock.calls[1][0]).toMatchObject({ action: 'release' });
+});
+
+it('warns after consecutive renewal failures, resets on success, and clears the warning on recovery', async () => {
+	vi.useFakeTimers();
+	vi.stubGlobal('window', new EventTarget());
+	const wire = vi.mocked(storageRequest).mockRejectedValue(Error('offline'));
+	const warning = vi.fn();
+	const release = holdEditorLease('game', undefined, warning);
+	await vi.advanceTimersByTimeAsync(0);
+	expect(warning).toHaveBeenLastCalledWith('');
+	wire.mockResolvedValue(reply);
+	await vi.advanceTimersByTimeAsync(fiveMinutes);
+	wire.mockRejectedValue(Error('offline'));
+	await vi.advanceTimersByTimeAsync(fiveMinutes);
+	expect(warning).toHaveBeenLastCalledWith('');
+	await vi.advanceTimersByTimeAsync(fiveMinutes);
+	expect(warning).toHaveBeenLastCalledWith(
+		expect.stringContaining('편집 중인 파일을 보호하지 못하고')
+	);
+	wire.mockResolvedValue(reply);
+	await vi.advanceTimersByTimeAsync(fiveMinutes);
+	expect(warning).toHaveBeenLastCalledWith('');
+	release();
+	await vi.advanceTimersByTimeAsync(0);
+});
+
+it('does not publish a renewal warning after teardown', async () => {
+	vi.useFakeTimers();
+	vi.stubGlobal('window', new EventTarget());
+	const renewal = Promise.withResolvers<typeof reply>();
+	vi.mocked(storageRequest).mockReturnValueOnce(renewal.promise).mockResolvedValue(reply);
+	const warning = vi.fn();
+	const release = holdEditorLease('game', undefined, warning);
+	release();
+	renewal.reject(Error('offline'));
+	await vi.advanceTimersByTimeAsync(0);
+	expect(warning).not.toHaveBeenCalled();
+});

@@ -50,7 +50,8 @@ const noFiles = {
 	queuedObjects: 0,
 	reclaimableBytes: '0',
 	skippedEditing: 0,
-	skippedUnreadable: 0
+	skippedUnreadable: 0,
+	skippedFailed: 0
 };
 
 async function upload(game: string, mime = 'image/png', seed = 1) {
@@ -137,7 +138,12 @@ it('skips malformed, unknown and editing games independently and rolls back alia
 	store = openStorage(join(directory, 'storage.sqlite'));
 	const lease = { kind: 'editorLease', gameId: 'd-edit', leaseId: 'e'.repeat(32) } as const;
 	await transport({ ...lease, action: 'renew' });
-	expect(await clean()).toMatchObject({ skippedEditing: 1, skippedUnreadable: 5, removedBlobs: 1 });
+	expect(await clean()).toMatchObject({
+		skippedEditing: 1,
+		skippedUnreadable: 4,
+		skippedFailed: 1,
+		removedBlobs: 1
+	});
 	expect(db().prepare('SELECT game_id FROM blobs ORDER BY game_id').pluck().all()).toEqual([
 		'a-draft',
 		'b-assets',
@@ -148,7 +154,12 @@ it('skips malformed, unknown and editing games independently and rolls back alia
 	]);
 	expect(count('runtime_assets')).toBe(12);
 	await transport({ ...lease, action: 'release' });
-	expect(await clean()).toMatchObject({ skippedEditing: 0, skippedUnreadable: 5, removedBlobs: 1 });
+	expect(await clean()).toMatchObject({
+		skippedEditing: 0,
+		skippedUnreadable: 4,
+		skippedFailed: 1,
+		removedBlobs: 1
+	});
 });
 
 it('keeps a shared object, a read-leased object, and v1; releases bytes only on a later manual run', async () => {

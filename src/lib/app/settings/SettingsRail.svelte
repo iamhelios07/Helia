@@ -64,6 +64,7 @@
 		<button
 			class={{ selected: controller.section === 'storage' }}
 			type="button"
+			aria-label="저장 공간"
 			aria-current={controller.section === 'storage' ? 'page' : undefined}
 			disabled={controller.navigationBusy}
 			onclick={() => controller.switchSection('storage')}

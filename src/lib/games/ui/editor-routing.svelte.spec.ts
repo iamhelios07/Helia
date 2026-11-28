@@ -116,6 +116,38 @@ it('opens draft-only nested code directly and retains the same Monaco model on b
 	expect(goto).not.toHaveBeenCalled();
 });
 
+it('shows an editor warning after repeated lease renewal failures and clears it on recovery', async () => {
+	const game = await setup();
+	const wire = vi.mocked(storageRequest);
+	const original = wire.getMockImplementation()!;
+	let offline = true;
+	let renewals = 0;
+	wire.mockImplementation((request) => {
+		if (request.kind === 'editorLease' && request.action === 'renew') {
+			renewals++;
+			return offline
+				? Promise.reject(Error('offline'))
+				: Promise.resolve({ version: 0, records: [] });
+		}
+		return original(request);
+	});
+	const view = mount(game.id, 'game.json');
+	try {
+		await expect.element(page.getByRole('textbox', { name: '이름', exact: true })).toBeVisible();
+		await expect.poll(() => renewals).toBe(1);
+		const warning = page.getByRole('alert').filter({ hasText: '편집 중인 파일을 보호하지 못하고' });
+		await expect.element(warning).not.toBeInTheDocument();
+		window.dispatchEvent(new Event('pageshow'));
+		await expect.element(warning).toBeVisible();
+		offline = false;
+		window.dispatchEvent(new Event('pageshow'));
+		await expect.element(warning).not.toBeInTheDocument();
+	} finally {
+		await view.unmount();
+		wire.mockImplementation(original);
+	}
+});
+
 it('renames and removes the current code file using replacement URLs', async () => {
 	const game = await setup();
 	mount(game.id, 'code/logic/helper.ts');

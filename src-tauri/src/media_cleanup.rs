@@ -9,58 +9,84 @@ use std::{collections::HashSet, path::Path};
 const INVALID: &str = "저장 공간을 정리할 수 없어요.";
 type Result<T> = std::result::Result<T, String>;
 
-fn object(value: &Value) -> Result<&serde_json::Map<String, Value>> {
-    value.as_object().ok_or_else(|| INVALID.into())
+enum CleanupError {
+    UnreadableRoots,
+    Failed,
 }
 
-fn fingerprint(value: &Value) -> Result<&str> {
+impl From<String> for CleanupError {
+    fn from(_: String) -> Self {
+        Self::Failed
+    }
+}
+
+impl From<&str> for CleanupError {
+    fn from(_: &str) -> Self {
+        Self::Failed
+    }
+}
+
+type CleanupResult<T> = std::result::Result<T, CleanupError>;
+
+fn object(value: &Value) -> CleanupResult<&serde_json::Map<String, Value>> {
+    value.as_object().ok_or(CleanupError::UnreadableRoots)
+}
+
+fn fingerprint(value: &Value) -> CleanupResult<&str> {
     value
         .as_str()
         .filter(|s| valid_hash(s))
-        .ok_or_else(|| INVALID.into())
+        .ok_or(CleanupError::UnreadableRoots)
 }
 
-fn resource_roots(resources: &Value, roots: &mut HashSet<String>) -> Result<()> {
+fn resource_roots(resources: &Value, roots: &mut HashSet<String>) -> CleanupResult<()> {
     for entry in object(resources)?.values() {
         let data = object(entry)?
             .get("data")
             .and_then(Value::as_str)
-            .ok_or(INVALID)?;
+            .ok_or(CleanupError::UnreadableRoots)?;
         if let Some(id) = data.strip_prefix("helia-asset:").filter(|s| valid_hash(s)) {
             roots.insert(id.to_owned());
         } else if !data.starts_with("data:") {
-            return Err(INVALID.into());
+            return Err(CleanupError::UnreadableRoots);
         }
     }
     Ok(())
 }
 
-fn content_roots(value: &Value, roots: &mut HashSet<String>) -> Result<()> {
+fn content_roots(value: &Value, roots: &mut HashSet<String>) -> CleanupResult<()> {
     if let Some(resources) = object(value)?.get("resources") {
         resource_roots(resources, roots)?;
     }
     Ok(())
 }
 
-fn parse(text: &str) -> Result<Value> {
-    serde_json::from_str(text).map_err(|_| INVALID.into())
+fn parse(text: &str) -> CleanupResult<Value> {
+    serde_json::from_str(text).map_err(|_| CleanupError::UnreadableRoots)
 }
 
-fn draft_roots(draft: &Value, roots: &mut HashSet<String>) -> Result<()> {
+fn draft_roots(draft: &Value, roots: &mut HashSet<String>) -> CleanupResult<()> {
     content_roots(&draft["baseContent"], roots)?;
-    let assets = draft["documents"]["assets"].as_str().ok_or(INVALID)?;
+    let assets = draft["documents"]["assets"]
+        .as_str()
+        .ok_or(CleanupError::UnreadableRoots)?;
     resource_roots(&parse(assets)?, roots)
 }
 
 /// Keep this path-specific extraction aligned with the Node host, including the nested asset JSON.
-fn collect_roots(db: &Connection, game: &str, now: &str, value: &str) -> Result<HashSet<String>> {
+fn collect_roots(
+    db: &Connection,
+    game: &str,
+    now: &str,
+    value: &str,
+) -> CleanupResult<HashSet<String>> {
     let mut roots = HashSet::new();
     content_roots(&parse(value)?, &mut roots)?;
     for (sql, args, extract) in [
         (
             "SELECT value FROM editor_drafts WHERE game_id=? AND value IS NOT NULL",
             vec![game],
-            draft_roots as fn(&Value, &mut HashSet<String>) -> Result<()>,
+            draft_roots as fn(&Value, &mut HashSet<String>) -> CleanupResult<()>,
         ),
         (
             "SELECT content FROM game_releases WHERE game_id=?",
@@ -90,7 +116,7 @@ fn collect_roots(db: &Connection, game: &str, now: &str, value: &str) -> Result<
     Ok(roots)
 }
 
-fn blob_root(value: &Value, roots: &mut HashSet<String>) -> Result<()> {
+fn blob_root(value: &Value, roots: &mut HashSet<String>) -> CleanupResult<()> {
     roots.insert(fingerprint(&value["blobId"])?.to_owned());
     Ok(())
 }
@@ -102,7 +128,7 @@ struct SweptBlobs {
     count: u64,
 }
 
-fn sweep_blobs(db: &Connection, game: &str, roots: &HashSet<String>) -> Result<SweptBlobs> {
+fn sweep_blobs(db: &Connection, game: &str, roots: &HashSet<String>) -> CleanupResult<SweptBlobs> {
     let mut select = db.prepare("SELECT id, json_extract(value,'$.object') FROM blobs WHERE game_id=? AND json_extract(value,'$.schemaVersion')=2").map_err(db_error)?;
     // Collect ids before mutating the source table.
     let rows = select
@@ -147,7 +173,12 @@ struct Reclaimed {
     bytes: u128,
 }
 
-fn queue_objects(db: &Connection, game: &str, now: &str, blobs: SweptBlobs) -> Result<Reclaimed> {
+fn queue_objects(
+    db: &Connection,
+    game: &str,
+    now: &str,
+    blobs: SweptBlobs,
+) -> CleanupResult<Reclaimed> {
     let mut select = db.prepare("SELECT id, sha256, size FROM media_objects WHERE game_id=? AND state='ready'
         AND id NOT IN (SELECT object_id FROM media_leases WHERE object_id IS NOT NULL AND kind='read' AND expires_at>?)").map_err(db_error)?;
     let ready = select
@@ -184,7 +215,7 @@ fn queue_objects(db: &Connection, game: &str, now: &str, blobs: SweptBlobs) -> R
     Ok(reclaimed)
 }
 
-fn clean_game(db: &mut Connection, game: &str) -> Result<Option<Reclaimed>> {
+fn clean_game(db: &mut Connection, game: &str) -> CleanupResult<Option<Reclaimed>> {
     let tx = db
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(db_error)?;
@@ -222,6 +253,7 @@ fn clean_storage(db: &mut Connection) -> Result<Value> {
     let mut total = Reclaimed::default();
     let mut editing = 0;
     let mut unreadable = 0;
+    let mut failed = 0;
     for game in games {
         match clean_game(db, &game) {
             Ok(Some(result)) => {
@@ -231,13 +263,15 @@ fn clean_storage(db: &mut Connection) -> Result<Value> {
                 total.bytes += result.bytes;
             }
             Ok(None) => editing += 1,
-            Err(_) => unreadable += 1,
+            Err(CleanupError::UnreadableRoots) => unreadable += 1,
+            Err(CleanupError::Failed) => failed += 1,
         }
     }
     media_uploads::wake();
     Ok(
         json!({"cleanedFiles": total.files, "removedBlobs": total.blobs, "queuedObjects": total.objects,
-        "reclaimableBytes": total.bytes.to_string(), "skippedEditing": editing, "skippedUnreadable": unreadable}),
+        "reclaimableBytes": total.bytes.to_string(), "skippedEditing": editing, "skippedUnreadable": unreadable,
+        "skippedFailed": failed}),
     )
 }
 

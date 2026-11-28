@@ -9,7 +9,7 @@
 		const units = ['B', 'KiB', 'MiB', 'GiB', 'TiB', 'PiB', 'EiB'];
 		let unit = 0;
 		let scale = 1n;
-		while (unit < units.length - 1 && bytes >= scale * 1024n) {
+		while (unit < units.length - 1 && (bytes * 10n + scale / 2n) / scale >= 10240n) {
 			scale *= 1024n;
 			unit++;
 		}
@@ -28,10 +28,11 @@
 <button
 	class="primary-button"
 	type="button"
-	disabled={controller.cleaning}
+	aria-disabled={controller.cleaning}
+	aria-busy={controller.cleaning}
 	onclick={controller.cleanStorage}
 >
-	{controller.cleaning ? '정리하는 중…' : '저장 공간 정리'}
+	저장 공간 정리
 </button>
 <div class="status" role="status">
 	{#if controller.cleaning}
@@ -55,6 +56,12 @@
 				건너뛰었어요
 			</p>
 		{/if}
+		{#if result.skippedFailed}
+			<p>
+				정리하지 못한 게임 {result.skippedFailed.toLocaleString('ko-KR')}개(잠시 뒤 다시 시도해
+				주세요)
+			</p>
+		{/if}
 	{/if}
 </div>
 {#if controller.cleanupError}
@@ -62,6 +69,9 @@
 {/if}
 
 <style>
+	button[aria-disabled='true'] {
+		opacity: 0.45;
+	}
 	.muted {
 		margin: 0 0 16px;
 	}

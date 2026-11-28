@@ -64,14 +64,21 @@ afterEach(() => vi.restoreAllMocks());
 const dialog = () => page.getByRole('dialog', { name: '설정', exact: true });
 const nav = () => page.getByRole('navigation', { name: '설정 메뉴', exact: true });
 
-it('cleans only on click, prevents repeat activation, and shows reclaimed bytes and both skip counts', async () => {
+it('cleans only on click, keeps keyboard focus while busy, and shows bytes and all skip counts', async () => {
 	const pending = Promise.withResolvers<Awaited<ReturnType<typeof storageRequest>>>();
 	vi.mocked(storageRequest).mockReturnValueOnce(pending.promise);
 	render(SettingsDialog, { onclose: vi.fn() });
 	await nav().getByRole('button', { name: '저장 공간', exact: true }).click();
 	expect(storageRequest).not.toHaveBeenCalled();
-	await dialog().getByRole('button', { name: '저장 공간 정리', exact: true }).click();
-	await expect.element(dialog().getByRole('button', { name: '정리하는 중…' })).toBeDisabled();
+	const button = dialog().getByRole('button', { name: '저장 공간 정리', exact: true });
+	await userEvent.tab();
+	await expect.element(button).toHaveFocus();
+	await userEvent.keyboard('{Enter}');
+	await expect.element(button).toHaveAttribute('aria-disabled', 'true');
+	await expect.element(button).toHaveAttribute('aria-busy', 'true');
+	await expect.element(button).toHaveFocus();
+	await userEvent.keyboard('{Enter}');
+	await expect.element(button).toHaveTextContent('저장 공간 정리');
 	await expect.element(dialog().getByRole('status')).toHaveTextContent('정리하는 중');
 	expect(storageRequest).toHaveBeenCalledExactlyOnceWith({ kind: 'cleanStorage' });
 	pending.resolve({
@@ -83,13 +90,19 @@ it('cleans only on click, prevents repeat activation, and shows reclaimed bytes 
 			queuedObjects: 2,
 			reclaimableBytes: '1572864',
 			skippedEditing: 2,
-			skippedUnreadable: 1
+			skippedUnreadable: 1,
+			skippedFailed: 3
 		}
 	});
 	const result = dialog().getByRole('status');
 	await expect.element(result).toHaveTextContent('파일 3개(약 1.5 MiB)를 정리했어요');
 	await expect.element(result).toHaveTextContent('편집 중인 게임 2개는 건너뛰었어요');
 	await expect.element(result).toHaveTextContent('데이터를 읽을 수 없는 게임 1개는 건너뛰었어요');
+	await expect
+		.element(result)
+		.toHaveTextContent('정리하지 못한 게임 3개(잠시 뒤 다시 시도해 주세요)');
+	await expect.element(button).toHaveAttribute('aria-busy', 'false');
+	await expect.element(button).toHaveFocus();
 });
 
 it('activates cleanup by keyboard, shows failure, and supports a retry with no files', async () => {
@@ -104,7 +117,8 @@ it('activates cleanup by keyboard, shows failure, and supports a retry with no f
 				queuedObjects: 0,
 				reclaimableBytes: '0',
 				skippedEditing: 0,
-				skippedUnreadable: 0
+				skippedUnreadable: 0,
+				skippedFailed: 0
 			}
 		});
 	render(SettingsDialog, { onclose: vi.fn() });
@@ -121,6 +135,34 @@ it('activates cleanup by keyboard, shows failure, and supports a retry with no f
 	await expect.element(dialog().getByRole('status')).toHaveTextContent('정리할 파일이 없어요');
 });
 const stored = () => loadAISettings();
+
+it.each([
+	['1048575', '1 MiB'],
+	['1073741823', '1 GiB'],
+	['1048000', '1,023.4 KiB'],
+	['1023', '1023 B']
+])('formats cleanup bytes %s as %s', async (reclaimableBytes, formatted) => {
+	vi.mocked(storageRequest).mockResolvedValueOnce({
+		version: 0,
+		records: [],
+		storageCleanup: {
+			cleanedFiles: 1,
+			removedBlobs: 1,
+			queuedObjects: 1,
+			reclaimableBytes,
+			skippedEditing: 0,
+			skippedUnreadable: 0,
+			skippedFailed: 0
+		}
+	});
+	render(SettingsDialog, { onclose: vi.fn() });
+	await nav().getByRole('button', { name: '저장 공간', exact: true }).click();
+	await dialog().getByRole('button', { name: '저장 공간 정리', exact: true }).click();
+	await expect
+		.element(dialog().getByRole('status'))
+		.toHaveTextContent(`파일 1개(약 ${formatted})를 정리했어요`);
+});
+
 async function seed() {
 	const provider = {
 		id: 'provider-one',

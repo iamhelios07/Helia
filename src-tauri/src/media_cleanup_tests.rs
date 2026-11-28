@@ -70,7 +70,7 @@ fn totals(
     unreadable: u64,
 ) -> Value {
     json!({"cleanedFiles":files,"removedBlobs":blobs,"queuedObjects":objects,"reclaimableBytes":bytes,
-        "skippedEditing":editing,"skippedUnreadable":unreadable})
+        "skippedEditing":editing,"skippedUnreadable":unreadable,"skippedFailed":0})
 }
 
 #[test]
@@ -162,7 +162,9 @@ fn skips_unreadable_and_editing_games_and_rolls_back_a_failing_game_only() {
     .unwrap();
     let id = "a".repeat(32);
     lease(&file, "d-edit", &id, "renew").unwrap();
-    assert_eq!(run(&file), totals(1, 1, 1, "3", 1, 5));
+    let mut expected = totals(1, 1, 1, "3", 1, 4);
+    expected["skippedFailed"] = json!(1);
+    assert_eq!(run(&file), expected);
     assert_eq!(
         scalar::<String>(
             &db,
@@ -172,7 +174,8 @@ fn skips_unreadable_and_editing_games_and_rolls_back_a_failing_game_only() {
     );
     assert_eq!(count(&db, "runtime_assets"), 12);
     lease(&file, "d-edit", &id, "release").unwrap();
-    assert_eq!(run(&file), totals(1, 1, 1, "3", 0, 5));
+    expected["skippedEditing"] = json!(0);
+    assert_eq!(run(&file), expected);
 }
 
 #[test]

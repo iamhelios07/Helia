@@ -96,7 +96,11 @@ A same-origin, same-version release with different content produces a conflict r
 
 **설정 → 저장 공간 → 저장 공간 정리** is the only user-facing trigger for the `cleanStorage` request. Save Draft, Apply, release creation, startup and expiry ticks do not sweep unused blobs. Web and desktop inspect persisted media references and delete unreferenced v2 blob rows and their runtime aliases in one IMMEDIATE transaction per game. An unreadable root or a failed transaction leaves that game untouched; v1 blobs are not swept.
 
+Only root parsing and reference validation failures count as `skippedUnreadable`. Database and sweep failures count separately as `skippedFailed`, with a retry message in settings.
+
 A completed edit upload protects its result for one hour. Each open editor renews its own 15-minute lease every five minutes. An active editor lease skips the entire game; a read lease protects its object, not the blob's aliases. References that exist only in a browser recovery copy do not protect bytes once the editor lease and upload result expire.
+
+Two consecutive renewal failures show a warning in the editor; a successful renewal clears it. Closing the editor waits for the save queue to stop changing before releasing its lease. Browser termination or suspension can still prevent renewal and final saves; an expired lease provides no protection.
 
 The reported size is the sum of newly queued objects, not the sum of blob sizes. The existing worker deletes up to 32 chunks per transaction. SQLite reuses reclaimed pages rather than shrinking the database file.
 

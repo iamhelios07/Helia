@@ -62,6 +62,7 @@ export class EditorWorkspace {
 	loadError = $state('');
 	recoveryError = $state('');
 	saveError = $state('');
+	leaseWarning = $state('');
 	applyError = $state('');
 	navigationError = $state('');
 	applying = $state(false);
@@ -1038,7 +1039,16 @@ export class EditorWorkspace {
 		$effect(() => {
 			const gameId = leaseGameId;
 			if (gameId) {
-				return untrack(() => holdEditorLease(gameId, () => this.saveQueue));
+				return untrack(() => {
+					this.leaseWarning = '';
+					return holdEditorLease(
+						gameId,
+						() => this.saveQueue,
+						(message) => {
+							this.leaseWarning = message;
+						}
+					);
+				});
 			}
 		});
 		$effect(() => {

@@ -143,6 +143,7 @@
 			</div>
 		</div>
 	{:else if editor.draft && editor.game}
+		{#if editor.leaseWarning}<div class="error-banner" role="alert">{editor.leaseWarning}</div>{/if}
 		{#if editor.saveError}<div class="error-banner" role="alert">
 				{editor.saveError}<button type="button" onclick={editor.persistDraft}
 					>초안 저장 다시 시도</button
