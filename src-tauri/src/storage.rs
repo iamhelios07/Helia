@@ -2742,6 +2742,345 @@ mod tests {
         assert!(list["games"][0].get("resources").is_none());
         assert_eq!(list["games"][0]["id"], "game");
     }
+
+    #[test]
+    fn media_consumers_preserve_v2_and_existing_v1_sqlite_reads() {
+        for version in [1, 2] {
+            let fixture = Fixture::new();
+            fixture.create();
+            let legacy: Value = serde_json::from_str(include_str!(
+                "../../src/lib/games/state/fixtures/legacy-content.json"
+            ))
+            .unwrap();
+            let mut identity = crate::media_identity::MediaIdentity::new("game", "image/png");
+            identity.update(b"hello").unwrap();
+            let identity = identity.digest();
+            let id = if version == 2 {
+                identity.blob_id.as_str()
+            } else {
+                legacy["blob"]["id"].as_str().unwrap()
+            };
+            let reference = format!("helia-asset:{id}");
+            let mut snapshot_reference = legacy["reference"].clone();
+            snapshot_reference["blobId"] = json!(id);
+            let blob = if version == 2 {
+                json!({"schemaVersion":2,"id":id,"gameId":"game","mime":"image/png","object":identity.raw,"size":5})
+            } else {
+                legacy["blob"].clone()
+            };
+            let mut current = fixture.read()["records"][0]["value"].clone();
+            current["title"] = json!("Media");
+            current["resources"] = legacy["resources"].clone();
+            if version == 2 {
+                current["resources"]["portrait"]["data"] = json!(reference);
+            }
+            let snapshot_id = legacy["snapshot"]["id"].as_str().unwrap();
+            let progress = json!({"schemaVersion":2,"sessionId":"session","gameId":"game","snapshotId":snapshot_id,"headId":null,"revision":0,"state":{}});
+            let draft = json!({"version":3,"gameId":"game","baseContent":current,"documents":{"info":"{}","instructions":"{}","state":"{}","code":"{}","lorebook":"{}","regex":"[]","assets":current["resources"].to_string()}});
+            let db = open(&fixture.0).unwrap();
+            db.execute(
+                "UPDATE games SET value=?1 WHERE id='game'",
+                [current.to_string()],
+            )
+            .unwrap();
+            db.execute(
+                "INSERT INTO blobs(id,game_id,value) VALUES(?1,'game',?2)",
+                params![id, blob.to_string()],
+            )
+            .unwrap();
+            db.execute(
+                "INSERT INTO snapshots(id,game_id,value) VALUES(?1,'game',?2)",
+                params![snapshot_id, legacy["snapshot"].to_string()],
+            )
+            .unwrap();
+            db.execute("INSERT INTO snapshot_resources(id,game_id,snapshot_id,value) VALUES(?1,'game',?2,?3)", params![snapshot_reference["id"].as_str().unwrap(), snapshot_id, snapshot_reference.to_string()]).unwrap();
+            db.execute("INSERT INTO progress(id,game_id,session_id,snapshot_id,value) VALUES('session','game','session',?1,?2)", params![snapshot_id, progress.to_string()]).unwrap();
+            db.execute(
+                "INSERT INTO editor_drafts(game_id,version,value) VALUES('game',1,?1)",
+                [draft.to_string()],
+            )
+            .unwrap();
+            if version == 2 {
+                db.execute("INSERT INTO media_objects(id,game_id,state,size,chunk_size,sha256,crc32,created_at) VALUES('object','game','ready',5,1048576,?1,?2,'now')", params![identity.raw, identity.crc]).unwrap();
+                db.execute(
+                    "INSERT INTO media_chunks VALUES('object',0,?1,?2)",
+                    params![identity.raw, b"hello".as_slice()],
+                )
+                .unwrap();
+            }
+            drop(db);
+            for include_history in [false, true] {
+                let read = json!({"kind":"read","gameId":"game","sessionId":"session","includeHistory":include_history});
+                let direct = fixture.request(read.clone()).unwrap();
+                assert_eq!(direct["records"][0]["value"], current);
+                let rows = direct["records"].as_array().unwrap();
+                assert_eq!(
+                    rows.iter().find(|r| r["table"] == "blobs").unwrap()["value"],
+                    blob
+                );
+                assert_eq!(
+                    rows.iter()
+                        .find(|r| r["table"] == "snapshot_resources")
+                        .unwrap()["value"],
+                    snapshot_reference
+                );
+                let synced = fixture
+                    .request(json!({"kind":"sync","request":read,"known":[]}))
+                    .unwrap();
+                let data = &synced["records"][0]["parts"]["resources"]["value"]["portrait"]["data"];
+                if version == 2 {
+                    assert_eq!(data, &json!(reference));
+                    let rows = synced["records"].as_array().unwrap();
+                    assert_eq!(
+                        rows.iter().find(|r| r["table"] == "blobs").unwrap()["parts"]["value"]["value"],
+                        blob
+                    );
+                } else {
+                    assert!(data["asset"].is_string());
+                    assert_eq!(
+                        fixture
+                            .request(json!({"kind":"asset","gameId":"game","hash":data["asset"]}))
+                            .unwrap()["data"],
+                        legacy["blob"]["data"]
+                    );
+                }
+                let playing = fixture.request(json!({"kind":"sync","known":[],"request":{"kind":"read","gameId":"game","sessionId":"session","includeHistory":include_history,"play":true}})).unwrap();
+                assert_eq!(
+                    playing["records"][0]["parts"]["resources"]["value"]["portrait"]["data"],
+                    reference
+                );
+                let rows = playing["records"].as_array().unwrap();
+                let projected_blob = &rows.iter().find(|r| r["table"] == "blobs").unwrap()["parts"]
+                    ["value"]["value"];
+                if version == 2 {
+                    assert_eq!(projected_blob, &blob);
+                    assert!(
+                        fixture
+                            .request(json!({"kind":"asset","gameId":"game","hash":id}))
+                            .is_err()
+                    );
+                } else {
+                    assert_eq!(projected_blob["data"], reference);
+                }
+                assert_eq!(
+                    fixture
+                        .request(json!({"kind":"readDraft","gameId":"game"}))
+                        .unwrap()["draft"],
+                    draft
+                );
+            }
+            let db = open(&fixture.0).unwrap();
+            let media = crate::runtime_content::open_media(&db, "game", id)
+                .unwrap()
+                .unwrap();
+            assert_eq!(media.mime, "image/png");
+            assert_eq!(
+                media
+                    .read(0, media.size)
+                    .unwrap()
+                    .collect::<Result<Vec<_>, _>>()
+                    .unwrap()
+                    .concat(),
+                b"hello"
+            );
+            assert_eq!(
+                fixture.read()["records"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .find(|r| r["table"] == "blobs")
+                    .unwrap()["value"],
+                blob
+            );
+        }
+    }
+    #[test]
+    fn media_v2_sync_rejects_blob_rows_owned_by_another_game() {
+        let fixture = Fixture::new();
+        fixture.create();
+        let blob = json!({"schemaVersion":2,"id":"a".repeat(64),"gameId":"other","mime":"image/png","object":"b".repeat(64),"size":1});
+        let db = open(&fixture.0).unwrap();
+        db.execute(
+            "INSERT INTO blobs(id,game_id,value) VALUES(?1,'game',?2)",
+            params![blob["id"].as_str().unwrap(), blob.to_string()],
+        )
+        .unwrap();
+        // The play projection refuses the row before it can create an alias.
+        assert!(crate::runtime_content::project(&db, "blobs", "game", &blob).is_err());
+        drop(db);
+        // The editor read enumerates every owned blob row, so the sync reply fails too.
+        let read = json!({"kind":"read","gameId":"game","includeHistory":true});
+        assert!(
+            fixture
+                .request(json!({"kind":"sync","request":read,"known":[]}))
+                .is_err()
+        );
+        let db = open(&fixture.0).unwrap();
+        let aliases: i64 = db
+            .query_row(
+                "SELECT count(*) FROM runtime_assets WHERE blob_id=?1",
+                [blob["id"].as_str().unwrap()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(aliases, 0);
+    }
+
+    #[test]
+    fn media_v2_sync_rejects_malformed_blob_rows() {
+        let fixture = Fixture::new();
+        fixture.create();
+        let blob = json!({"schemaVersion":2,"id":"c".repeat(64),"gameId":"game","mime":"image/png","object":"d".repeat(64),"size":1});
+        let cases = [
+            ("size", json!(0)),
+            ("size", json!(1.5)),
+            ("object", json!("A".repeat(64))),
+            ("mime", json!("text/html")),
+        ];
+        for (key, value) in cases {
+            let mut invalid = blob.clone();
+            invalid[key] = value;
+            let db = open(&fixture.0).unwrap();
+            db.execute(
+                "INSERT OR REPLACE INTO blobs(id,game_id,value) VALUES(?1,'game',?2)",
+                params![invalid["id"].as_str().unwrap(), invalid.to_string()],
+            )
+            .unwrap();
+            drop(db);
+            let read = json!({"kind":"read","gameId":"game","includeHistory":true});
+            assert!(
+                fixture
+                    .request(json!({"kind":"sync","request":read,"known":[]}))
+                    .is_err()
+            );
+            let db = open(&fixture.0).unwrap();
+            let aliases: i64 = db
+                .query_row(
+                    "SELECT count(*) FROM runtime_assets WHERE blob_id=?1",
+                    [invalid["id"].as_str().unwrap()],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(aliases, 0);
+            db.execute(
+                "DELETE FROM blobs WHERE id=?1",
+                [invalid["id"].as_str().unwrap()],
+            )
+            .unwrap();
+        }
+    }
+
+    #[test]
+    fn media_v2_open_media_refuses_another_game_id() {
+        let fixture = Fixture::new();
+        fixture.create();
+        let mut identity = crate::media_identity::MediaIdentity::new("game", "image/png");
+        identity.update(b"hello").unwrap();
+        let identity = identity.digest();
+        let id = identity.blob_id.as_str();
+        let blob = json!({"schemaVersion":2,"id":id,"gameId":"game","mime":"image/png","object":identity.raw,"size":5});
+        let db = open(&fixture.0).unwrap();
+        db.execute(
+            "INSERT INTO blobs(id,game_id,value) VALUES(?1,'game',?2)",
+            params![id, blob.to_string()],
+        )
+        .unwrap();
+        db.execute("INSERT INTO games(id,value) VALUES('other','{}')", [])
+            .unwrap();
+        db.execute("INSERT INTO media_objects(id,game_id,state,size,chunk_size,sha256,crc32,created_at) VALUES('object','game','ready',5,1048576,?1,?2,'now')", params![identity.raw, identity.crc]).unwrap();
+        db.execute(
+            "INSERT INTO media_chunks VALUES('object',0,?1,?2)",
+            params![identity.raw, b"hello".as_slice()],
+        )
+        .unwrap();
+        assert_eq!(
+            crate::runtime_content::open_media(&db, "game", id)
+                .unwrap()
+                .unwrap()
+                .size,
+            5
+        );
+        assert!(
+            crate::runtime_content::open_media(&db, "other", id)
+                .unwrap()
+                .is_none()
+        );
+        // A forged alias in the other game still resolves only through that game's blobs.
+        db.execute(
+            "INSERT INTO runtime_assets(game_id,hash,blob_id) VALUES('other',?1,?1)",
+            [id],
+        )
+        .unwrap();
+        assert!(
+            crate::runtime_content::read_asset(&db, "other", id)
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            crate::runtime_content::open_media(&db, "other", id)
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            fixture
+                .request(json!({"kind":"asset","gameId":"other","hash":id}))
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn v1_blob_references_stay_verbatim_in_sqlite_reads() {
+        let fixture = Fixture::new();
+        fixture.create();
+        let legacy: Value = serde_json::from_str(include_str!(
+            "../../src/lib/games/state/fixtures/legacy-content.json"
+        ))
+        .unwrap();
+        let blob = legacy["blob"].clone();
+        let id = blob["id"].as_str().unwrap();
+        let reference = json!(format!("helia-asset:{id}"));
+        let mut current = fixture.read()["records"][0]["value"].clone();
+        current["resources"] =
+            json!({"portrait":{"name":"images/portrait.png","mime":"image/png","data":reference}});
+        let db = open(&fixture.0).unwrap();
+        db.execute(
+            "UPDATE games SET value=?1 WHERE id='game'",
+            [current.to_string()],
+        )
+        .unwrap();
+        db.execute(
+            "INSERT INTO blobs(id,game_id,value) VALUES(?1,'game',?2)",
+            params![id, blob.to_string()],
+        )
+        .unwrap();
+        drop(db);
+        let read = json!({"kind":"read","gameId":"game","includeHistory":true});
+        let synced = fixture
+            .request(json!({"kind":"sync","request":read,"known":[]}))
+            .unwrap();
+        assert_eq!(
+            synced["records"][0]["parts"]["resources"]["value"]["portrait"]["data"],
+            reference
+        );
+        let playing = fixture.request(json!({"kind":"sync","known":[],"request":{"kind":"read","gameId":"game","includeHistory":true,"play":true}})).unwrap();
+        assert_eq!(
+            playing["records"][0]["parts"]["resources"]["value"]["portrait"]["data"],
+            reference
+        );
+        let db = open(&fixture.0).unwrap();
+        // The v1 reference is never turned into inline bytes and the blob row is untouched.
+        let blobs: i64 = db
+            .query_row("SELECT count(*) FROM blobs", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(blobs, 1);
+        let saved: String = db
+            .query_row("SELECT value FROM blobs WHERE id=?1", [id], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(serde_json::from_str::<Value>(&saved).unwrap(), blob);
+    }
+
     #[test]
     fn sync_game_patches_preserve_media_and_the_version_guard() {
         let fixture = Fixture::new();

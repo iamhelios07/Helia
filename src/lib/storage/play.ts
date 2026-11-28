@@ -9,6 +9,9 @@ export function playValue(
 ): unknown {
 	const value = record(input);
 	if (table === 'blobs') {
+		if (value.schemaVersion === 2) {
+			return input;
+		}
 		return { ...value, data: 'helia-asset:' + asset(String(value.mime), String(value.data)) };
 	}
 	if (table !== 'games' && table !== 'snapshots') {

@@ -76,10 +76,16 @@ fn project(
     } else if row["table"] == "games" {
         if let Some(resources) = value["resources"].as_object_mut() {
             for resource in resources.values_mut() {
+                if resource["data"]
+                    .as_str()
+                    .is_some_and(|data| data.starts_with("helia-asset:"))
+                {
+                    continue;
+                }
                 resource["data"] = json!({"asset":hash(&resource["data"])});
             }
         }
-    } else if row["table"] == "blobs" {
+    } else if row["table"] == "blobs" && value["schemaVersion"] != 2 {
         value["data"] = json!({"asset":hash(&value["data"])});
     }
     let fields = if row["table"] == "games" {
@@ -151,6 +157,9 @@ fn asset(path: &Path, input: &Value) -> Result<Value, String> {
         .ok_or(ERROR)?;
     let connection = storage::open(path)?;
     if let Some(value) = crate::runtime_content::read_asset(&connection, game_id, fingerprint)? {
+        if value["schemaVersion"] == 2 {
+            return Err("Asset unavailable".into());
+        }
         return Ok(value);
     }
     let game: Option<String> = connection
@@ -162,6 +171,12 @@ fn asset(path: &Path, input: &Value) -> Result<Value, String> {
     let game: Value = serde_json::from_str(&game.ok_or(ERROR)?).map_err(|_| ERROR)?;
     if let Some(resources) = game["resources"].as_object() {
         for resource in resources.values() {
+            if resource["data"]
+                .as_str()
+                .is_some_and(|data| data.starts_with("helia-asset:"))
+            {
+                continue;
+            }
             if hash(&resource["data"]) == fingerprint {
                 return Ok(resource.clone());
             }
@@ -175,6 +190,9 @@ fn asset(path: &Path, input: &Value) -> Result<Value, String> {
         .map_err(|_| ERROR)?
     {
         let value: Value = serde_json::from_str(&text.map_err(|_| ERROR)?).map_err(|_| ERROR)?;
+        if value["schemaVersion"] == 2 {
+            continue;
+        }
         if hash(&value["data"]) == fingerprint {
             return Ok(value);
         }

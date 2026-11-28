@@ -1,13 +1,18 @@
 ﻿<script lang="ts">
+	import { isDesktopBuild } from '#lib/platform/index.js';
+
 	import { parseResources } from '../../resources.js';
+	import { assetURL } from '../../runtime-content.js';
 	import AssetExplorer from './AssetExplorer.svelte';
 	let {
 		source,
+		gameId,
 		selectedId,
 		disabled = false,
 		onchange
 	}: {
 		source: string;
+		gameId?: string;
 		selectedId?: string;
 		disabled?: boolean;
 		onchange: (source: string) => void;
@@ -25,6 +30,14 @@
 	});
 	let id = $derived(selectedId ?? localSelected);
 	let asset = $derived(id ? parsed.resources?.[id] : undefined);
+	let uploaded = $derived(asset?.data.startsWith('helia-asset:') ?? false);
+	// The desktop v2 media scheme is decided in S1. Never hydrate it through asset IPC.
+	let preview = $derived.by(() => {
+		if (!asset || (uploaded && (!gameId || isDesktopBuild))) {
+			return undefined;
+		}
+		return uploaded ? assetURL(gameId!, asset.data) : asset.data;
+	});
 </script>
 
 <section class="asset-editor" aria-label="에셋 미리보기">
@@ -51,20 +64,32 @@
 			</div>
 		</header>
 		<div class="preview">
-			{#if asset.mime.startsWith('image/')}<img src={asset.data} alt={asset.name} />
+			{#if !preview}<p>업로드된 파일</p>
+			{:else if asset.mime.startsWith('image/')}<img src={preview} alt={asset.name} />
 			{:else if asset.mime.startsWith('audio/')}<audio
 					controls
 					preload="none"
-					src={asset.data}
+					src={preview}
 					aria-label={asset.name}
 				></audio>
-			{:else}<video controls preload="none" src={asset.data} aria-label={asset.name}
+			{:else}<video controls preload="none" src={preview} aria-label={asset.name}
 					><track kind="captions" label="자막 없음" src="data:text/vtt,WEBVTT" /></video
 				>{/if}
 		</div>
 		<div class="metadata">
-			<label>파일 경로<input aria-label="에셋 파일 경로" value={asset.name} readonly /></label>
-			<p>{asset.mime} · {Math.ceil((asset.data.split(',')[1].length * 0.75) / 1024)} KiB</p>
+			<label
+				>파일 경로<input
+					aria-label="에셋 파일 경로"
+					aria-describedby="asset-file-details"
+					value={asset.name}
+					readonly
+				/></label
+			>
+			<p id="asset-file-details">
+				{asset.mime} · {uploaded
+					? '업로드된 파일'
+					: `${Math.ceil((asset.data.split(',')[1].length * 0.75) / 1024)} KiB`}
+			</p>
 			<label
 				>코드에서 사용<input
 					aria-label="에셋 코드 참조"

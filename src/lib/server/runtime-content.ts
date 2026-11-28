@@ -87,6 +87,20 @@ export class RuntimeContent {
 	constructor(private db: Database.Database) {
 		db.exec(RUNTIME_SCHEMA);
 	}
+	/** Index a validated game-owned v2 blob without reading or copying its bytes. */
+	alias(gameId: string, blobId: string): string {
+		const row = this.db
+			.prepare('SELECT value FROM blobs WHERE game_id=? AND id=?')
+			.get(gameId, blobId) as { value: string } | undefined;
+		const blob = parseBlob(row ? JSON.parse(row.value) : null);
+		if (blob.schemaVersion !== 2 || blob.id !== blobId || blob.gameId !== gameId) {
+			throw Error('Invalid media alias');
+		}
+		this.db
+			.prepare('INSERT OR IGNORE INTO runtime_assets (game_id,hash,blob_id) VALUES (?,?,?)')
+			.run(gameId, blob.id, blob.id);
+		return blob.id;
+	}
 	artifact(gameId: string, kind: 'logic' | 'ui', value: unknown): string {
 		const hash = runtimeHash([kind, value]);
 		this.db

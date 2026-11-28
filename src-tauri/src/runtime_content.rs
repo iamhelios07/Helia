@@ -285,6 +285,19 @@ pub(crate) fn project(
 ) -> Result<Value, String> {
     let mut value = input.clone();
     if table == "blobs" {
+        if input["schemaVersion"] == 2 {
+            if !storage::valid_blob(input) || input["gameId"].as_str() != Some(game_id) {
+                return Err(ERROR.into());
+            }
+            let id = input["id"].as_str().ok_or(ERROR)?;
+            connection
+                .execute(
+                    "INSERT OR IGNORE INTO runtime_assets (game_id,hash,blob_id) VALUES (?1,?2,?2)",
+                    params![game_id, id],
+                )
+                .map_err(|_| ERROR)?;
+            return Ok(value);
+        }
         value["data"] = json!(
             "helia-asset:".to_owned()
                 + &asset(

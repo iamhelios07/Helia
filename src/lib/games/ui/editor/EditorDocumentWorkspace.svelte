@@ -52,6 +52,7 @@
 					</div>
 				{:else if editor.activeDocument.startsWith('asset:')}
 					<AssetEditor
+						gameId={editor.gameId}
 						source={editor.draft.documents.assets}
 						selectedId={editor.activeDocument.slice(6)}
 						disabled={editor.editingBlocked}

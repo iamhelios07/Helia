@@ -42,6 +42,9 @@ export function storageSync(store: Store, input: unknown): StorageReply | SyncRe
 	const runtime = new RuntimeContent(store.connection);
 	const gameId = String(record(request).gameId ?? '');
 	const records: SyncRecord[] = reply.records.map(({ value, ...identity }) => {
+		if (identity.table === 'blobs' && isV2Blob(record(value))) {
+			runtime.alias(identity.gameId, identity.id);
+		}
 		const lean = playing
 			? playValue(
 					identity.table,
@@ -49,15 +52,8 @@ export function storageSync(store: Store, input: unknown): StorageReply | SyncRe
 					(kind, data) => runtime.artifact(gameId, kind, data),
 					(mime, data) => runtime.asset(gameId, mime, data)
 				)
-			: syncAssets(value, identity.table, (data) => ({
-					asset: runtime.asset(
-						identity.gameId,
-						String(
-							(value as { mime?: string }).mime ??
-								(typeof data === 'string' ? data.slice(5, data.indexOf(';')) : '')
-						),
-						String(data)
-					)
+			: syncAssets(value, identity.table, (data, mime) => ({
+					asset: runtime.asset(identity.gameId, mime, String(data))
 				}));
 		const fields = identity.table === 'games' ? record(lean) : { value: lean };
 		const parts = Object.fromEntries(

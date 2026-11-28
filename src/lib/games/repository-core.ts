@@ -42,7 +42,12 @@ import {
 	validateState
 } from '#lib/games/state/schema.js';
 import { parseGameState, sameValue } from '#lib/games/state/value.js';
-import { storedRecord, type StorageRequest, type StorageTransport } from '#lib/storage/protocol.js';
+import {
+	parseBlob,
+	storedRecord,
+	type StorageRequest,
+	type StorageTransport
+} from '#lib/storage/protocol.js';
 import { useStorage, type StorageUnit } from '#lib/storage/unit.js';
 
 import type { AgentWorkspaceResult } from './ai/loop.js';
@@ -223,14 +228,15 @@ function contentSnapshot(unit: StorageUnit, gameId: string, game: Game) {
 	}
 	return snapshot;
 }
-/** The resources a snapshot exposes, resolved back to portable data URIs. */
+/** Snapshot resources retain v2 references; legacy blobs retain their inline data. */
 function snapshotResources(unit: StorageUnit, snapshotId: string): GameResources {
 	const result: GameResources = {};
 	for (const reference of unit
 		.all('snapshot_resources')
 		.map(parseSnapshotResource)
 		.filter((row) => row.snapshotId === snapshotId)) {
-		const blob = unit.get('blobs', reference.blobId) as { mime: string; data: string } | undefined;
+		const saved = unit.get('blobs', reference.blobId);
+		const blob = saved === undefined ? undefined : parseBlob(saved);
 		if (!blob) {
 			const current = gameIn(unit, reference.gameId).resources?.[reference.assetId];
 			if (!current) {
@@ -242,7 +248,11 @@ function snapshotResources(unit: StorageUnit, snapshotId: string): GameResources
 				data: 'helia-asset:' + reference.blobId
 			};
 		} else {
-			result[reference.assetId] = { name: reference.name, mime: blob.mime, data: blob.data };
+			result[reference.assetId] = {
+				name: reference.name,
+				mime: blob.mime,
+				data: blob.schemaVersion === 2 ? 'helia-asset:' + blob.id : blob.data
+			};
 		}
 	}
 	return result;
