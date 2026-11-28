@@ -142,6 +142,15 @@ export class RuntimeContent {
 			.get(gameId, hash) as { value: string } | undefined;
 		return row ? (JSON.parse(row.value) as { mime: string; data: string }) : null;
 	}
+	/** Check the version without loading inline v1 data into JavaScript or decoding it. */
+	isV2Media(gameId: string, hash: string): boolean {
+		const row = this.db
+			.prepare(
+				"SELECT json_extract(value,'$.schemaVersion') AS version FROM blobs WHERE game_id=? AND id=COALESCE((SELECT blob_id FROM runtime_assets WHERE game_id=? AND hash=?),?)"
+			)
+			.get(gameId, gameId, hash, hash) as { version: unknown } | undefined;
+		return row?.version === 2;
+	}
 	/** Resolve a runtime alias or blob ID without materializing v2 bytes. */
 	openMedia(gameId: string, hash: string): OpenMedia | null {
 		const row = this.db

@@ -107,6 +107,10 @@ function expandGamePatches(store: Store, input: unknown): unknown {
 	return { ...request, records };
 }
 
+function isV2Blob(blob: object): boolean {
+	return 'schemaVersion' in blob && blob.schemaVersion === 2;
+}
+
 /** Resolve immutable media only within its owning installation. */
 export function storageAsset(
 	store: Store,
@@ -114,7 +118,7 @@ export function storageAsset(
 	fingerprint: string
 ): { mime: string; data: string } | null {
 	const indexed = new RuntimeContent(store.connection).readAsset(gameId, fingerprint);
-	if (indexed) {
+	if (indexed && !isV2Blob(indexed)) {
 		return indexed;
 	}
 	const game = store.connection.prepare('SELECT value FROM games WHERE id=?').get(gameId) as
@@ -132,7 +136,10 @@ export function storageAsset(
 		value: string;
 	}[];
 	for (const blob of blobs) {
-		const item = JSON.parse(blob.value) as { mime: string; data: string };
+		const item = JSON.parse(blob.value) as { schemaVersion?: number; mime: string; data: string };
+		if (isV2Blob(item)) {
+			continue;
+		}
 		if (hash(item.data) !== fingerprint) {
 			continue;
 		}
