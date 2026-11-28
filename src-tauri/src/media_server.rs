@@ -7,12 +7,12 @@
 use crate::runtime_content::{self, MediaChunks, OpenMedia};
 use rusqlite::{Connection, OpenFlags};
 use std::io::{ErrorKind, Read, Write};
-use std::net::{Ipv4Addr, TcpListener, TcpStream};
+use std::net::{Ipv4Addr, Shutdown, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::thread::{self, JoinHandle};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 const MAX_CONCURRENT_CONNECTIONS: usize = 16;
 const MAX_REQUEST_HEAD_BYTES: usize = 16 * 1024;
@@ -21,6 +21,9 @@ const WRITE_SLICE_BYTES: usize = 64 * 1024;
 const READ_TIMEOUT: Duration = Duration::from_secs(5);
 const WRITE_TIMEOUT: Duration = Duration::from_secs(30);
 const BUSY_WRITE_TIMEOUT: Duration = Duration::from_millis(50);
+const ACCEPT_POLL_INTERVAL: Duration = Duration::from_millis(10);
+const IO_POLL_INTERVAL: Duration = Duration::from_millis(100);
+const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(6);
 
 const BUSY_RESPONSE: &[u8] = b"HTTP/1.1 503 Service Unavailable\r\n\
 Content-Length: 0\r\n\
@@ -29,8 +32,7 @@ Cache-Control: no-store\r\n\
 X-Content-Type-Options: nosniff\r\n\
 Connection: close\r\n\r\n";
 
-/// A bound loopback media listener ready to publish its base URL to the main frame
-/// before the database path is initialized in Tauri `setup`.
+/// A private listener configuration; only a successfully started handle publishes URLs.
 #[cfg_attr(not(any(feature = "desktop", test)), allow(dead_code))]
 pub struct MediaServer {
     listener: TcpListener,
@@ -55,8 +57,56 @@ struct ServerConfig {
     db_path: PathBuf,
     expected_host: String,
     token: String,
+    shutdown: Arc<AtomicBool>,
+    header_timeout: Duration,
     #[cfg(test)]
     chunk_reads: Arc<AtomicUsize>,
+}
+
+struct Worker {
+    socket: TcpStream,
+    thread: JoinHandle<()>,
+}
+
+/// Preserve the write inactivity timeout while checking cancellation between waits.
+struct SocketWriter<'a> {
+    stream: &'a mut TcpStream,
+    shutdown: &'a AtomicBool,
+}
+
+impl<'a> SocketWriter<'a> {
+    fn new(stream: &'a mut TcpStream, shutdown: &'a AtomicBool) -> std::io::Result<Self> {
+        // Nonblocking writes report an exact byte count. Retrying timed-out blocking
+        // writes can duplicate bytes on Windows when the OS already sent part of them.
+        stream.set_nonblocking(true)?;
+        Ok(Self { stream, shutdown })
+    }
+}
+
+impl Write for SocketWriter<'_> {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        let deadline = Instant::now() + WRITE_TIMEOUT;
+        loop {
+            if self.shutdown.load(Ordering::Acquire) {
+                return Err(std::io::Error::new(
+                    ErrorKind::ConnectionAborted,
+                    "Media server stopped",
+                ));
+            }
+            match self.stream.write(bytes) {
+                Err(error)
+                    if error.kind() == ErrorKind::WouldBlock && Instant::now() < deadline =>
+                {
+                    thread::sleep(ACCEPT_POLL_INTERVAL);
+                }
+                result => return result,
+            }
+        }
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.stream.flush()
+    }
 }
 
 struct ActiveGuard(Arc<AtomicUsize>);
@@ -117,7 +167,7 @@ enum RangeOutcome {
 
 #[cfg_attr(not(any(feature = "desktop", test)), allow(dead_code))]
 impl MediaServer {
-    pub fn bind() -> Result<Self, String> {
+    fn bind() -> Result<Self, String> {
         Self::bind_with_limit(MAX_CONCURRENT_CONNECTIONS)
     }
 
@@ -140,21 +190,78 @@ impl MediaServer {
         })
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub fn port(&self) -> u16 {
-        self.port
+    pub fn start(db_path: PathBuf) -> Result<MediaServerHandle, String> {
+        Self::start_with_binder(db_path, Self::bind)
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub fn token(&self) -> &str {
-        &self.token
+    fn start_with_binder(
+        db_path: PathBuf,
+        bind: impl FnOnce() -> Result<Self, String>,
+    ) -> Result<MediaServerHandle, String> {
+        bind()?.start_bound(db_path, READ_TIMEOUT)
     }
 
+    fn start_bound(
+        self,
+        db_path: PathBuf,
+        header_timeout: Duration,
+    ) -> Result<MediaServerHandle, String> {
+        self.start_with_spawner(db_path, header_timeout, |job| {
+            thread::Builder::new()
+                .name("helia-media-accept".into())
+                .spawn(job)
+        })
+    }
+
+    fn start_with_spawner(
+        self,
+        db_path: PathBuf,
+        header_timeout: Duration,
+        spawn: impl FnOnce(Box<dyn FnOnce() + Send>) -> std::io::Result<JoinHandle<()>>,
+    ) -> Result<MediaServerHandle, String> {
+        self.listener
+            .set_nonblocking(true)
+            .map_err(|_| "Could not initialize media listener".to_owned())?;
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let active = Arc::new(AtomicUsize::new(0));
+        #[cfg(test)]
+        let chunk_reads = Arc::new(AtomicUsize::new(0));
+        let config = Arc::new(ServerConfig {
+            db_path,
+            expected_host: format!("127.0.0.1:{}", self.port),
+            token: self.token.clone(),
+            shutdown: Arc::clone(&shutdown),
+            header_timeout,
+            #[cfg(test)]
+            chunk_reads: Arc::clone(&chunk_reads),
+        });
+        let loop_shutdown = Arc::clone(&shutdown);
+        let loop_active = Arc::clone(&active);
+        let limit = self.max_connections;
+        let listener = self.listener;
+        let accept_thread = spawn(Box::new(move || {
+            accept_loop(listener, config, loop_shutdown, loop_active, limit)
+        }))
+        .map_err(|_| "Could not start media server".to_owned())?;
+        Ok(MediaServerHandle {
+            port: self.port,
+            token: self.token,
+            shutdown,
+            active,
+            #[cfg(test)]
+            chunk_reads,
+            accept_thread: Some(accept_thread),
+        })
+    }
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+impl MediaServerHandle {
     pub fn base_url(&self) -> String {
         format!("http://127.0.0.1:{}/{}", self.port, self.token)
     }
 
-    /// Exposes the loopback media base URL to the main window only.
+    /// Only a successfully started server can publish its URL.
     pub fn initialization_script(&self) -> String {
         format!(
             r#";(() => {{
@@ -168,40 +275,6 @@ impl MediaServer {
         )
     }
 
-    pub fn start(self, db_path: PathBuf) -> MediaServerHandle {
-        let shutdown = Arc::new(AtomicBool::new(false));
-        let active = Arc::new(AtomicUsize::new(0));
-        #[cfg(test)]
-        let chunk_reads = Arc::new(AtomicUsize::new(0));
-        let config = Arc::new(ServerConfig {
-            db_path,
-            expected_host: format!("127.0.0.1:{}", self.port),
-            token: self.token.clone(),
-            #[cfg(test)]
-            chunk_reads: Arc::clone(&chunk_reads),
-        });
-        let loop_shutdown = Arc::clone(&shutdown);
-        let loop_active = Arc::clone(&active);
-        let limit = self.max_connections;
-        let listener = self.listener;
-        let accept_thread = thread::Builder::new()
-            .name("helia-media-accept".into())
-            .spawn(move || accept_loop(listener, config, loop_shutdown, loop_active, limit))
-            .ok();
-        MediaServerHandle {
-            port: self.port,
-            token: self.token,
-            shutdown,
-            active,
-            #[cfg(test)]
-            chunk_reads,
-            accept_thread,
-        }
-    }
-}
-
-#[cfg_attr(not(test), allow(dead_code))]
-impl MediaServerHandle {
     pub fn port(&self) -> u16 {
         self.port
     }
@@ -223,10 +296,6 @@ impl MediaServerHandle {
 impl Drop for MediaServerHandle {
     fn drop(&mut self) {
         self.shutdown.store(true, Ordering::SeqCst);
-        let _ = TcpStream::connect_timeout(
-            &(Ipv4Addr::LOCALHOST, self.port).into(),
-            Duration::from_millis(100),
-        );
         if let Some(handle) = self.accept_thread.take() {
             let _ = handle.join();
         }
@@ -240,37 +309,97 @@ fn accept_loop(
     active: Arc<AtomicUsize>,
     limit: usize,
 ) {
-    for incoming in listener.incoming() {
-        if shutdown.load(Ordering::Acquire) {
-            break;
+    let mut workers = Vec::new();
+    while !shutdown.load(Ordering::Acquire) {
+        reap_workers(&mut workers);
+        let (mut stream, _) = match listener.accept() {
+            Ok(incoming) => incoming,
+            Err(_) => {
+                thread::sleep(ACCEPT_POLL_INTERVAL);
+                continue;
+            }
+        };
+        if stream.set_nonblocking(false).is_err() {
+            continue;
         }
-        let Ok(mut stream) = incoming else {
+        let Some(guard) = ActiveGuard::try_acquire(&active, limit) else {
+            reject_busy(&mut stream, &shutdown);
             continue;
         };
-        let Some(guard) = ActiveGuard::try_acquire(&active, limit) else {
-            let _ = stream.set_write_timeout(Some(BUSY_WRITE_TIMEOUT));
-            let _ = stream.write_all(BUSY_RESPONSE);
-            let _ = stream.shutdown(std::net::Shutdown::Write);
-            let _ = stream.set_read_timeout(Some(BUSY_WRITE_TIMEOUT));
-            let mut drain = [0u8; 512];
-            while matches!(stream.read(&mut drain), Ok(n) if n > 0) {}
+        let Ok(socket) = stream.try_clone() else {
             continue;
         };
         let worker_config = Arc::clone(&config);
-        let _ = thread::Builder::new()
+        if let Ok(worker) = thread::Builder::new()
             .name("helia-media-worker".into())
             .spawn(move || {
                 let _guard = guard;
                 handle_connection(stream, &worker_config);
+            })
+        {
+            workers.push(Worker {
+                socket,
+                thread: worker,
             });
+        }
     }
+    for worker in &workers {
+        let _ = worker.socket.shutdown(Shutdown::Both);
+    }
+    let deadline = Instant::now() + SHUTDOWN_TIMEOUT;
+    while !workers.is_empty() && Instant::now() < deadline {
+        reap_workers(&mut workers);
+        if !workers.is_empty() {
+            thread::sleep(ACCEPT_POLL_INTERVAL);
+        }
+    }
+    // A stuck OS/SQLite operation must not block application shutdown indefinitely.
+    if !workers.is_empty() {
+        eprintln!("Media workers did not finish before the shutdown deadline");
+    }
+}
+
+fn reap_workers(workers: &mut Vec<Worker>) {
+    let mut index = 0;
+    while index < workers.len() {
+        if workers[index].thread.is_finished() {
+            let worker = workers.swap_remove(index);
+            let _ = worker.thread.join();
+        } else {
+            index += 1;
+        }
+    }
+}
+
+fn reject_busy(stream: &mut TcpStream, shutdown: &AtomicBool) {
+    let _ = stream.set_write_timeout(Some(BUSY_WRITE_TIMEOUT));
+    let _ = stream.write_all(BUSY_RESPONSE);
+    let _ = stream.shutdown(Shutdown::Write);
+    // Briefly drain ordinary request bytes to preserve the 503 instead of a TCP reset.
+    let deadline = Instant::now() + BUSY_WRITE_TIMEOUT;
+    let mut remaining = MAX_REQUEST_HEAD_BYTES;
+    let mut drain = [0u8; 512];
+    while remaining > 0 && !shutdown.load(Ordering::Acquire) {
+        let Some(timeout) = deadline.checked_duration_since(Instant::now()) else {
+            break;
+        };
+        if stream.set_read_timeout(Some(timeout)).is_err() {
+            break;
+        }
+        match stream.read(&mut drain) {
+            Ok(0) | Err(_) => break,
+            Ok(count) => remaining = remaining.saturating_sub(count),
+        }
+    }
+    let _ = stream.shutdown(Shutdown::Both);
 }
 
 fn handle_connection(mut stream: TcpStream, config: &ServerConfig) {
     let _ = stream.set_nodelay(true);
-    let _ = stream.set_read_timeout(Some(READ_TIMEOUT));
-    let _ = stream.set_write_timeout(Some(WRITE_TIMEOUT));
-    let head = match read_request_head(&mut stream) {
+    if stream.set_write_timeout(Some(IO_POLL_INTERVAL)).is_err() {
+        return;
+    }
+    let head = match read_request_head(&mut stream, config.header_timeout, &config.shutdown) {
         Ok(Some(bytes)) => bytes,
         Ok(None) => return,
         Err(ParseError::HeaderTooLarge) => {
@@ -305,6 +434,9 @@ fn handle_connection(mut stream: TcpStream, config: &ServerConfig) {
             return;
         }
     };
+    if config.shutdown.load(Ordering::Acquire) {
+        return;
+    }
     let Some((game_id, hash)) = parse_media_path(&request.target, &config.token) else {
         send_empty(&mut stream, "404 Not Found", &[]);
         return;
@@ -313,6 +445,9 @@ fn handle_connection(mut stream: TcpStream, config: &ServerConfig) {
         send_empty(&mut stream, "404 Not Found", &[]);
         return;
     };
+    if config.shutdown.load(Ordering::Acquire) {
+        return;
+    }
     let Ok(Some(media)) = runtime_content::open_media(&connection, game_id, hash) else {
         send_empty(&mut stream, "404 Not Found", &[]);
         return;
@@ -320,10 +455,28 @@ fn handle_connection(mut stream: TcpStream, config: &ServerConfig) {
     serve_open_media(&mut stream, &request, &media, config);
 }
 
-fn read_request_head(stream: &mut TcpStream) -> Result<Option<Vec<u8>>, ParseError> {
+fn read_request_head(
+    stream: &mut TcpStream,
+    timeout: Duration,
+    shutdown: &AtomicBool,
+) -> Result<Option<Vec<u8>>, ParseError> {
+    let deadline = Instant::now() + timeout;
     let mut buffer = Vec::with_capacity(1024);
     let mut scratch = [0u8; 1024];
     loop {
+        if shutdown.load(Ordering::Acquire) {
+            return Ok(None);
+        }
+        let Some(remaining) = deadline.checked_duration_since(Instant::now()) else {
+            return Ok(None);
+        };
+        if remaining.is_zero()
+            || stream
+                .set_read_timeout(Some(remaining.min(IO_POLL_INTERVAL)))
+                .is_err()
+        {
+            return Ok(None);
+        }
         let count = match stream.read(&mut scratch) {
             Ok(0) => {
                 return if buffer.is_empty() {
@@ -334,8 +487,14 @@ fn read_request_head(stream: &mut TcpStream) -> Result<Option<Vec<u8>>, ParseErr
             }
             Ok(n) => n,
             Err(error) if error.kind() == ErrorKind::Interrupted => continue,
+            Err(error) if matches!(error.kind(), ErrorKind::TimedOut | ErrorKind::WouldBlock) => {
+                continue;
+            }
             Err(_) => return Ok(None),
         };
+        if Instant::now() >= deadline {
+            return Ok(None);
+        }
         if buffer.len().saturating_add(count) > MAX_REQUEST_HEAD_BYTES {
             return Err(ParseError::HeaderTooLarge);
         }
@@ -527,7 +686,11 @@ fn parse_byte_range(header: Option<&str>, size: u64) -> RangeOutcome {
     let Some(trimmed) = header.map(str::trim) else {
         return RangeOutcome::Full;
     };
-    if trimmed.len() < 6 || !trimmed[..6].eq_ignore_ascii_case("bytes=") {
+    if !trimmed
+        .as_bytes()
+        .get(..6)
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case(b"bytes="))
+    {
         return RangeOutcome::Full;
     }
     let spec = &trimmed[6..];
@@ -600,7 +763,7 @@ fn serve_open_media(
     config: &ServerConfig,
 ) {
     if media.object_id.is_none() {
-        serve_v1_media(stream, request, media);
+        serve_v1_media(stream, request, media, config);
         return;
     }
     if request.if_none_match.as_deref() == Some(media.etag.as_str()) {
@@ -658,7 +821,12 @@ Connection: close\r\n\r\n",
     }
 }
 
-fn serve_v1_media(stream: &mut TcpStream, request: &ParsedRequest, media: &OpenMedia<'_>) {
+fn serve_v1_media(
+    stream: &mut TcpStream,
+    request: &ParsedRequest,
+    media: &OpenMedia<'_>,
+    config: &ServerConfig,
+) {
     if request.if_none_match.as_deref() == Some(media.etag.as_str()) {
         let header = format_immutable_head("304 Not Modified", media, false, None, None);
         let _ = stream.write_all(header.as_bytes());
@@ -669,7 +837,9 @@ fn serve_v1_media(stream: &mut TcpStream, request: &ParsedRequest, media: &OpenM
         return;
     }
     if let Ok(chunks) = media.read(0, media.size) {
-        let _ = write_chunks(stream, chunks, || {});
+        if let Ok(mut writer) = SocketWriter::new(stream, &config.shutdown) {
+            let _ = write_chunks(&mut writer, chunks, &config.shutdown, || {});
+        }
     }
 }
 
@@ -712,26 +882,32 @@ fn stream_chunks(stream: &mut TcpStream, chunks: MediaChunks<'_>, config: &Serve
         let _ = config;
         || {}
     };
-    let _ = write_chunks(stream, chunks, on_chunk);
+    if let Ok(mut writer) = SocketWriter::new(stream, &config.shutdown) {
+        let _ = write_chunks(&mut writer, chunks, &config.shutdown, on_chunk);
+    }
 }
 
 fn write_chunks<W: Write, F: FnMut()>(
     writer: &mut W,
-    chunks: MediaChunks<'_>,
+    mut chunks: MediaChunks<'_>,
+    shutdown: &AtomicBool,
     mut on_chunk: F,
 ) -> bool {
-    for chunk in chunks {
+    while !shutdown.load(Ordering::Acquire) {
+        let Some(chunk) = chunks.next() else {
+            return writer.flush().is_ok();
+        };
         on_chunk();
         let Ok(bytes) = chunk else {
             return false;
         };
         for slice in bytes.chunks(WRITE_SLICE_BYTES) {
-            if writer.write_all(slice).is_err() {
+            if shutdown.load(Ordering::Acquire) || writer.write_all(slice).is_err() {
                 return false;
             }
         }
     }
-    writer.flush().is_ok()
+    false
 }
 
 fn send_empty(stream: &mut TcpStream, status: &str, extra: &[(&str, &str)]) {
@@ -853,11 +1029,15 @@ mod tests {
     }
 
     fn send_raw(port: u16, raw: &str) -> HttpResponse {
+        send_raw_bytes(port, raw.as_bytes())
+    }
+
+    fn send_raw_bytes(port: u16, raw: &[u8]) -> HttpResponse {
         let mut stream = TcpStream::connect((Ipv4Addr::LOCALHOST, port)).unwrap();
         stream
             .set_read_timeout(Some(Duration::from_secs(5)))
             .unwrap();
-        stream.write_all(raw.as_bytes()).unwrap();
+        stream.write_all(raw).unwrap();
         let mut response = Vec::new();
         stream.read_to_end(&mut response).unwrap();
         let split = find_header_end(&response).expect("HTTP response should contain header end");
@@ -904,7 +1084,7 @@ mod tests {
     fn rejects_invalid_host_method_token_and_path() {
         let db = test_db();
         let (blob_id, _) = seed_v2(&db, "one", "video/mp4", b"hello world", "obj-1");
-        let server = MediaServer::bind().unwrap().start(db.path.clone());
+        let server = MediaServer::start(db.path.clone()).unwrap();
         let valid_path = format!("/{}/one/{blob_id}", server.token());
 
         // Missing Host -> 400
@@ -968,7 +1148,7 @@ mod tests {
     fn enforces_game_scoping_and_mime_allowlist() {
         let db = test_db();
         let (blob_id, asset_hash) = seed_v2(&db, "one", "image/png", b"png-bytes", "obj-1");
-        let server = MediaServer::bind().unwrap().start(db.path.clone());
+        let server = MediaServer::start(db.path.clone()).unwrap();
 
         // Same game succeeds for both blob_id and asset_hash
         for hash in [&blob_id, &asset_hash] {
@@ -1012,7 +1192,7 @@ mod tests {
         let db = test_db();
         let bytes: Vec<u8> = (0u8..19).collect();
         let (blob_id, asset_hash) = seed_v2(&db, "one", "video/mp4", &bytes, "obj-range");
-        let server = MediaServer::bind().unwrap().start(db.path.clone());
+        let server = MediaServer::start(db.path.clone()).unwrap();
         let path = format!("/{}/one/{asset_hash}", server.token());
 
         // Full 200 + headers
@@ -1148,7 +1328,7 @@ mod tests {
         let size = 2 * 1_048_576 + 17;
         let bytes: Vec<u8> = (0..size).map(|i| (i % 251) as u8).collect();
         let (blob_id, _) = seed_v2(&db, "one", "video/webm", &bytes, "obj-chunks");
-        let server = MediaServer::bind().unwrap().start(db.path.clone());
+        let server = MediaServer::start(db.path.clone()).unwrap();
         let path = format!("/{}/one/{blob_id}", server.token());
 
         // Cross chunk 0 / chunk 1 boundary: reads only 2 chunks (not chunk 2)
@@ -1195,9 +1375,14 @@ mod tests {
             .unwrap();
         let mut reads = 0usize;
         let mut writer = FailingWriter { writes: 0 };
-        let completed = write_chunks(&mut writer, media.read(0, media.size).unwrap(), || {
-            reads += 1;
-        });
+        let completed = write_chunks(
+            &mut writer,
+            media.read(0, media.size).unwrap(),
+            &AtomicBool::new(false),
+            || {
+                reads += 1;
+            },
+        );
         assert!(!completed);
         assert_eq!(
             reads, 1,
@@ -1207,7 +1392,7 @@ mod tests {
         // Real TCP disconnect test on a larger multi-chunk object (32 MiB).
         let big_bytes = vec![7u8; 32 * 1_048_576];
         let (big_id, _) = seed_v2(&db, "one", "video/mp4", &big_bytes, "obj-big");
-        let server = MediaServer::bind().unwrap().start(db.path.clone());
+        let server = MediaServer::start(db.path.clone()).unwrap();
         let mut stream = TcpStream::connect((Ipv4Addr::LOCALHOST, server.port())).unwrap();
         let req = format!(
             "GET /{}/one/{big_id} HTTP/1.1\r\nHost: 127.0.0.1:{}\r\n\r\n",
@@ -1240,7 +1425,8 @@ mod tests {
         let (blob_id, _) = seed_v2(&db, "one", "image/png", b"ok", "obj-cap");
         let server = MediaServer::bind_with_limit(1)
             .unwrap()
-            .start(db.path.clone());
+            .start_bound(db.path.clone(), READ_TIMEOUT)
+            .unwrap();
 
         // Hold the sole connection slot open without sending headers
         let stalled = TcpStream::connect((Ipv4Addr::LOCALHOST, server.port())).unwrap();
@@ -1279,7 +1465,7 @@ mod tests {
         let db = test_db();
         let data = "data:image/png;base64,AAEC/w==";
         let id = runtime_content::asset(&db, "one", "image/png", data).unwrap();
-        let server = MediaServer::bind().unwrap().start(db.path.clone());
+        let server = MediaServer::start(db.path.clone()).unwrap();
         let path = format!("/{}/one/{id}", server.token());
 
         // Loopback serves v1 with exact bytes, ignoring Range/If-Range (matching web U5a)
@@ -1313,8 +1499,9 @@ mod tests {
 
     #[test]
     fn generates_distinct_32_byte_tokens_and_main_frame_init_script() {
-        let first = MediaServer::bind().unwrap();
-        let second = MediaServer::bind().unwrap();
+        let db = test_db();
+        let first = MediaServer::start(db.path.clone()).unwrap();
+        let second = MediaServer::start(db.path.clone()).unwrap();
         assert_eq!(first.token().len(), 64);
         assert!(first.token().bytes().all(|b| b.is_ascii_hexdigit()));
         assert_ne!(first.token(), second.token());
@@ -1323,5 +1510,307 @@ mod tests {
         assert!(script.contains("if (window !== window.top) return;"));
         assert!(script.contains("__HELIA_MEDIA_BASE__"));
         assert!(script.contains(&first.base_url()));
+    }
+
+    fn wait_until(mut ready: impl FnMut() -> bool) {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while !ready() {
+            assert!(
+                Instant::now() < deadline,
+                "Timed out waiting for worker state"
+            );
+            thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    fn drop_with_deadline(server: MediaServerHandle) {
+        let (sender, receiver) = std::sync::mpsc::channel();
+        thread::spawn(move || {
+            drop(server);
+            let _ = sender.send(());
+        });
+        receiver
+            .recv_timeout(Duration::from_secs(1))
+            .expect("Media server shutdown must not wait for clients");
+    }
+
+    fn drip(mut stream: TcpStream, interval: Duration) -> JoinHandle<()> {
+        thread::spawn(move || {
+            stream
+                .set_write_timeout(Some(Duration::from_millis(100)))
+                .unwrap();
+            let deadline = Instant::now() + Duration::from_secs(2);
+            while Instant::now() < deadline {
+                if stream.write_all(b"x").is_err() {
+                    return;
+                }
+                thread::sleep(interval);
+            }
+        })
+    }
+
+    #[test]
+    fn busy_client_cannot_block_accept_or_shutdown_by_continuing_to_write() {
+        let db = test_db();
+        let (id, _) = seed_v2(&db, "one", "image/png", b"ok", "busy-spam");
+        let server = MediaServer::bind_with_limit(1)
+            .unwrap()
+            .start_bound(db.path.clone(), READ_TIMEOUT)
+            .unwrap();
+        let stalled = TcpStream::connect((Ipv4Addr::LOCALHOST, server.port())).unwrap();
+        wait_until(|| server.active_connections() == 1);
+        let mut excess = TcpStream::connect((Ipv4Addr::LOCALHOST, server.port())).unwrap();
+        excess
+            .set_read_timeout(Some(Duration::from_secs(1)))
+            .unwrap();
+        let spam = drip(excess.try_clone().unwrap(), Duration::from_millis(1));
+        let mut response = Vec::new();
+        // A close with unread input may be reported as a reset after the response.
+        let _ = excess.read_to_end(&mut response);
+        assert!(response.starts_with(b"HTTP/1.1 503"));
+        drop(stalled);
+        wait_until(|| server.active_connections() == 0);
+        let started = Instant::now();
+        let response = request(
+            &server,
+            "GET",
+            &format!("/{}/one/{id}", server.token()),
+            &[],
+        );
+        assert_eq!(response.status, 200);
+        assert!(started.elapsed() < Duration::from_millis(500));
+        drop_with_deadline(server);
+        spam.join().unwrap();
+    }
+
+    #[test]
+    fn busy_client_cannot_block_shutdown_while_all_slots_are_occupied() {
+        let db = test_db();
+        let server = MediaServer::bind_with_limit(1)
+            .unwrap()
+            .start_bound(db.path.clone(), READ_TIMEOUT)
+            .unwrap();
+        let _stalled = TcpStream::connect((Ipv4Addr::LOCALHOST, server.port())).unwrap();
+        wait_until(|| server.active_connections() == 1);
+        let mut excess = TcpStream::connect((Ipv4Addr::LOCALHOST, server.port())).unwrap();
+        excess
+            .set_read_timeout(Some(Duration::from_secs(1)))
+            .unwrap();
+        let spam = drip(excess.try_clone().unwrap(), Duration::from_millis(1));
+        let mut status = [0; 12];
+        excess.read_exact(&mut status).unwrap();
+        assert_eq!(&status, b"HTTP/1.1 503");
+        let active = Arc::clone(&server.active);
+        drop_with_deadline(server);
+        assert_eq!(active.load(Ordering::Acquire), 0);
+        spam.join().unwrap();
+    }
+
+    #[test]
+    fn header_deadline_expires_even_when_each_read_receives_a_byte() {
+        let db = test_db();
+        let (id, _) = seed_v2(&db, "one", "image/png", b"ok", "slow-headers");
+        let server = MediaServer::bind_with_limit(1)
+            .unwrap()
+            .start_bound(db.path.clone(), Duration::from_millis(200))
+            .unwrap();
+        let mut client = TcpStream::connect((Ipv4Addr::LOCALHOST, server.port())).unwrap();
+        client
+            .set_read_timeout(Some(Duration::from_secs(1)))
+            .unwrap();
+        let started = Instant::now();
+        let slow = drip(client.try_clone().unwrap(), Duration::from_millis(20));
+        wait_until(|| server.active_connections() == 1);
+        let mut response = Vec::new();
+        if let Err(error) = client.read_to_end(&mut response) {
+            assert_eq!(error.kind(), ErrorKind::ConnectionReset);
+        }
+        assert!(response.is_empty());
+        assert!(started.elapsed() < Duration::from_millis(750));
+        wait_until(|| server.active_connections() == 0);
+        assert_eq!(
+            request(
+                &server,
+                "GET",
+                &format!("/{}/one/{id}", server.token()),
+                &[]
+            )
+            .status,
+            200
+        );
+        slow.join().unwrap();
+    }
+
+    #[test]
+    fn non_ascii_range_and_invalid_utf8_requests_never_panic() {
+        let db = test_db();
+        let (id, _) = seed_v2(&db, "one", "video/mp4", b"full media", "utf8-range");
+        let server = MediaServer::start(db.path.clone()).unwrap();
+        let path = format!("/{}/one/{id}", server.token());
+        for range in ["aaaaa가", "😀😀", "bytes=가-", "aaaaéxx"] {
+            let response = request(&server, "GET", &path, &[("Range", range)]);
+            assert_eq!(response.status, 200);
+            assert_eq!(response.body, b"full media");
+        }
+        let mut invalid = format!(
+            "GET {path} HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nRange: ",
+            server.port()
+        )
+        .into_bytes();
+        invalid.extend_from_slice(b"\xff\r\n\r\n");
+        assert_eq!(send_raw_bytes(server.port(), &invalid).status, 400);
+        assert_eq!(request(&server, "GET", &path, &[]).status, 200);
+    }
+
+    #[test]
+    fn bind_and_thread_start_failures_publish_no_initialization_script() {
+        let db = test_db();
+        let bind_failure =
+            MediaServer::start_with_binder(db.path.clone(), || Err("bind failed".into()));
+        assert!(matches!(&bind_failure, Err(error) if error == "bind failed"));
+        assert!(
+            bind_failure
+                .as_ref()
+                .ok()
+                .map(MediaServerHandle::initialization_script)
+                .is_none()
+        );
+        let bound = MediaServer::bind().unwrap();
+        let port = bound.port;
+        let spawn_failure = bound.start_with_spawner(db.path.clone(), READ_TIMEOUT, |_| {
+            Err(std::io::Error::other("thread creation failed"))
+        });
+        assert!(spawn_failure.is_err());
+        assert!(
+            spawn_failure
+                .as_ref()
+                .ok()
+                .map(MediaServerHandle::initialization_script)
+                .is_none()
+        );
+        assert!(
+            TcpStream::connect((Ipv4Addr::LOCALHOST, port)).is_err(),
+            "Failed start must close the listener"
+        );
+    }
+
+    #[test]
+    fn shutdown_closes_header_and_slow_media_workers_and_their_database_connections() {
+        let db = test_db();
+        let bytes = vec![7; 32 * 1_048_576];
+        let (id, _) = seed_v2(&db, "one", "video/mp4", &bytes, "shutdown-media");
+        let server = MediaServer::start(db.path.clone()).unwrap();
+        let port = server.port();
+        let mut header_client = TcpStream::connect((Ipv4Addr::LOCALHOST, server.port())).unwrap();
+        header_client.write_all(b"GET /").unwrap();
+        wait_until(|| server.active_connections() == 1);
+        let mut media_client = TcpStream::connect((Ipv4Addr::LOCALHOST, server.port())).unwrap();
+        media_client
+            .set_read_timeout(Some(Duration::from_secs(1)))
+            .unwrap();
+        media_client
+            .write_all(
+                format!(
+                    "GET /{}/one/{id} HTTP/1.1\r\nHost: 127.0.0.1:{}\r\n\r\n",
+                    server.token(),
+                    server.port()
+                )
+                .as_bytes(),
+            )
+            .unwrap();
+        let mut first = [0; 256];
+        assert!(media_client.read(&mut first).unwrap() > 0);
+        wait_until(|| server.chunk_reads() > 0 && server.active_connections() == 2);
+        let active = Arc::clone(&server.active);
+        let reads = Arc::clone(&server.chunk_reads);
+        drop_with_deadline(server);
+        assert_eq!(
+            active.load(Ordering::Acquire),
+            0,
+            "Workers must release DB connections before shutdown completes"
+        );
+        let stopped_at = reads.load(Ordering::Acquire);
+        assert!(
+            stopped_at < 32,
+            "Slow client must not cause the remaining object to be read"
+        );
+        header_client
+            .set_read_timeout(Some(Duration::from_millis(100)))
+            .unwrap();
+        assert_eq!(header_client.read(&mut first).unwrap(), 0);
+        db.execute("UPDATE games SET value='{}' WHERE id='one'", [])
+            .unwrap();
+        assert!(TcpStream::connect((Ipv4Addr::LOCALHOST, port)).is_err());
+    }
+
+    #[test]
+    fn media_client_can_resume_after_multiple_write_poll_intervals() {
+        let db = test_db();
+        let bytes = vec![7; 8 * 1_048_576];
+        let (id, _) = seed_v2(&db, "one", "video/mp4", &bytes, "paused-media");
+        let server = MediaServer::start(db.path.clone()).unwrap();
+        let mut client = TcpStream::connect((Ipv4Addr::LOCALHOST, server.port())).unwrap();
+        client
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        client
+            .write_all(
+                format!(
+                    "GET /{}/one/{id} HTTP/1.1\r\nHost: 127.0.0.1:{}\r\n\r\n",
+                    server.token(),
+                    server.port()
+                )
+                .as_bytes(),
+            )
+            .unwrap();
+        wait_until(|| server.chunk_reads() > 0);
+        thread::sleep(IO_POLL_INTERVAL * 4);
+        assert_eq!(server.active_connections(), 1);
+        let mut response = Vec::new();
+        client.read_to_end(&mut response).unwrap();
+        let split = find_header_end(&response).unwrap();
+        assert!(response.starts_with(b"HTTP/1.1 200"));
+        assert_eq!(response.len() - split - 4, bytes.len());
+        assert!(
+            &response[split + 4..] == bytes.as_slice(),
+            "Media bytes must match after a pause"
+        );
+    }
+
+    #[test]
+    fn cancelled_stream_does_not_read_another_database_chunk() {
+        let db = test_db();
+        let (id, _) = seed_v2(
+            &db,
+            "one",
+            "video/mp4",
+            &vec![7; 2 * 1_048_576],
+            "cancel-chunks",
+        );
+        let media = runtime_content::open_media(&db, "one", &id)
+            .unwrap()
+            .unwrap();
+        let shutdown = AtomicBool::new(true);
+        let mut reads = 0;
+        let mut writer = Vec::new();
+        assert!(!write_chunks(
+            &mut writer,
+            media.read(0, media.size).unwrap(),
+            &shutdown,
+            || reads += 1
+        ));
+        assert_eq!(reads, 0);
+        shutdown.store(false, Ordering::Release);
+        assert!(!write_chunks(
+            &mut writer,
+            media.read(0, media.size).unwrap(),
+            &shutdown,
+            || {
+                reads += 1;
+                shutdown.store(true, Ordering::Release);
+            }
+        ));
+        assert_eq!(reads, 1);
+        assert!(writer.is_empty());
     }
 }

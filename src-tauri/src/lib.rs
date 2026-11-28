@@ -3,9 +3,6 @@
 pub fn run() {
     let access = storage::StorageAccess::new().expect("Could not initialize storage access");
     let initialization = access.initialization_script();
-    let media_server =
-        media_server::MediaServer::bind().expect("Could not initialize media server");
-    let media_initialization = media_server.initialization_script();
     tauri::Builder::default()
         .manage(access)
         .register_asynchronous_uri_scheme_protocol("helia-media", |context, request, responder| {
@@ -25,18 +22,12 @@ pub fn run() {
                 .js_init_script(initialization)
                 .build(),
         )
-        .plugin(
-            tauri::plugin::Builder::<tauri::Wry, ()>::new("helia-media-host")
-                .js_init_script(media_initialization)
-                .build(),
-        )
-        .setup(move |app| {
+        .plugin(MediaHost::default())
+        .setup(|app| {
             let directory = app.path().app_data_dir()?;
             std::fs::create_dir_all(&directory)?;
             let path = directory.join("helia.sqlite");
             storage::media_uploads::start(&path).map_err(std::io::Error::other)?;
-            let media_handle = media_server.start(path.clone());
-            app.manage(media_handle);
             app.manage(storage::StoragePath(path));
             Ok(())
         })
@@ -50,6 +41,44 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running Helia");
+}
+
+/// Plugin initialization precedes webview creation, so failed starts publish no URL.
+#[cfg(feature = "desktop")]
+#[derive(Default)]
+struct MediaHost {
+    initialization: Option<String>,
+}
+
+#[cfg(feature = "desktop")]
+impl tauri::plugin::Plugin<tauri::Wry> for MediaHost {
+    fn name(&self) -> &'static str {
+        "helia-media-host"
+    }
+
+    fn initialize(
+        &mut self,
+        app: &tauri::AppHandle,
+        _config: serde_json::Value,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let directory = app.path().app_data_dir()?;
+        std::fs::create_dir_all(&directory)?;
+        match media_server::MediaServer::start(directory.join("helia.sqlite")) {
+            Ok(server) => {
+                self.initialization = Some(server.initialization_script());
+                app.manage(server);
+            }
+            Err(_) => {
+                // Keep the app and its legacy v1 scheme usable; v2 has no scheme fallback.
+                eprintln!("Desktop media server unavailable; uploaded media cannot be loaded");
+            }
+        }
+        Ok(())
+    }
+
+    fn initialization_script(&self) -> Option<String> {
+        self.initialization.clone()
+    }
 }
 #[cfg(any(feature = "desktop", test))]
 mod ai_settings;

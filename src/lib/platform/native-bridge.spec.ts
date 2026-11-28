@@ -35,7 +35,7 @@ function boot(child = false) {
 	if (builder.includes('.js_init_script(initialization)')) {
 		runInNewContext(script, { window });
 	}
-	if (builder.includes('.js_init_script(media_initialization)')) {
+	if (builder.includes('.plugin(MediaHost::default())')) {
 		runInNewContext(mediaScript, { window });
 	}
 	return { window, internals, invoke };
