@@ -2,6 +2,8 @@ import { json } from '@sveltejs/kit';
 
 import { GAME_EDIT_LOCKED } from '#lib/games/edit-lock.js';
 import { readEditorDraft } from '#lib/games/editor.js';
+import { checkSaveRequestSize, SAVE_REQUEST_BYTES } from '#lib/games/package/limits.js';
+import { ResourceListBudgetError } from '#lib/games/resources.js';
 import { editorDraftStorage } from '#lib/server/editor-drafts.js';
 import { serverStorage } from '#lib/server/sqlite.js';
 
@@ -24,11 +26,16 @@ export const PUT: RequestHandler = async ({ request, params, url }) => {
 	}
 	try {
 		const text = await request.text();
-		if (text.length > 20 * 1024 * 1024) {
-			throw Error('초안이 너무 커요.');
+		if (text.length > Number(SAVE_REQUEST_BYTES)) {
+			throw Error('저장할 내용이 너무 커요');
 		}
-		const input = JSON.parse(text) as { version?: unknown; draft?: unknown };
+		const input: unknown = JSON.parse(text);
+		checkSaveRequestSize(input);
 		if (
+			!input ||
+			typeof input !== 'object' ||
+			!('version' in input) ||
+			!('draft' in input) ||
 			typeof input.version !== 'number' ||
 			!Number.isSafeInteger(input.version) ||
 			!Object.hasOwn(input, 'draft')
@@ -36,7 +43,9 @@ export const PUT: RequestHandler = async ({ request, params, url }) => {
 			throw Error('Invalid draft');
 		}
 		const draft =
-			input.draft === null ? null : readEditorDraft(JSON.stringify(input.draft), params.id);
+			input.draft === null
+				? null
+				: readEditorDraft(JSON.stringify(input.draft), params.id, { write: true });
 		return json(
 			editorDraftStorage(serverStorage().connection).write(params.id, draft, input.version),
 			options
@@ -47,6 +56,12 @@ export const PUT: RequestHandler = async ({ request, params, url }) => {
 };
 
 function draftFailure(error: unknown): Response {
+	if (
+		error instanceof ResourceListBudgetError ||
+		(error instanceof Error && error.message === '저장할 내용이 너무 커요')
+	) {
+		return json({ error: error.message }, { status: 400, ...options });
+	}
 	if (error instanceof Error && error.message === GAME_EDIT_LOCKED) {
 		return json(
 			{ error: GAME_EDIT_LOCKED, errorCode: GAME_EDIT_LOCKED },

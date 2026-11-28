@@ -10,10 +10,60 @@ import {
 	loadEditorDraft,
 	readEditorDraft,
 	storeEditorDraft,
-	validateEditorDraft
+	validateEditorDraft,
+	validateEditorDraftBudget,
+	type EditorDraftBudgetCache
 } from './editor.js';
 import { createRegexRule } from './regex.js';
 import { createGameRepository } from './repository-core.js';
+import { DOCUMENT_OPERATION_LIMITS } from './versioning-validation.js';
+
+it('reuses resource and asset sizes across immutable editor snapshots and checks replacements', async () => {
+	const draft = createEditorDraft(await repository().createGame());
+	const cache: EditorDraftBudgetCache = {};
+	let reads = 0;
+	draft.baseContent.resources = {
+		get image() {
+			reads++;
+			return { name: 'image.png', mime: 'image/png', data: 'helia-asset:' + 'a'.repeat(64) };
+		}
+	};
+	draft.documents.assets = '{unfinished';
+	const encode = vi.spyOn(TextEncoder.prototype, 'encode');
+	try {
+		validateEditorDraftBudget(draft, cache);
+		validateEditorDraftBudget(
+			{ ...draft, documents: { ...draft.documents, state: 'changed' } },
+			cache
+		);
+		expect(reads).toBe(1);
+		expect(
+			encode.mock.calls.filter(([text]) => text === JSON.stringify(draft.documents.assets))
+		).toHaveLength(1);
+		draft.baseContent = {
+			...draft.baseContent,
+			resources: {
+				image: {
+					name: 'x'.repeat(16 * 1024 * 1024),
+					mime: 'image/png',
+					data: 'data:image/png;base64,AA=='
+				}
+			}
+		};
+		expect(() => validateEditorDraftBudget(draft, cache)).toThrow('리소스 목록이 너무 커요');
+		draft.baseContent = { ...draft.baseContent, resources: {} };
+		draft.documents.assets = 'x'.repeat(32 * 1024 * 1024 + 1);
+		expect(() => validateEditorDraftBudget(draft, cache)).toThrow('리소스 목록이 너무 커요');
+	} finally {
+		encode.mockRestore();
+	}
+});
+
+it('rejects oversized write draft text before parsing while leaving reads separate', () => {
+	const text = 'x'.repeat(Number(DOCUMENT_OPERATION_LIMITS.draftSave) + 1);
+	expect(() => readEditorDraft(text, 'game', { write: true })).toThrow('편집 초안이 너무 커요.');
+	expect(() => readEditorDraft(text, 'game')).toThrow(SyntaxError);
+});
 
 it('stores regex as current creator configuration without changing branch state or old messages', async () => {
 	const repo = repository();
@@ -128,7 +178,7 @@ describe('IDE authoring drafts', () => {
 				throw new Error('Unavailable');
 			}
 		});
-		expect(() => storeEditorDraft(draft)).toThrow('저장하지 못했어요');
+		expect(() => storeEditorDraft(draft)).toThrow('이 브라우저에 임시 복구본을 남기지 못했어요');
 	});
 });
 

@@ -7,6 +7,58 @@ export interface GameResource {
 }
 export type GameResources = Record<string, GameResource>;
 export const RESOURCE_LIMITS = { fileBytes: 1024 * 1024, totalBytes: 3 * 1024 * 1024 } as const;
+export const RESOURCE_LIST_BYTES = 16n * 1024n * 1024n;
+
+export function jsonUtf8Bytes(value: unknown): bigint {
+	return BigInt(new TextEncoder().encode(JSON.stringify(value)).length);
+}
+
+/** Ordering does not change byte size. Sum entries without building a second large map. */
+export function resourceListBytes(value: unknown): bigint {
+	if (!value || typeof value !== 'object' || Array.isArray(value)) {
+		throw Error('리소스 목록의 형식을 확인해주세요.');
+	}
+	let bytes = 2n;
+	let count = 0n;
+	for (const [id, resource] of Object.entries(value)) {
+		bytes +=
+			jsonUtf8Bytes(id) + 1n + jsonUtf8Bytes(storedResourceMetadata(resource)) + (count ? 1n : 0n);
+		count++;
+	}
+	return bytes;
+}
+
+/** Only the size projection changes; persisted and packaged values retain their original bytes. */
+function storedResourceMetadata(value: unknown): unknown {
+	if (!value || typeof value !== 'object' || Array.isArray(value)) {
+		return value;
+	}
+	const resource = value as Record<string, unknown>;
+	if (typeof resource.data !== 'string') {
+		return value;
+	}
+	if (resource.data.startsWith('data:') || resource.data.startsWith('helia-package:assets/')) {
+		return { ...resource, data: 'helia-asset:' + '0'.repeat(64) };
+	}
+	return value;
+}
+
+export class ResourceListBudgetError extends Error {}
+
+export function resourceListError(count: number, bytes: bigint): ResourceListBudgetError {
+	const tenths = (bytes * 10n + (1024n * 1024n - 1n)) / (1024n * 1024n);
+	return new ResourceListBudgetError(
+		`리소스 목록이 너무 커요(항목 ${count}개, 약 ${tenths / 10n}.${tenths % 10n} MiB)`
+	);
+}
+
+/** Write budget only; normal parsing and reads deliberately have no list budget. */
+export function validateResourceListBudget(value: unknown): void {
+	const bytes = resourceListBytes(value);
+	if (bytes > RESOURCE_LIST_BYTES) {
+		throw resourceListError(Object.keys(value as object).length, bytes);
+	}
+}
 export function validateResourcePath(path: string): void {
 	if (
 		!path ||
@@ -71,23 +123,26 @@ function rememberMedia(data: string, mime: string, bytes: number) {
 }
 
 /** Only portable, inert media may be embedded; SVG/HTML and network URLs are excluded. */
-export function parseResources(value: unknown): GameResources {
+export function parseResources(
+	value: unknown,
+	{ packageReferences = false }: { packageReferences?: boolean } = {}
+): GameResources {
 	if (!value || typeof value !== 'object' || Array.isArray(value)) {
 		throw Error('리소스 목록의 형식을 확인해주세요.');
 	}
 	const entries = Object.entries(value);
 	const result: GameResources = {};
 	const paths = new Set<string>();
-	let total = 0;
+	let total = 0n;
 	for (const [id, input] of entries) {
-		const { resource, bytes } = parseResource(id, input);
+		const { resource, bytes } = parseResource(id, input, packageReferences);
 		const row = resource;
 		if (paths.has(row.name)) {
 			throw Error('같은 경로의 파일이 이미 있어요.');
 		}
 		paths.add(row.name);
-		total += bytes;
-		if (bytes > RESOURCE_LIMITS.fileBytes || total > RESOURCE_LIMITS.totalBytes) {
+		total += BigInt(bytes);
+		if (bytes > RESOURCE_LIMITS.fileBytes || total > BigInt(RESOURCE_LIMITS.totalBytes)) {
 			throw Error('리소스는 파일당 1 MiB, 전체 3 MiB까지 저장할 수 있어요.');
 		}
 		result[id] = resource;
@@ -96,7 +151,11 @@ export function parseResources(value: unknown): GameResources {
 	return result;
 }
 
-function parseResource(id: string, input: unknown): { resource: GameResource; bytes: number } {
+function parseResource(
+	id: string,
+	input: unknown,
+	packageReferences: boolean
+): { resource: GameResource; bytes: number } {
 	validateStateKey(id);
 	if (!/^[\w.-]{1,100}$/.test(id) || !input || typeof input !== 'object' || Array.isArray(input)) {
 		throw Error('리소스 식별자를 확인해주세요.');
@@ -114,7 +173,10 @@ function parseResource(id: string, input: unknown): { resource: GameResource; by
 	}
 	const prefix = `data:${row.mime};base64,`;
 	validateResourcePath(row.name);
-	if (/^helia-asset:[a-f0-9]{64}$/.test(row.data)) {
+	if (
+		/^helia-asset:[a-f0-9]{64}$/.test(row.data) ||
+		(packageReferences && /^helia-package:assets\/[a-f0-9]{64}$/.test(row.data))
+	) {
 		return { resource: { name: row.name, mime: row.mime, data: row.data }, bytes: 0 };
 	}
 	const checked = checkedMedia.get(row.data);

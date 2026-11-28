@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
 import { createEditorDraft } from '#lib/games/editor.js';
+import { SAVE_REQUEST_BYTES } from '#lib/games/package/limits.js';
 import { createGameRepository } from '#lib/games/repository-core.js';
 import { openStorage } from '#lib/server/sqlite.js';
 
@@ -69,4 +70,29 @@ it('rejects malformed, foreign-owner and cross-origin draft mutations without lo
 	expect((await PUT(event({ version: 1, draft: { ...draft, gameId: 'other' } }))).status).toBe(400);
 	const current = await GET(event(null));
 	expect((await current.json()).version).toBe(1);
+});
+
+it('rejects an oversized body before JSON parsing and keeps the saved revision', async () => {
+	await PUT(event({ version: 0, draft: createEditorDraft(game) }));
+	const request = event('x'.repeat(Number(SAVE_REQUEST_BYTES) + 1));
+	const parse = vi.spyOn(JSON, 'parse');
+	let response: Response;
+	try {
+		response = await PUT(request);
+		expect(parse).not.toHaveBeenCalled();
+	} finally {
+		parse.mockRestore();
+	}
+	expect(response.status).toBe(400);
+	expect(await response.json()).toEqual({ error: '저장할 내용이 너무 커요' });
+	expect((await (await GET(event(null))).json()).version).toBe(1);
+});
+
+it('still checks exact UTF-8 bytes after the cheap text length guard', async () => {
+	const request = { version: 0, draft: null, padding: '한'.repeat(8 * 1024 * 1024) };
+	expect(JSON.stringify(request).length).toBeLessThan(Number(SAVE_REQUEST_BYTES));
+	const response = await PUT(event(request));
+	expect(response.status).toBe(400);
+	expect(await response.json()).toEqual({ error: '저장할 내용이 너무 커요' });
+	expect((await (await GET(event(null))).json()).version).toBe(0);
 });

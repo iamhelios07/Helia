@@ -7,11 +7,45 @@ import type {
 
 import { parseGame } from './model.js';
 import { gameReleaseContent } from './release-content.js';
+import {
+	parseResources,
+	RESOURCE_LIMITS,
+	RESOURCE_LIST_BYTES,
+	validateResourceListBudget
+} from './resources.js';
 import { originalGameId, parseSemVer } from './versioning.js';
 
 export const CONTENT_NODE_LIMIT = 100000;
 export const CONTENT_CHARACTER_LIMIT = 16 * 1024 * 1024;
 export const CONTENT_DEPTH_LIMIT = 64;
+// Every stored reference uses at least 77 JSON bytes. Allow 32 bytes per possible
+// inline entry for the data URI prefix and individual base64 padding.
+const INLINE_RESOURCE_ALLOWANCE =
+	4n * ((BigInt(RESOURCE_LIMITS.totalBytes) + 2n) / 3n) + 32n * (RESOURCE_LIST_BYTES / 77n);
+export const DOCUMENT_OPERATION_LIMITS = {
+	draftSave: 3n * BigInt(CONTENT_CHARACTER_LIMIT) + 5n * RESOURCE_LIST_BYTES + 65536n,
+	commit:
+		6n * BigInt(CONTENT_CHARACTER_LIMIT) +
+		RESOURCE_LIST_BYTES +
+		INLINE_RESOURCE_ALLOWANCE +
+		32n * BigInt(CONTENT_NODE_LIMIT) +
+		65536n,
+	releaseCreate:
+		6n * BigInt(CONTENT_CHARACTER_LIMIT) +
+		RESOURCE_LIST_BYTES +
+		INLINE_RESOURCE_ALLOWANCE +
+		32n * BigInt(CONTENT_NODE_LIMIT) +
+		65536n
+} as const;
+
+export function validateDocumentOperationBytes(
+	operation: keyof typeof DOCUMENT_OPERATION_LIMITS,
+	bytes: bigint
+): void {
+	if (bytes < 0n || bytes > DOCUMENT_OPERATION_LIMITS[operation]) {
+		throw Error('저장할 내용이 너무 커요');
+	}
+}
 
 function object(value: unknown): Record<string, unknown> {
 	if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -116,27 +150,55 @@ export function parseCreateGameReleaseResult(value: unknown): CreateGameReleaseR
 }
 
 /** Bound traversal before model parsers recurse or inspect large media/source documents. */
-function boundContent(value: unknown, budget = { nodes: 0, characters: 0 }, depth = 0): void {
+function boundContent(
+	value: unknown,
+	budget = { nodes: 0n, characters: 0n },
+	depth = 0,
+	write = true
+): void {
 	budget.nodes++;
-	if (depth > CONTENT_DEPTH_LIMIT || budget.nodes > CONTENT_NODE_LIMIT) {
+	if (depth > CONTENT_DEPTH_LIMIT || budget.nodes > BigInt(CONTENT_NODE_LIMIT)) {
 		throw Error('Release content too complex');
 	}
 	if (typeof value === 'string') {
-		budget.characters += value.length;
-	}
-	if (budget.characters > CONTENT_CHARACTER_LIMIT) {
-		throw Error('Release content too large');
+		budget.characters += BigInt(value.length);
 	}
 	if (typeof value === 'object' && value) {
-		for (const item of Object.values(value)) {
-			boundContent(item, budget, depth + 1);
-		}
+		boundObject(value, budget, depth, write);
 	}
+	if (budget.characters > BigInt(CONTENT_CHARACTER_LIMIT)) {
+		throw Error('Release content too large');
+	}
+}
+
+function boundObject(
+	value: object,
+	budget: { nodes: bigint; characters: bigint },
+	depth: number,
+	write: boolean
+) {
+	for (const [key, item] of Object.entries(value)) {
+		if (!Array.isArray(value)) {
+			budget.characters += BigInt(key.length);
+		}
+		if (depth === 0 && key === 'resources') {
+			checkReleaseResources(item, write);
+			continue;
+		}
+		boundContent(item, budget, depth + 1, write);
+	}
+}
+
+function checkReleaseResources(value: unknown, write: boolean) {
+	if (write) {
+		validateResourceListBudget(value);
+	}
+	parseResources(value, { packageReferences: true });
 }
 export function parseGameRelease(value: unknown): GameRelease {
 	const row = object(value),
 		summary = parseGameReleaseSummary(row);
-	boundContent(row.content);
+	boundContent(row.content, undefined, 0, false);
 	// Legacy release inputs ignore install-only provenance, even when malformed.
 	const { installedFrom: _ignored, ...content } = object(row.content);
 	void _ignored;
@@ -153,6 +215,9 @@ export function parseGameRelease(value: unknown): GameRelease {
 	return { ...summary, content: gameReleaseContent(game) };
 }
 
-export function validateGameReleaseContent(value: unknown): void {
-	boundContent(value);
+export function validateGameReleaseContent(
+	value: unknown,
+	{ write = true }: { write?: boolean } = {}
+): void {
+	boundContent(value, undefined, 0, write);
 }

@@ -15,6 +15,31 @@ fn input() -> Value {
     .unwrap();
     json!({"kind":"install","gameId":uuid().unwrap(),"sessionId":uuid().unwrap(),"packageFormatVersion":1,"release":release})
 }
+
+#[test]
+fn resource_budget_install_request_boundary() {
+    let mut request = input();
+    request["release"]["content"]["resources"] = crate::storage::tests::resource_budget_map();
+    assert!(validate_request(&request).is_ok());
+    let key = request["release"]["content"]["resources"]
+        .as_object()
+        .unwrap()
+        .keys()
+        .next_back()
+        .unwrap()
+        .clone();
+    let name = request["release"]["content"]["resources"][&key]["name"]
+        .as_str()
+        .unwrap()
+        .to_owned()
+        + "x";
+    request["release"]["content"]["resources"][&key]["name"] = json!(name);
+    assert!(
+        validate_request(&request)
+            .unwrap_err()
+            .starts_with("리소스 목록이 너무 커요")
+    );
+}
 fn counts(db: &Connection) -> Vec<i64> {
     [
         "games",
@@ -258,11 +283,14 @@ fn raw_complexity_precedes_normalization_and_install_only_keys() {
     assert_eq!(counts(&db), [0, 0, 0, 0]);
 }
 #[test]
-fn raw_budget_boundaries_count_utf16_values_and_not_keys() {
+fn resource_budget_raw_utf16_values_keys_and_depth() {
     assert!(bound_content(&json!(vec![Value::Null; 99_999]), 0, &mut (0, 0)).is_ok());
     assert!(bound_content(&json!(vec![Value::Null; 100_000]), 0, &mut (0, 0)).is_err());
     assert!(bound_content(&json!("😀".repeat(8 * 1024 * 1024)), 0, &mut (0, 0)).is_ok());
     assert!(bound_content(&json!("😀".repeat(8 * 1024 * 1024) + "x"), 0, &mut (0, 0)).is_err());
+    let key = "😀".repeat(8 * 1024 * 1024);
+    assert!(bound_content(&json!({key.clone():null}), 0, &mut (0, 0)).is_ok());
+    assert!(bound_content(&json!({key:"x"}), 0, &mut (0, 0)).is_err());
     let mut value = Value::Null;
     for _ in 0..64 {
         value = json!([value]);

@@ -1,6 +1,12 @@
 import { isDesktopBuild } from '#lib/platform/index.js';
 
-import { readEditorDraft, type EditorDraft } from './editor.js';
+import {
+	readEditorDraft,
+	validateEditorDraftBudget,
+	type EditorDraft,
+	type EditorDraftBudgetCache
+} from './editor.js';
+import { checkSaveRequestSize } from './package/limits.js';
 
 export interface SavedEditorDraft {
 	version: number;
@@ -43,15 +49,21 @@ export async function loadAuthoringDraft(gameId: string): Promise<SavedEditorDra
 export async function saveAuthoringDraft(
 	gameId: string,
 	draft: EditorDraft | null,
-	version: number
+	version: number,
+	cache?: EditorDraftBudgetCache
 ): Promise<SavedEditorDraft> {
+	if (draft !== null) {
+		validateEditorDraftBudget(draft, cache);
+	}
+	const request = { kind: 'writeDraft', gameId, version, draft };
+	const body = checkSaveRequestSize(request);
 	if (isDesktopBuild) {
-		return nativeDraftRequest(gameId, { kind: 'writeDraft', gameId, version, draft });
+		return nativeDraftRequest(gameId, request);
 	}
 	const response = await fetch('/api/games/' + encodeURIComponent(gameId) + '/draft', {
 		method: 'PUT',
 		headers: { 'content-type': 'application/json' },
-		body: JSON.stringify({ version, draft })
+		body
 	});
 	const result: unknown = await response.json();
 	if (!response.ok) {
@@ -76,12 +88,7 @@ async function migrateNativeDraft(gameId: string, current: SavedEditorDraft) {
 	}
 	if (old) {
 		const previous = parseSaved(JSON.parse(old), gameId);
-		const saved = await nativeDraftRequest(gameId, {
-			kind: 'writeDraft',
-			gameId,
-			version: 0,
-			draft: previous.draft
-		});
+		const saved = await saveAuthoringDraft(gameId, previous.draft, 0);
 		try {
 			localStorage.removeItem(key(gameId));
 		} catch {

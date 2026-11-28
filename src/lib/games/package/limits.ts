@@ -1,12 +1,18 @@
+import { RESOURCE_LIST_BYTES, type ResourceListBudgetError } from '../resources.js';
 import { CONTENT_NODE_LIMIT } from '../versioning-validation.js';
 
 export { CONTENT_NODE_LIMIT, CONTENT_CHARACTER_LIMIT } from '../versioning-validation.js';
+
+// A valid entry uses at least 77 JSON bytes for its reference and four scanner nodes.
+// Double that bound to leave room while still rejecting pre-parse node bombs.
+export const RESOURCE_SCAN_NODE_LIMIT = 8n * (RESOURCE_LIST_BYTES / 77n);
 
 /** Format v1 limits, independent of the application's stricter content limits. */
 export const PACKAGE_LIMITS = {
 	file: 32 * 1024 * 1024,
 	manifest: 64 * 1024,
-	content: 16 * 1024 * 1024,
+	// Leave room for the manifest and ZIP headers inside the v1 file limit.
+	content: 31 * 1024 * 1024,
 	asset: 8 * 1024 * 1024,
 	assets: 24 * 1024 * 1024,
 	entries: 65534
@@ -40,8 +46,11 @@ export function isGamePackageErrorCode(value: unknown): value is GamePackageErro
 }
 
 export class GamePackageError extends Error {
-	constructor(public readonly code: GamePackageErrorCode) {
-		super(messages[code]);
+	constructor(
+		public readonly code: GamePackageErrorCode,
+		budgetError?: ResourceListBudgetError
+	) {
+		super(budgetError?.message ?? messages[code]);
 		this.name = 'GamePackageError';
 	}
 }
@@ -62,6 +71,19 @@ export function checkPackageSize(size: number, maximum: number = PACKAGE_LIMITS.
 /** Also usable for a serialized install request before handing it to a transport. */
 export function serializedRequestSize(request: unknown): number {
 	return new TextEncoder().encode(JSON.stringify(request)).length;
+}
+
+export const SAVE_REQUEST_BYTES = 20n * 1024n * 1024n;
+export function checkSaveRequestSize(request: unknown): string {
+	const text = JSON.stringify(request);
+	if (text.length > Number(SAVE_REQUEST_BYTES) || jsonUtf8BytesOfText(text) > SAVE_REQUEST_BYTES) {
+		throw Error('저장할 내용이 너무 커요');
+	}
+	return text;
+}
+
+function jsonUtf8BytesOfText(text: string): bigint {
+	return BigInt(new TextEncoder().encode(text).length);
 }
 
 export function packageObject(value: unknown): Record<string, unknown> {
@@ -99,16 +121,82 @@ export function serializePackageJson(value: unknown): string {
  * with the same code the full traversal would report.
  */
 export function checkContentComplexity(bytes: Uint8Array): void {
-	const state = { escaped: false, inString: false };
-	let count = 0;
-	for (const byte of bytes) {
-		if (scanString(byte, state)) {
-			continue;
+	const scanner = new ContentScanner(bytes);
+	for (let index = 0; index < bytes.length; index++) {
+		scanner.scan(index);
+	}
+}
+
+/** Exempt only the root resources value, including escaped spellings of its key. */
+class ContentScanner {
+	private string = { escaped: false, inString: false };
+	private depth = 0;
+	private resourceDepth = 0;
+	private keyStart = -1;
+	private expectKey = false;
+	private resourceKey = false;
+	private count = 0n;
+	private resourceCount = 0n;
+	private rootObject = false;
+	constructor(private bytes: Uint8Array) {}
+	scan(index: number) {
+		const byte = this.bytes[index];
+		if (!this.string.inString && byte === 0x22 && this.depth === 1 && this.expectKey) {
+			this.keyStart = index;
 		}
-		if (byte === 0x2c /* , */ || byte === 0x5b /* [ */ || byte === 0x7b /* { */) {
-			count++;
-			requirePackage(count <= 2 * CONTENT_NODE_LIMIT, 'content');
+		if (scanString(byte, this.string)) {
+			this.endKey(index);
+			return;
 		}
+		this.structure(byte);
+	}
+	private endKey(index: number) {
+		if (!this.string.inString && this.keyStart >= 0) {
+			const key = this.bytes.subarray(this.keyStart, index + 1);
+			this.resourceKey = key.length <= 56 && this.isResourcesKey(key);
+			this.keyStart = -1;
+			this.expectKey = false;
+		}
+	}
+	private isResourcesKey(key: Uint8Array): boolean {
+		if (key.includes(0x5c)) {
+			return parsePackageJson(key) === 'resources';
+		}
+		return new TextDecoder().decode(key) === '"resources"';
+	}
+	private structure(byte: number) {
+		const opens = byte === 0x5b || byte === 0x7b;
+		if (opens && this.depth === 0) {
+			this.rootObject = byte === 0x7b;
+		}
+		if (opens && this.rootObject && this.depth === 1 && this.resourceKey) {
+			this.resourceDepth = 2;
+		}
+		if (opens || byte === 0x2c) {
+			this.countNode();
+		}
+		if (opens) {
+			this.depth++;
+		}
+		if (byte === 0x5d || byte === 0x7d) {
+			this.depth--;
+			if (this.depth < this.resourceDepth) {
+				this.resourceDepth = 0;
+			}
+		}
+		if (this.depth === 1 && (byte === 0x7b || byte === 0x2c)) {
+			this.expectKey = true;
+			this.resourceKey = false;
+		}
+	}
+	private countNode() {
+		if (this.resourceDepth) {
+			this.resourceCount++;
+			requirePackage(this.resourceCount <= RESOURCE_SCAN_NODE_LIMIT, 'content');
+			return;
+		}
+		this.count++;
+		requirePackage(this.count <= 2n * BigInt(CONTENT_NODE_LIMIT), 'content');
 	}
 }
 

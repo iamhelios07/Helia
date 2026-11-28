@@ -21,6 +21,7 @@ import {
 	changedEditorDraft,
 	editorContent,
 	type EditorDraft,
+	type EditorDraftBudgetCache,
 	type EditorDocumentId
 } from '../editor.js';
 import { getGameWorkspace, applyGameDraft } from '../repository.js';
@@ -42,6 +43,7 @@ export class EditorWorkspace {
 	previewMode = $state<'preview' | 'test'>('preview');
 	runtimeState = $state.raw<GameState | null>(null);
 	draftVersion = 0;
+	private draftBudgetCache: EditorDraftBudgetCache = {};
 	persistedSource = '';
 	saveQueue: Promise<unknown> = Promise.resolve();
 	allowNavigation = false;
@@ -652,13 +654,18 @@ export class EditorWorkspace {
 		const operation = this.saveQueue.then(async () => {
 			try {
 				if (source !== this.persistedSource) {
-					const saved = await saveAuthoringDraft(this.gameId, snapshot, this.draftVersion);
+					const saved = await saveAuthoringDraft(
+						this.gameId,
+						snapshot,
+						this.draftVersion,
+						this.draftBudgetCache
+					);
 					this.draftVersion = saved.version;
 					this.persistedSource = source;
 				}
 				// The latest local edit descends from this revision even if another save is queued.
 				if (this.draft) {
-					this.cacheDraft(this.draft);
+					this.cacheDraft(this.draft, { revisionOnly: this.draft === snapshot });
 				}
 				if (!this.disposed) {
 					this.saveError = '';
@@ -679,9 +686,11 @@ export class EditorWorkspace {
 		}
 		return result;
 	};
-	cacheDraft = (snapshot: EditorDraft) => {
+	cacheDraft = (snapshot: EditorDraft, { revisionOnly = false } = {}) => {
 		try {
-			storeEditorDraft(snapshot);
+			if (!revisionOnly) {
+				storeEditorDraft(snapshot, this.draftBudgetCache);
+			}
 			localStorage.setItem('helia:editor-draft-revision:' + this.gameId, String(this.draftVersion));
 		} catch {
 			/* Recovery cache is secondary to the durable store. */

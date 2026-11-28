@@ -4,7 +4,12 @@ import type { Game } from './model.js';
 
 import { loadAuthoringDraft, saveAuthoringDraft } from './editor-draft-storage.js';
 import { createEditorDraft } from './editor.js';
-vi.mock('#lib/platform/index.js', () => ({ isDesktopBuild: true }));
+const platform = vi.hoisted(() => ({ desktop: true }));
+vi.mock('#lib/platform/index.js', () => ({
+	get isDesktopBuild() {
+		return platform.desktop;
+	}
+}));
 const game: Game = {
 	schemaVersion: 2,
 	id: 'game',
@@ -28,7 +33,10 @@ beforeEach(() =>
 		removeItem: () => {}
 	})
 );
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+	platform.desktop = true;
+	vi.unstubAllGlobals();
+});
 it('stores desktop drafts through the main-frame host even when browser storage is full', async () => {
 	const draft = createEditorDraft(game);
 	draft.documents.state = '{unfinished';
@@ -52,3 +60,23 @@ it('rejects a subframe and an unavailable native bridge', async () => {
 	await expect(loadAuthoringDraft(game.id)).rejects.toThrow('Helia 앱');
 	expect(host).not.toHaveBeenCalled();
 });
+
+it.each([false, true])(
+	'preserves an oversized unfinished draft without contacting a host (desktop=%s)',
+	async (desktop) => {
+		platform.desktop = desktop;
+		const host = vi.fn();
+		const fetch = vi.fn();
+		const view = { __HELIA_STORAGE__: host };
+		Object.assign(view, { top: view });
+		vi.stubGlobal('window', view);
+		vi.stubGlobal('fetch', fetch);
+		const draft = createEditorDraft(game);
+		draft.documents.state = '한'.repeat(4 * 1024 * 1024);
+		draft.documents.info = '한'.repeat(4 * 1024 * 1024);
+		await expect(saveAuthoringDraft(game.id, draft, 0)).rejects.toThrow('저장할 내용이 너무 커요');
+		expect(draft.documents.state.length).toBe(4 * 1024 * 1024);
+		expect(host).not.toHaveBeenCalled();
+		expect(fetch).not.toHaveBeenCalled();
+	}
+);

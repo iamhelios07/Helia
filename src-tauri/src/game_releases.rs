@@ -616,10 +616,13 @@ fn content(connection: &Connection, game: &Value) -> Result<Value, String> {
     Ok(result)
 }
 
-fn bound_content(value: &Value, depth: usize, budget: &mut (usize, usize)) -> Result<(), String> {
-    budget.0 += 1;
+fn bound_content(value: &Value, depth: usize, budget: &mut (u64, u64)) -> Result<(), String> {
+    budget.0 = budget.0.checked_add(1).ok_or(ERROR)?;
     if let Value::String(v) = value {
-        budget.1 += v.encode_utf16().count();
+        budget.1 = budget
+            .1
+            .checked_add(v.encode_utf16().count() as u64)
+            .ok_or(ERROR)?;
     }
     if depth > 64 || budget.0 > 100_000 || budget.1 > 16 * 1024 * 1024 {
         return Err("Release content limit exceeded".into());
@@ -631,11 +634,39 @@ fn bound_content(value: &Value, depth: usize, budget: &mut (usize, usize)) -> Re
             }
         }
         Value::Object(values) => {
-            for v in values.values() {
+            for (key, v) in values {
+                budget.1 = budget
+                    .1
+                    .checked_add(key.encode_utf16().count() as u64)
+                    .ok_or(ERROR)?;
+                if depth == 0 && key == "resources" {
+                    validate_resource_format(v)?;
+                    continue;
+                }
                 bound_content(v, depth + 1, budget)?;
             }
         }
         _ => {}
+    }
+    if budget.1 > 16 * 1024 * 1024 {
+        return Err("Release content limit exceeded".into());
+    }
+    Ok(())
+}
+
+fn validate_resource_format(value: &Value) -> Result<(), String> {
+    let mut resources = value.clone();
+    for resource in resources.as_object_mut().ok_or(ERROR)?.values_mut() {
+        if let Some(hash) = resource["data"]
+            .as_str()
+            .and_then(|v| v.strip_prefix("helia-package:assets/"))
+        {
+            let reference = format!("helia-asset:{hash}");
+            resource["data"] = json!(reference);
+        }
+    }
+    if !super::resources(Some(&resources)) {
+        return Err(ERROR.into());
     }
     Ok(())
 }
@@ -740,6 +771,7 @@ fn finalize(
     ignore: bool,
     expected: Option<&str>,
 ) -> Result<Value, String> {
+    super::validate_resource_list_budget(game.get("resources"))?;
     if !semver(version)
         || expected.is_some_and(|v| !valid_hash(v))
         || (ignore && expected.is_none())
@@ -862,6 +894,37 @@ pub(super) fn request(connection: &mut Connection, input: Value) -> Result<Value
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn resource_budget_counts_keys_and_excludes_resource_nodes() {
+        let mut value = Map::new();
+        value.insert("k".repeat(16 * 1024 * 1024), Value::Null);
+        assert!(bound_content(&Value::Object(value.clone()), 0, &mut (0, 0)).is_ok());
+        value.insert("x".into(), Value::Null);
+        assert!(bound_content(&Value::Object(value), 0, &mut (0, 0)).is_err());
+        let control = json!({"x":"\0".repeat(16 * 1024 * 1024 - 1)});
+        assert!(bound_content(&control, 0, &mut (0, 0)).is_ok());
+        assert!(
+            serde_json::to_vec(&control).unwrap().len() as u64
+                <= super::super::DOCUMENT_COMMIT_BYTES
+        );
+        let mut numbers = vec![json!("\0".repeat(16 * 1024 * 1024))];
+        numbers.extend(
+            (0..99998).map(|index| json!(if index % 2 == 0 { f64::MAX } else { -f64::MAX })),
+        );
+        let value = Value::Array(numbers);
+        assert!(bound_content(&value, 0, &mut (0, 0)).is_ok());
+        let bytes = serde_json::to_vec(&value).unwrap().len() as u64;
+        assert!(bytes > 6 * 16 * 1024 * 1024 + 8 * 100_000 + 65536);
+        assert!(bytes <= super::super::DOCUMENT_COMMIT_BYTES - super::super::RESOURCE_LIST_BYTES);
+        let resources = json!({"image":{"name":"image.png","mime":"image/png","data":format!("helia-asset:{}", "a".repeat(64))}});
+        assert!(bound_content(&json!({"resources":resources}), 0, &mut (0, 0)).is_ok());
+        for field in ["name", "mime", "data"] {
+            let mut invalid = resources.clone();
+            invalid["image"][field] = json!("invalid:\0");
+            assert!(bound_content(&json!({"resources":invalid}), 0, &mut (0, 0)).is_err());
+        }
+    }
 
     fn fixtures() -> Vec<Value> {
         serde_json::from_str(include_str!(

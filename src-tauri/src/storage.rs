@@ -8,6 +8,130 @@ use std::{
 
 const MIGRATION: &str = include_str!("../../src/lib/storage/migrations/0000_initial.sql");
 const CONFLICT: &str = "STORAGE_CONFLICT";
+const RESOURCE_LIST_BYTES: u64 = 16 * 1024 * 1024;
+const DOCUMENT_DRAFT_SAVE_BYTES: u64 = 3 * 16 * 1024 * 1024 + 5 * RESOURCE_LIST_BYTES + 65536;
+// At most R / 77 entries; 32 bytes each cover URI prefixes and base64 padding.
+const INLINE_RESOURCE_ALLOWANCE: u64 =
+    4 * (3u64 * 1024 * 1024).div_ceil(3) + 32 * (RESOURCE_LIST_BYTES / 77);
+const DOCUMENT_COMMIT_BYTES: u64 =
+    6 * 16 * 1024 * 1024 + RESOURCE_LIST_BYTES + INLINE_RESOURCE_ALLOWANCE + 32 * 100_000 + 65536;
+const DOCUMENT_RELEASE_CREATE_BYTES: u64 = DOCUMENT_COMMIT_BYTES;
+
+pub(crate) fn validate_document_operation_bytes(operation: &str, bytes: u64) -> Result<(), String> {
+    let maximum = match operation {
+        "draftSave" => DOCUMENT_DRAFT_SAVE_BYTES,
+        "commit" => DOCUMENT_COMMIT_BYTES,
+        "releaseCreate" => DOCUMENT_RELEASE_CREATE_BYTES,
+        _ => return Err("잘못된 문서 작업".into()),
+    };
+    if bytes > maximum {
+        return Err("저장할 내용이 너무 커요".into());
+    }
+    Ok(())
+}
+
+fn resource_list_error(count: usize, bytes: u64) -> String {
+    let tenths = bytes.saturating_mul(10).div_ceil(1024 * 1024);
+    format!(
+        "리소스 목록이 너무 커요(항목 {count}개, 약 {}.{} MiB)",
+        tenths / 10,
+        tenths % 10
+    )
+}
+
+fn resource_list_bytes(value: Option<&Value>) -> Result<u64, String> {
+    let Some(value) = value else { return Ok(2) };
+    let entries = value
+        .as_object()
+        .ok_or("리소스 목록의 형식을 확인해주세요.")?;
+    let mut bytes = 2u64;
+    for (index, (key, item)) in entries.iter().enumerate() {
+        for size in [
+            serde_json::to_vec(key)
+                .map_err(|_| "잘못된 리소스 목록")?
+                .len() as u64,
+            serde_json::to_vec(&stored_resource_metadata(item))
+                .map_err(|_| "잘못된 리소스 목록")?
+                .len() as u64,
+            1 + u64::from(index > 0),
+        ] {
+            bytes = bytes.checked_add(size).ok_or("리소스 목록 크기 초과")?;
+        }
+    }
+    Ok(bytes)
+}
+
+fn stored_resource_metadata(value: &Value) -> std::borrow::Cow<'_, Value> {
+    let Some(fields) = value.as_object() else {
+        return std::borrow::Cow::Borrowed(value);
+    };
+    if !fields
+        .get("data")
+        .and_then(Value::as_str)
+        .is_some_and(|data| data.starts_with("data:") || data.starts_with("helia-package:assets/"))
+    {
+        return std::borrow::Cow::Borrowed(value);
+    }
+    // Avoid cloning the inline bytes that are being excluded from the list budget.
+    let stored = fields
+        .iter()
+        .map(|(key, item)| {
+            let item = if key == "data" {
+                json!(format!("helia-asset:{}", "0".repeat(64)))
+            } else {
+                item.clone()
+            };
+            (key.clone(), item)
+        })
+        .collect();
+    std::borrow::Cow::Owned(Value::Object(stored))
+}
+
+fn validate_resource_list_budget(value: Option<&Value>) -> Result<(), String> {
+    let bytes = resource_list_bytes(value)?;
+    if bytes > RESOURCE_LIST_BYTES {
+        return Err(resource_list_error(
+            value.and_then(Value::as_object).map_or(0, Map::len),
+            bytes,
+        ));
+    }
+    Ok(())
+}
+
+fn validate_draft_budget(draft: &Value) -> Result<(), String> {
+    validate_resource_list_budget(draft["baseContent"].get("resources"))?;
+    if let Some(assets) = draft["documents"]["assets"].as_str() {
+        let bytes = (serde_json::to_vec(assets)
+            .map_err(|_| "잘못된 에셋 문서")?
+            .len() as u64)
+            .checked_sub(2)
+            .ok_or("잘못된 에셋 문서")?;
+        if bytes
+            > RESOURCE_LIST_BYTES
+                .checked_mul(2)
+                .ok_or("리소스 목록 크기 초과")?
+        {
+            return Err(resource_list_error(
+                draft["baseContent"]["resources"]
+                    .as_object()
+                    .map_or(0, Map::len),
+                bytes,
+            ));
+        }
+    }
+    let mut remainder = draft.clone();
+    if let Some(base) = remainder["baseContent"].as_object_mut() {
+        base.remove("resources");
+    }
+    if let Some(documents) = remainder["documents"].as_object_mut() {
+        documents.remove("assets");
+    }
+    let text = serde_json::to_string(&remainder).map_err(|_| "잘못된 편집 초안")?;
+    if text.encode_utf16().count() as u64 > 16 * 1024 * 1024 {
+        return Err("편집 초안이 너무 커요.".into());
+    }
+    Ok(())
+}
 pub(crate) const MEDIA_MIMES: &[&str] = &[
     "image/png",
     "image/jpeg",
@@ -268,14 +392,10 @@ fn validate_draft(game_id: &str, draft: &Value) -> Result<(), String> {
     if draft.is_null() {
         return Ok(());
     }
+    validate_draft_budget(draft)?;
     if (draft["version"] != 1 && draft["version"] != 2 && draft["version"] != 3)
         || draft["gameId"].as_str() != Some(game_id)
         || !draft["documents"].is_object()
-        || serde_json::to_string(draft)
-            .map_err(|_| "잘못된 편집 초안")?
-            .encode_utf16()
-            .count()
-            > 16 * 1024 * 1024
     {
         return Err("편집 초안의 형식이 올바르지 않아요.".into());
     }
@@ -757,7 +877,7 @@ fn resources(value: Option<&Value>) -> bool {
     let Some(entries) = value.as_object() else {
         return false;
     };
-    let mut total = 0;
+    let mut total = 0u64;
     let mut paths = std::collections::HashSet::new();
     for (id, row) in entries {
         if id.is_empty()
@@ -792,6 +912,14 @@ fn resources(value: Option<&Value>) -> bool {
         {
             return false;
         }
+        if data.strip_prefix("helia-asset:").is_some_and(|hash| {
+            hash.len() == 64
+                && hash
+                    .bytes()
+                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        }) {
+            continue;
+        }
         let prefix = format!("data:{mime};base64,");
         let Some(encoded) = data.strip_prefix(&prefix) else {
             return false;
@@ -802,7 +930,10 @@ fn resources(value: Option<&Value>) -> bool {
         let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(encoded) else {
             return false;
         };
-        total += bytes.len();
+        let Some(sum) = total.checked_add(bytes.len() as u64) else {
+            return false;
+        };
+        total = sum;
         if bytes.len() > 1_048_576 || total > 3_145_728 {
             return false;
         }
@@ -1829,6 +1960,22 @@ fn assert_not_trashed(connection: &Connection, game_id: &str) -> Result<(), Stri
     }
     Ok(())
 }
+// Match TS parseResources: validate the raw rows, then retain only stored fields
+// before measuring R. Untrusted extra fields must not change the write budget.
+fn normalize_write_resources(game: &mut Value) -> Result<(), String> {
+    if !resources(game.get("resources")) {
+        return Err("리소스 목록의 형식을 확인해주세요.".into());
+    }
+    if let Some(entries) = game.get_mut("resources").and_then(Value::as_object_mut) {
+        for resource in entries.values_mut() {
+            if let Some(fields) = resource.as_object_mut() {
+                fields.retain(|key, _| matches!(key.as_str(), "name" | "mime" | "data"));
+            }
+        }
+    }
+    Ok(())
+}
+
 fn write(
     connection: &Connection,
     game_id: &str,
@@ -1877,6 +2024,17 @@ fn write(
     }
     for row in &mut records {
         if row.table == Table::Games {
+            normalize_write_resources(&mut row.value)?;
+            validate_resource_list_budget(row.value.get("resources"))?;
+            if row.value["resources"].as_object().is_some_and(|entries| {
+                entries.values().any(|asset| {
+                    asset["data"]
+                        .as_str()
+                        .is_some_and(|data| data.starts_with("helia-asset:"))
+                })
+            }) {
+                return Err("Stored resources must contain portable media".into());
+            }
             row.value = releases::preserve_identity(connection, &row.id, &row.value)?;
         }
         validate(row, game_id)?;
@@ -2179,6 +2337,208 @@ mod tests {
     fn accepts_hundreds_of_small_resources() {
         for count in [129usize, 257] {
             assert!(resources(Some(&many_resources(count))), "{count}");
+        }
+    }
+
+    pub(super) fn resource_budget_map() -> Value {
+        let resource = json!({"name":format!("{}000000", "p".repeat(80)),"mime":"image/png","data":"data:image/png;base64,AA=="});
+        let entry_bytes = resource_list_bytes(Some(&json!({"r000000":resource}))).unwrap() - 1;
+        let count = (RESOURCE_LIST_BYTES - 1) / entry_bytes;
+        let mut entries = Map::new();
+        for index in 0..count {
+            let mut item = resource.clone();
+            item["name"] = json!(format!("{}{index:06}", "p".repeat(80)));
+            entries.insert(format!("r{index:06}"), item);
+        }
+        let mut remaining = RESOURCE_LIST_BYTES - (1 + count * entry_bytes);
+        for index in (count - 2)..count {
+            let key = format!("r{index:06}");
+            let name = entries[&key]["name"].as_str().unwrap();
+            let added = remaining.min(200 - name.len() as u64);
+            let name = format!("{name}{}", "x".repeat(added as usize));
+            entries.get_mut(&key).unwrap()["name"] = json!(name);
+            remaining -= added;
+        }
+        assert_eq!(remaining, 0);
+        Value::Object(entries)
+    }
+
+    #[test]
+    fn resource_budget_write_boundaries_preserve_saved_content_and_allow_reads() {
+        let fixture = Fixture::new();
+        fixture.create();
+        let mut game = game("Budget");
+        game["resources"] = resource_budget_map();
+        assert_eq!(
+            resource_list_bytes(game.get("resources")).unwrap(),
+            RESOURCE_LIST_BYTES
+        );
+        let commit_game =
+            |version, game: &Value| commit(version, &[row("games", "game", None, game)]);
+        fixture.request(commit_game(0, &game)).unwrap();
+        let mut draft = json!({"version":3,"gameId":"game","baseContent":game,"documents":{"info":"{}","instructions":"{}","state":"{unfinished","code":"{}","lorebook":"{}","assets":"{unfinished"}});
+        fixture
+            .request(json!({"kind":"writeDraft","gameId":"game","version":0,"draft":draft}))
+            .unwrap();
+        fixture.request(json!({"kind":"versioning","gameId":"game","action":"release","contentVersion":"1.0.0"})).unwrap();
+        let key = game["resources"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .next_back()
+            .unwrap()
+            .clone();
+        let name = game["resources"][&key]["name"].as_str().unwrap().to_owned() + "x";
+        game["resources"][&key]["name"] = json!(name);
+        assert_eq!(
+            resource_list_bytes(game.get("resources")).unwrap(),
+            RESOURCE_LIST_BYTES + 1
+        );
+        assert!(
+            fixture
+                .request(commit_game(1, &game))
+                .unwrap_err()
+                .starts_with("리소스 목록이 너무 커요")
+        );
+        let previous = fixture
+            .request(json!({"kind":"read","gameId":"game"}))
+            .unwrap();
+        assert_eq!(previous["version"], 1);
+        assert_eq!(
+            resource_list_bytes(previous["records"][0]["value"].get("resources")).unwrap(),
+            RESOURCE_LIST_BYTES
+        );
+        draft["baseContent"] = game.clone();
+        assert!(
+            fixture
+                .request(json!({"kind":"writeDraft","gameId":"game","version":1,"draft":draft}))
+                .unwrap_err()
+                .starts_with("리소스 목록이 너무 커요")
+        );
+        assert_eq!(
+            fixture
+                .request(json!({"kind":"readDraft","gameId":"game"}))
+                .unwrap()["version"],
+            1
+        );
+        let db = open(&fixture.0).unwrap();
+        db.execute(
+            "UPDATE games SET value=?1 WHERE id='game'",
+            [game.to_string()],
+        )
+        .unwrap();
+        assert!(
+            fixture
+                .request(json!({"kind":"read","gameId":"game"}))
+                .is_ok()
+        );
+        assert!(fixture.request(json!({"kind":"versioning","gameId":"game","action":"release","contentVersion":"2.0.0"})).unwrap_err().starts_with("리소스 목록이 너무 커요"));
+    }
+
+    #[test]
+    fn resource_budget_unfinished_assets_and_document_operation_caps() {
+        let mut draft = json!({"version":3,"gameId":"game","baseContent":game("Draft"),"documents":{"info":"{}","instructions":"{}","state":"{unfinished","code":"{}","lorebook":"{}","assets":""}});
+        let bytes = RESOURCE_LIST_BYTES.checked_mul(2).unwrap();
+        draft["documents"]["assets"] = json!("x".repeat(bytes as usize));
+        assert!(validate_draft("game", &draft).is_ok());
+        draft["documents"]["assets"] = json!("x".repeat(bytes as usize + 1));
+        assert!(
+            validate_draft("game", &draft)
+                .unwrap_err()
+                .starts_with("리소스 목록이 너무 커요")
+        );
+        let control = "\0".repeat((bytes / 6) as usize) + &"x".repeat((bytes % 6) as usize);
+        draft["documents"]["assets"] = json!(control);
+        assert!(validate_draft("game", &draft).is_ok());
+        assert!(serde_json::to_vec(&draft).unwrap().len() as u64 <= DOCUMENT_DRAFT_SAVE_BYTES);
+        draft["documents"]["assets"] = json!(control + "x");
+        assert!(validate_draft("game", &draft).is_err());
+        assert_eq!(DOCUMENT_DRAFT_SAVE_BYTES, 134_283_264);
+        assert_eq!(DOCUMENT_COMMIT_BYTES, 131_872_672);
+        assert_eq!(DOCUMENT_RELEASE_CREATE_BYTES, DOCUMENT_COMMIT_BYTES);
+        for (operation, maximum) in [
+            ("draftSave", DOCUMENT_DRAFT_SAVE_BYTES),
+            ("commit", DOCUMENT_COMMIT_BYTES),
+            ("releaseCreate", DOCUMENT_RELEASE_CREATE_BYTES),
+        ] {
+            assert!(validate_document_operation_bytes(operation, maximum).is_ok());
+            assert!(
+                validate_document_operation_bytes(operation, maximum.checked_add(1).unwrap())
+                    .is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn resource_budget_matches_inline_package_and_stored_references() {
+        let mut resource = json!({"image":{"name":"images/한🌌.png","mime":"image/png","data":format!("helia-asset:{}", "a".repeat(64))}});
+        let expected = resource_list_bytes(Some(&resource)).unwrap();
+        for data in [
+            "data:image/png;base64,AA==".to_owned(),
+            format!("helia-package:assets/{}", "a".repeat(64)),
+        ] {
+            resource["image"]["data"] = json!(data);
+            assert_eq!(resource_list_bytes(Some(&resource)).unwrap(), expected);
+            assert_eq!(resource["image"]["data"], data);
+        }
+    }
+
+    #[test]
+    fn resource_budget_shared_r_fixtures() {
+        let cases: Value = serde_json::from_str(include_str!(
+            "../../src/lib/testing/fixtures/resource-list-r.json"
+        ))
+        .unwrap();
+        for case in cases.as_array().unwrap() {
+            assert_eq!(
+                resource_list_bytes(case.get("resources")).unwrap(),
+                case["expectedR"].as_u64().unwrap(),
+                "{}",
+                case["name"]
+            );
+        }
+    }
+
+    #[test]
+    fn resource_budget_write_normalizes_extra_fields_before_measuring() {
+        let fixture = Fixture::new();
+        fixture.create();
+        let mut game = game("Normalized");
+        game["resources"] = json!({"image":{"name":"image.png","mime":"image/png","data":"data:image/png;base64,AA==","extra":"x".repeat(RESOURCE_LIST_BYTES as usize),"number":1e21}});
+        assert!(validate_resource_list_budget(game.get("resources")).is_err());
+        fixture
+            .request(commit(0, &[row("games", "game", None, &game)]))
+            .unwrap();
+        let saved = fixture.read()["records"][0]["value"].clone();
+        assert_eq!(saved["resources"]["image"].as_object().unwrap().len(), 3);
+        assert_eq!(resource_list_bytes(saved.get("resources")).unwrap(), 135);
+    }
+
+    #[test]
+    fn resource_budget_operation_caps_cover_control_r_and_inline_together() {
+        use base64::Engine;
+        let mut resources = resource_budget_map();
+        let data = format!(
+            "data:image/png;base64,{}",
+            base64::engine::general_purpose::STANDARD.encode(vec![0u8; 64 * 1024])
+        );
+        for (index, item) in resources.as_object_mut().unwrap().values_mut().enumerate() {
+            item["data"] = if index < 48 {
+                json!(data)
+            } else {
+                json!(format!("helia-asset:{}", "a".repeat(64)))
+            };
+        }
+        assert!(super::resources(Some(&resources)));
+        assert_eq!(
+            resource_list_bytes(Some(&resources)).unwrap(),
+            RESOURCE_LIST_BYTES
+        );
+        let content = json!({"resources":resources,"x":"\0".repeat(16 * 1024 * 1024 - 10)});
+        let bytes = serde_json::to_vec(&content).unwrap().len() as u64;
+        assert!(bytes > 120_706_048);
+        for operation in ["commit", "releaseCreate"] {
+            assert!(validate_document_operation_bytes(operation, bytes).is_ok());
         }
     }
     #[test]

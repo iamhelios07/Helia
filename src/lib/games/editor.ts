@@ -2,8 +2,15 @@ import { parseGameAIContent } from './ai/prompts.js';
 import { createCodeProject, parseCodeProject } from './code-project.js';
 import { parseGame, parseGameSettings, validateGameMetadata, type Game } from './model.js';
 import { parseRegexRules } from './regex.js';
-import { parseResources } from './resources.js';
+import {
+	jsonUtf8Bytes,
+	parseResources,
+	RESOURCE_LIST_BYTES,
+	resourceListError,
+	validateResourceListBudget
+} from './resources.js';
 import { parseStateDocument } from './state/schema.js';
+import { DOCUMENT_OPERATION_LIMITS } from './versioning-validation.js';
 
 export type EditorValidation = { game: Game | null; problems: EditorProblem[] };
 
@@ -95,9 +102,14 @@ export function changedEditorDraft(draft: EditorDraft): boolean {
 	return EDITOR_DOCUMENTS.some(({ id }) => draft.documents[id] !== initial[id]);
 }
 
-export function readEditorDraft(text: string, gameId: string): EditorDraft {
-	if (text.length > MAX_DRAFT_LENGTH) {
-		throw new Error('편집 초안이 너무 커요.');
+export function readEditorDraft(
+	text: string,
+	gameId: string,
+	{ write = false }: { write?: boolean } = {}
+): EditorDraft {
+	// Resources have their own budgets, so the full text uses the document cap.
+	if (write && text.length > Number(DOCUMENT_OPERATION_LIMITS.draftSave)) {
+		throw Error('편집 초안이 너무 커요.');
 	}
 	const value: unknown = JSON.parse(text);
 	if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -118,6 +130,9 @@ export function readEditorDraft(text: string, gameId: string): EditorDraft {
 	if (EDITOR_DOCUMENTS.some(({ id }) => typeof source[id] !== 'string')) {
 		throw new Error('잘못된 초안');
 	}
+	if (write) {
+		validateEditorDraftBudget(row as unknown as EditorDraft);
+	}
 	// Rebuild the stored base with the same runtime validators used by persisted games.
 	const base = parseGame({
 		...(row.baseContent as object),
@@ -136,6 +151,38 @@ export function readEditorDraft(text: string, gameId: string): EditorDraft {
 		) as EditorDraft['documents']
 	};
 }
+
+/** The asset document may be unfinished JSON: measure it without parsing its contents. */
+export interface EditorDraftBudgetCache {
+	resources?: GameEditorContent['resources'];
+	assets?: string;
+	assetBytes?: bigint;
+}
+
+/** Reuse only across immutable editor snapshots; callers without a cache always recheck. */
+export function validateEditorDraftBudget(
+	draft: EditorDraft,
+	cache: EditorDraftBudgetCache = {}
+): void {
+	const { resources, ...baseContent } = draft.baseContent;
+	const { assets, ...documents } = draft.documents;
+	if (resources !== cache.resources) {
+		validateResourceListBudget(resources ?? {});
+		cache.resources = resources;
+	}
+	if (assets !== cache.assets) {
+		cache.assetBytes = jsonUtf8Bytes(assets) - 2n;
+		cache.assets = assets;
+	}
+	const bytes = cache.assetBytes ?? 0n;
+	if (bytes > 2n * RESOURCE_LIST_BYTES) {
+		throw resourceListError(Object.keys(resources ?? {}).length, bytes);
+	}
+	const remainder = JSON.stringify({ ...draft, baseContent, documents });
+	if (remainder.length > MAX_DRAFT_LENGTH) {
+		throw Error('편집 초안이 너무 커요.');
+	}
+}
 export function loadEditorDraft(gameId: string): EditorDraft | null {
 	try {
 		const text = localStorage.getItem(prefix + gameId);
@@ -144,13 +191,14 @@ export function loadEditorDraft(gameId: string): EditorDraft | null {
 		throw new Error('편집 초안을 불러오지 못했어요. 저장된 초안은 유지됩니다.');
 	}
 }
-export function storeEditorDraft(draft: EditorDraft): void {
+export function storeEditorDraft(draft: EditorDraft, cache?: EditorDraftBudgetCache): void {
+	validateEditorDraftBudget(draft, cache);
 	try {
 		const text = JSON.stringify(draft);
 		readEditorDraft(text, draft.gameId);
 		localStorage.setItem(prefix + draft.gameId, text);
 	} catch {
-		throw new Error('편집 초안을 저장하지 못했어요. 입력 내용은 화면에 유지됩니다.');
+		throw new Error('이 브라우저에 임시 복구본을 남기지 못했어요. 입력 내용은 화면에 유지됩니다.');
 	}
 }
 export function clearEditorDraft(gameId: string, expectedDraft?: EditorDraft): void {

@@ -1,0 +1,111 @@
+[
+	{
+		"name": "empty",
+		"resources": {},
+		"expectedR": 2
+	},
+	{
+		"name": "korean",
+		"resources": {
+			"image": {
+				"name": "images/\ud55c\uae00.png",
+				"mime": "image/png",
+				"data": "helia-asset:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+			}
+		},
+		"expectedR": 143
+	},
+	{
+		"name": "emoji",
+		"resources": {
+			"image": {
+				"name": "images/\ud83c\udf0c.png",
+				"mime": "image/png",
+				"data": "helia-asset:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+			}
+		},
+		"expectedR": 141
+	},
+	{
+		"name": "quote and backslash",
+		"resources": {
+			"image": {
+				"name": "a\"b\\c",
+				"mime": "image/png",
+				"data": "helia-asset:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+			}
+		},
+		"expectedR": 133
+	},
+	{
+		"name": "control and Unicode separators",
+		"resources": {
+			"image": {
+				"name": "\u0000\u2028\u007f",
+				"mime": "image/png",
+				"data": "helia-asset:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+			}
+		},
+		"expectedR": 136
+	},
+	{
+		"name": "escaped key",
+		"resources": {
+			"\ud55c\ud83c\udf0c\"\\\u0000\u2028\u007f": {
+				"name": "image.png",
+				"mime": "image/png",
+				"data": "helia-asset:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+			}
+		},
+		"expectedR": 151
+	},
+	{
+		"name": "inline reference",
+		"resources": {
+			"image": {
+				"name": "image.png",
+				"mime": "image/png",
+				"data": "data:image/png;base64,AA=="
+			}
+		},
+		"expectedR": 135
+	},
+	{
+		"name": "package reference",
+		"resources": {
+			"image": {
+				"name": "image.png",
+				"mime": "image/png",
+				"data": "helia-package:assets/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+			}
+		},
+		"expectedR": 135
+	},
+	{
+		"name": "stored reference",
+		"resources": {
+			"image": {
+				"name": "image.png",
+				"mime": "image/png",
+				"data": "helia-asset:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+			}
+		},
+		"expectedR": 135
+	},
+	{
+		"name": "extra fields",
+		"resources": {
+			"image": {
+				"name": "image.png",
+				"mime": "image/png",
+				"data": "helia-asset:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+				"extra": {
+					"count": 42,
+					"note": "\ud55c\ud83c\udf0c\"\\\u0000\u2028\u007f"
+				},
+				"flag": true
+			}
+		},
+		"expectedR": 199
+	}
+]

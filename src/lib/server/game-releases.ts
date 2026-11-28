@@ -4,6 +4,7 @@ import { createHash, randomUUID } from 'node:crypto';
 
 import { parseGame, type Game } from '#lib/games/model.js';
 import { canonicalReleaseContent, gameReleaseContent } from '#lib/games/release-content.js';
+import { validateResourceListBudget } from '#lib/games/resources.js';
 import { validateGameReleaseContent } from '#lib/games/versioning-validation.js';
 import {
 	originalGameId,
@@ -34,7 +35,7 @@ function releaseContent(db: Database.Database, game: Game) {
 		}
 		return (JSON.parse(blob.value) as { data: string }).data;
 	});
-	validateGameReleaseContent(content);
+	validateGameReleaseContent(content, { write: false });
 	return {
 		content,
 		contentHash: createHash('sha256').update(canonicalReleaseContent(content)).digest('hex')
@@ -90,6 +91,7 @@ export function initializeGameReleases(db: Database.Database) {
 /** Normal writes cannot reassign a released game's original identity. */
 export function preserveOriginalGameId(db: Database.Database, gameId: string, value: unknown) {
 	const game = parseGame(value);
+	validateResourceListBudget(game.resources ?? {});
 	const previous = db.prepare('SELECT value FROM games WHERE id=?').get(gameId) as
 		{ value: string } | undefined;
 	const prior = previous ? parseGame(JSON.parse(previous.value)) : undefined;
@@ -141,6 +143,7 @@ class GameReleases {
 		return releaseVersioning(this.game, this.contentHash, releases, selection?.release_id ?? null);
 	}
 	private release(request: Extract<ReleaseRequest, { action: 'release' }>): StorageReply {
+		validateResourceListBudget(this.game.resources ?? {});
 		if (this.game.trashedAt) {
 			throw Error('Cannot release a trashed game');
 		}

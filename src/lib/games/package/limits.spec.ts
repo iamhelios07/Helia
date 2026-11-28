@@ -8,6 +8,7 @@ import {
 	CONTENT_NODE_LIMIT,
 	PACKAGE_LIMITS,
 	parsePackageJson,
+	RESOURCE_SCAN_NODE_LIMIT,
 	serializedRequestSize,
 	serializePackageJson
 } from './limits.js';
@@ -67,6 +68,25 @@ it('does not count separators or openers inside strings, including escaped quote
 	// A backslash-escaped quote keeps the following separators inside the string.
 	const escaped = '"\\",[{"';
 	expect(() => checkContentComplexity(jsonText(escaped))).not.toThrow();
+});
+
+it('bounds resource node bombs independently before parsing', () => {
+	const maximum = Number(RESOURCE_SCAN_NODE_LIMIT);
+	const atBoundary = '{"resources":[' + '0,'.repeat(maximum - 1) + '0]}';
+	expect(() => checkContentComplexity(jsonText(atBoundary))).not.toThrow();
+	const bomb = '{"resources":[' + '0,'.repeat(maximum) + '0]}';
+	expect(() => checkContentComplexity(jsonText(bomb))).toThrow(
+		expect.objectContaining({ code: 'content' })
+	);
+	const nestedArrays = '{"resources":[' + '[],'.repeat(maximum / 2) + '[]]}';
+	expect(() => checkContentComplexity(jsonText(nestedArrays))).toThrow();
+});
+
+it('never exempts root arrays that contain a resources string', () => {
+	const payload = '["resources",[' + '0,'.repeat(2 * CONTENT_NODE_LIMIT) + '0]]';
+	expect(() => checkContentComplexity(jsonText(payload))).toThrow(
+		expect.objectContaining({ code: 'content' })
+	);
 });
 
 it('pins the shared node and character budgets to versioning-validation behavior', () => {

@@ -38,7 +38,7 @@ export function editorDraftStorage(connection: Database.Database) {
 			}
 			const text = draft === null ? null : JSON.stringify(draft);
 			if (text !== null) {
-				readEditorDraft(text, gameId);
+				readEditorDraft(text, gameId, { write: true });
 			}
 			connection
 				.prepare(

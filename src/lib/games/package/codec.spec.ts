@@ -205,6 +205,9 @@ function countedCharacters(value: unknown): number {
 		if (typeof item === 'string') {
 			total += item.length;
 		} else if (item && typeof item === 'object') {
+			if (!Array.isArray(item)) {
+				total += Object.keys(item).reduce((sum, key) => sum + key.length, 0);
+			}
 			pending.push(...Object.values(item));
 		}
 	}
@@ -212,25 +215,22 @@ function countedCharacters(value: unknown): number {
 }
 
 it('matches the versioning-validation character budget across reference expansion', async () => {
-	// A 1 MiB asset expands to ~1.4 M characters, so the filler text keeps the stored
-	// content.json under 16 MiB while the restored content lands exactly on the shared
-	// 16 Mi UTF-16 budget.
-	const bytes = new Uint8Array(PACKAGE_LIMITS.asset);
+	const bytes = new Uint8Array(1024 * 1024);
 	const hash = await sha256(bytes);
 	const reference = 'helia-package:assets/' + hash;
 	const content = structuredClone(minimal.content) as typeof minimal.content & {
 		resources: Record<string, { name: string; mime: string; data: string }>;
 	};
 	content.resources = { portrait: { name: 'portrait.png', mime: 'image/png', data: reference } };
-	const delta =
-		4 * Math.ceil(bytes.length / 3) + 'data:image/png;base64,'.length - reference.length;
-	const room = CONTENT_CHARACTER_LIMIT - countedCharacters(content) - delta;
+	(content as Record<string, unknown>).id = null;
+	const { resources: _resources, ...remainder } = content;
+	void _resources;
+	const room = CONTENT_CHARACTER_LIMIT - countedCharacters(remainder) - 'resources'.length;
 	expect(room).toBeGreaterThan(0);
 	content.settings.firstMessage = 'x'.repeat(content.settings.firstMessage.length + room);
-	expect(countedCharacters(content) + delta).toBe(CONTENT_CHARACTER_LIMIT);
+	expect(countedCharacters(remainder) + 'resources'.length).toBe(CONTENT_CHARACTER_LIMIT);
 	// An installation key keeps the accepted case cheap: verification reports it right
 	// after the character budget, without canonicalizing the restored 16 Mi characters.
-	(content as Record<string, unknown>).id = null;
 	const archive = async () => {
 		const entries = decodeZip(await encodeGamePackage(release()));
 		entries.push({ name: 'assets/' + hash, data: bytes });
@@ -255,19 +255,23 @@ it('rejects malformed UTF-8 content after an otherwise valid byte digest', async
 	await expect(decodeGamePackage(encodeZip(entries))).rejects.toMatchObject({ code: 'format' });
 });
 
-it.each(['\0', '한', '🌌'])(
+it.each([
+	{ character: '\0', repetitions: 6 * 1024 * 1024, code: 'limit' },
+	{ character: '한', repetitions: 12 * 1024 * 1024, code: 'limit' },
+	{ character: '🌌', repetitions: 8 * 1024 * 1024, code: 'content' }
+])(
 	'checks actual UTF-8 content size before ZIP allocation: %j',
-	async (character) => {
+	async ({ character, repetitions, code }) => {
 		const input = release();
-		input.content.settings.description = character.repeat(6 * 1024 * 1024);
-		await expect(encodeGamePackage(input)).rejects.toMatchObject({ code: 'limit' });
+		input.content.settings.description = character.repeat(repetitions);
+		await expect(encodeGamePackage(input)).rejects.toMatchObject({ code });
 	}
 );
 
 it('counts long object keys toward the encoded size', async () => {
 	const input = release();
 	Object.assign(input.content, { ['x'.repeat(PACKAGE_LIMITS.content)]: null });
-	await expect(encodeGamePackage(input)).rejects.toMatchObject({ code: 'limit' });
+	await expect(encodeGamePackage(input)).rejects.toMatchObject({ code: 'content' });
 });
 
 it('checks File size before reading its bytes', async () => {

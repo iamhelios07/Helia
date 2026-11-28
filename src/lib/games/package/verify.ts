@@ -6,6 +6,7 @@ import {
 	gameReleaseContent,
 	hashGameReleaseContent
 } from '../release-content.js';
+import { ResourceListBudgetError } from '../resources.js';
 import { releaseHash, validateGameReleaseContent } from '../versioning-validation.js';
 import { GamePackageError, packageObject, requirePackage } from './limits.js';
 import { packageOriginalGameId, packageTimestamp } from './manifest.js';
@@ -74,6 +75,9 @@ export async function verifyReleaseContent(
 		requirePackage(contentHash === release.contentHash, 'integrity');
 		return { content, contentHash };
 	} catch (error) {
+		if (error instanceof ResourceListBudgetError) {
+			throw new GamePackageError('limit', error);
+		}
 		if (error instanceof GamePackageError) {
 			throw error;
 		}

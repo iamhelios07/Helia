@@ -2,6 +2,7 @@ import { json } from '@sveltejs/kit';
 
 import { GAME_EDIT_LOCKED, INVALID_EDIT_LOCK } from '#lib/games/edit-lock.js';
 import { GamePackageError } from '#lib/games/package/limits.js';
+import { ResourceListBudgetError } from '#lib/games/resources.js';
 import { serverStorage } from '#lib/server/sqlite.js';
 import { storageSyncAsync } from '#lib/server/storage-sync.js';
 import { CONFLICT } from '#lib/storage/protocol.js';
@@ -31,6 +32,9 @@ export const POST: RequestHandler = async ({ request, url }) => {
 };
 
 function storageFailure(error: unknown): Response {
+	if (error instanceof ResourceListBudgetError) {
+		return json({ error: error.message }, { status: 400 });
+	}
 	if (error instanceof Error && [GAME_EDIT_LOCKED, INVALID_EDIT_LOCK].includes(error.message)) {
 		return json(
 			{ error: error.message, errorCode: error.message },

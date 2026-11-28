@@ -179,6 +179,7 @@ fn validate_request(request: &Value) -> Result<(), String> {
     )?;
     let release = &request["release"];
     require(release.is_object(), "format")?;
+    super::super::validate_resource_list_budget(release["content"].get("resources"))?;
     bound_content(&release["content"], 0, &mut (0, 0)).map_err(|_| error("content"))?;
     hash(&release["contentHash"], "content")?;
     require(

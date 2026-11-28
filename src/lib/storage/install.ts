@@ -4,6 +4,7 @@ import type { GameVersioning } from '#lib/games/versioning.js';
 
 import { GamePackageError, packageObject, requirePackage } from '#lib/games/package/limits.js';
 import { packageOriginalGameId, validatePackageRelease } from '#lib/games/package/manifest.js';
+import { ResourceListBudgetError } from '#lib/games/resources.js';
 import {
 	contentVersion,
 	parseGameVersioning,
@@ -94,7 +95,10 @@ function readInstallRequest(value: unknown): InstallRequest | InstallPreviewRequ
 	try {
 		validateGameReleaseContent(release.content);
 		releaseHash(release.contentHash);
-	} catch {
+	} catch (error) {
+		if (error instanceof ResourceListBudgetError) {
+			throw new GamePackageError('limit', error);
+		}
 		throw new GamePackageError('content');
 	}
 	const { content, ...summary } = release;

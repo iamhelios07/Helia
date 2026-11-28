@@ -2,11 +2,11 @@ import type { GameReleaseContent } from '../versioning.js';
 import type { PackageRelease } from './manifest.js';
 import type { ZipEntry } from './zip.js';
 
+import { ResourceListBudgetError } from '../resources.js';
 import { validateGameReleaseContent } from '../versioning-validation.js';
 import {
 	checkContentComplexity,
 	checkPackageSize,
-	CONTENT_CHARACTER_LIMIT,
 	GamePackageError,
 	packageObject,
 	PACKAGE_LIMITS,
@@ -82,6 +82,9 @@ export async function encodeGamePackage(
 			...assets
 		]);
 	} catch (error) {
+		if (error instanceof ResourceListBudgetError) {
+			throw new GamePackageError('limit', error);
+		}
 		if (error instanceof GamePackageError) {
 			throw error;
 		}
@@ -92,7 +95,7 @@ export async function encodeGamePackage(
 function restoreResources(content: Record<string, unknown>, assets: Map<string, Uint8Array>): void {
 	const resources = packageObject(content.resources);
 	const used = new Set<string>();
-	let characters = contentCharacters(content);
+	let bytesTotal = 0n;
 	// Preflight expansion before base64 allocation: many references can share a large asset.
 	const references = Object.values(resources).map((raw) => {
 		const resource = packageObject(raw);
@@ -104,30 +107,16 @@ function restoreResources(content: Record<string, unknown>, assets: Map<string, 
 		const hash = resource.data.slice(referencePrefix.length);
 		const bytes = assets.get(hash);
 		requirePackage(bytes, 'integrity');
-		characters +=
-			4 * Math.ceil(bytes.length / 3) +
-			`data:${resource.mime};base64,`.length -
-			resource.data.length;
+		bytesTotal += BigInt(bytes.length);
 		used.add(hash);
 		return { resource, bytes };
 	});
 	requirePackage(used.size === assets.size, 'integrity');
-	// Same UTF-16 string budget as validateGameReleaseContent, checked before restoration.
-	requirePackage(characters <= CONTENT_CHARACTER_LIMIT, 'content');
+	// Keep the existing inline media budget until v2; metadata has its own list budget.
+	requirePackage(bytesTotal <= 3n * 1024n * 1024n, 'content');
 	for (const { resource, bytes } of references) {
 		resource.data = `data:${String(resource.mime)};base64,${base64(bytes)}`;
 	}
-}
-
-/** Called only after the bounded raw traversal, so recursion is already safe. */
-function contentCharacters(value: unknown): number {
-	if (typeof value === 'string') {
-		return value.length;
-	}
-	if (value && typeof value === 'object') {
-		return Object.values(value).reduce<number>((sum, item) => sum + contentCharacters(item), 0);
-	}
-	return 0;
 }
 
 export async function decodeGamePackage(input: Uint8Array | Blob): Promise<{
@@ -167,6 +156,9 @@ export async function decodeGamePackage(input: Uint8Array | Blob): Promise<{
 		);
 		return { manifest, content: verified.content };
 	} catch (error) {
+		if (error instanceof ResourceListBudgetError) {
+			throw new GamePackageError('limit', error);
+		}
 		if (error instanceof GamePackageError) {
 			throw error;
 		}

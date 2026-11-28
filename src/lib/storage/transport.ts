@@ -1,14 +1,20 @@
 import {
 	checkPackageSize,
+	checkSaveRequestSize,
 	GamePackageError,
 	isGamePackageErrorCode
 } from '#lib/games/package/limits.js';
+import { ResourceListBudgetError, validateResourceListBudget } from '#lib/games/resources.js';
 import { isDesktopBuild, isTauri } from '#lib/platform/index.js';
 
 import installRequestLimit from './install-request-limit.json';
 import { synchronizedStorage } from './sync-client.js';
 
-function packageError(error: unknown): GamePackageError | undefined {
+function storageError(error: unknown): Error | undefined {
+	const message = typeof error === 'string' ? error : field(error, 'error');
+	if (typeof message === 'string' && message.startsWith('리소스 목록이 너무 커요(')) {
+		return new ResourceListBudgetError(message);
+	}
 	if (
 		typeof error === 'object' &&
 		error !== null &&
@@ -44,22 +50,61 @@ async function sendNative(request: unknown): Promise<unknown> {
 	try {
 		return await host(nativeRequest);
 	} catch (error) {
-		throw packageError(error) ?? error;
+		throw storageError(error) ?? error;
+	}
+}
+
+function field(value: unknown, key: string): unknown {
+	return value && typeof value === 'object' ? Reflect.get(value, key) : undefined;
+}
+
+function checkWriteRequest(request: unknown): string | undefined {
+	const command = field(request, 'kind') === 'sync' ? field(request, 'request') : request;
+	const kind = field(command, 'kind');
+	if (kind === 'commit' || kind === 'create') {
+		checkResourceRecords(command);
+		return checkSaveRequestSize(request);
+	}
+	// Release creation is assembled from the database; its small command cannot
+	// predict the content size. The host applies the authoritative write budget.
+	if (kind === 'install' || kind === 'installPreview') {
+		validateResourceListBudget(
+			field(field(field(command, 'release'), 'content'), 'resources') ?? {}
+		);
+	}
+}
+
+function checkResourceRecords(command: unknown) {
+	const records = field(command, 'records');
+	for (const row of Array.isArray(records) ? records : []) {
+		if (field(row, 'table') === 'games') {
+			const resources =
+				field(field(row, 'value'), 'resources') ??
+				field(field(field(row, 'patch'), 'set'), 'resources');
+			if (resources !== undefined) {
+				validateResourceListBudget(resources);
+			}
+		}
+	}
+	const resources = field(field(field(command, 'gamePatch'), 'set'), 'resources');
+	if (resources !== undefined) {
+		validateResourceListBudget(resources);
 	}
 }
 
 async function send(request: unknown): Promise<unknown> {
+	const body = checkWriteRequest(request);
 	if (isDesktopBuild) {
 		return sendNative(request);
 	}
 	const response = await fetch('/api/storage', {
 		method: 'POST',
 		headers: { 'content-type': 'application/json' },
-		body: JSON.stringify(request)
+		body: body ?? JSON.stringify(request)
 	});
 	const result: unknown = await response.json().catch(() => null);
 	if (!response.ok) {
-		const failure = response.status === 400 ? packageError(result) : undefined;
+		const failure = response.status === 400 ? storageError(result) : undefined;
 		if (failure) {
 			throw failure;
 		}
@@ -77,11 +122,12 @@ async function send(request: unknown): Promise<unknown> {
 
 async function loadAsset(gameId: string, hash: string): Promise<string> {
 	if (isDesktopBuild) {
-		const result = (await send({ kind: 'asset', gameId, hash })) as { data: string };
-		if (typeof result.data !== 'string' || !result.data.startsWith('data:')) {
+		const result: unknown = await send({ kind: 'asset', gameId, hash });
+		const data = field(result, 'data');
+		if (typeof data !== 'string' || !data.startsWith('data:')) {
 			throw Error('Invalid asset');
 		}
-		return result.data;
+		return data;
 	}
 	const response = await fetch(`/api/games/${encodeURIComponent(gameId)}/assets/${hash}`, {
 		cache: 'force-cache'

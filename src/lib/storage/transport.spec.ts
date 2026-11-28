@@ -42,6 +42,40 @@ it('preserves conflict errors so the repository can retry', async () => {
 	);
 	await expect(storageRequest({ kind: 'list' })).rejects.toThrow('STORAGE_CONFLICT');
 });
+
+it.each([false, true])(
+	'rejects an oversized save before sending and preserves input (desktop=%s)',
+	async (desktop) => {
+		flags.desktop = desktop;
+		flags.native = desktop;
+		const host = vi.fn().mockResolvedValue({ version: 0, records: [] });
+		const fetch = vi.fn().mockResolvedValue(Response.json({ version: 0, records: [] }));
+		const view = { __HELIA_STORAGE__: host };
+		Object.assign(view, { top: view });
+		vi.stubGlobal('window', view);
+		vi.stubGlobal('fetch', fetch);
+		const padding = '한\0'.repeat(3 * 1024 * 1024);
+		const request = {
+			kind: 'commit' as const,
+			gameId: 'large-save',
+			version: 0,
+			deleteSessions: [],
+			records: [
+				{
+					table: 'games' as const,
+					id: 'large-save',
+					gameId: 'large-save',
+					sessionId: null,
+					value: { padding }
+				}
+			]
+		};
+		await expect(storageRequest(request)).rejects.toThrow('저장할 내용이 너무 커요');
+		expect(request.records[0].value.padding).toBe(padding);
+		expect(host).not.toHaveBeenCalled();
+		expect(fetch).not.toHaveBeenCalled();
+	}
+);
 it.each(errorCodes)(
 	'restores web 400 package error %s with its stable local message',
 	async (code) => {
@@ -94,6 +128,68 @@ it('routes desktop requests to the single host command', async () => {
 	expect(host).toHaveBeenCalledWith({ kind: 'sync', request: { kind: 'list' }, known: [] });
 	expect(nativeInvoke).not.toHaveBeenCalled();
 });
+
+it('shows a native resource budget rejection with its count and size', async () => {
+	flags.desktop = true;
+	flags.native = true;
+	const message = '리소스 목록이 너무 커요(항목 80000개, 약 16.1 MiB)';
+	const host = vi.fn().mockRejectedValue(message);
+	const view = { __HELIA_STORAGE__: host };
+	Object.assign(view, { top: view });
+	vi.stubGlobal('window', view);
+	await expect(
+		storageRequest({
+			kind: 'versioning',
+			gameId: 'oversized',
+			action: 'release',
+			contentVersion: '1.0.0'
+		})
+	).rejects.toThrow(message);
+});
+
+it('retains a web resource budget message even when wrapped in a package limit error', async () => {
+	const message = '리소스 목록이 너무 커요(항목 80000개, 약 16.1 MiB)';
+	vi.stubGlobal(
+		'fetch',
+		vi
+			.fn()
+			.mockResolvedValue(Response.json({ error: message, errorCode: 'limit' }, { status: 400 }))
+	);
+	await expect(
+		storageRequest({
+			kind: 'installPreview',
+			originalGameId: minimalRelease.originalGameId,
+			contentVersion: '1.0.0'
+		})
+	).rejects.toThrow(message);
+});
+
+it.each([false, true])(
+	'checks supplied install preview resources before sending (desktop=%s)',
+	async (desktop) => {
+		flags.desktop = desktop;
+		const fetch = vi.fn();
+		vi.stubGlobal('fetch', fetch);
+		const request = {
+			kind: 'installPreview' as const,
+			originalGameId: minimalRelease.originalGameId,
+			contentVersion: '1.0.0',
+			release: {
+				content: {
+					resources: {
+						image: {
+							name: 'x'.repeat(16 * 1024 * 1024),
+							mime: 'image/png',
+							data: 'helia-asset:' + 'a'.repeat(64)
+						}
+					}
+				}
+			}
+		};
+		await expect(storageRequest(request)).rejects.toThrow('리소스 목록이 너무 커요(항목 1개');
+		expect(fetch).not.toHaveBeenCalled();
+	}
+);
 it.each(errorCodes)(
 	'restores native package error %s with the stable local message',
 	async (code) => {

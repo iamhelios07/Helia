@@ -5,7 +5,7 @@ import {
 	gameSummary,
 	type GameSummary
 } from '#lib/games/model.js';
-import { MEDIA_MIMES } from '#lib/games/resources.js';
+import { MEDIA_MIMES, validateResourceListBudget } from '#lib/games/resources.js';
 import {
 	blobId,
 	counter,
@@ -196,6 +196,7 @@ function parseRecords(input: unknown, gameId?: string, portable = false): Stored
 		}
 		const parsed = storedRecord(row.table as Table, row.value, row.sessionId as string);
 		if (portable && parsed.table === 'games') {
+			validateResourceListBudget((parsed.value as { resources?: unknown }).resources ?? {});
 			assertPortableResources(parsed.value);
 		}
 		if (
@@ -270,6 +271,7 @@ export function patchedGame(value: unknown, patch: GamePatch): ReturnType<typeof
 		delete next[key];
 	}
 	const game = parseGame(next);
+	validateResourceListBudget(game.resources ?? {});
 	assertPortableResources(game);
 	return game;
 }
