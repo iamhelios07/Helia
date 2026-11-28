@@ -7,6 +7,8 @@ use serde_json::{Map, Value, json};
 
 const SCHEMA: &str = include_str!("../../src/lib/storage/game-releases.sql");
 const ERROR: &str = "Invalid game release";
+#[path = "game_release_leases.rs"]
+mod read_leases;
 const LIMIT: usize = 10_000;
 
 #[path = "game_install.rs"]
@@ -828,7 +830,17 @@ fn stream_release_digest(
     game_id: &str,
     content: &Value,
 ) -> Result<String, String> {
+    stream_release_digest_with_clock(connection, game_id, content, std::time::Instant::now)
+}
+
+fn stream_release_digest_with_clock(
+    connection: &Connection,
+    game_id: &str,
+    content: &Value,
+    mut now: impl FnMut() -> std::time::Instant,
+) -> Result<String, String> {
     let mut objects: Vec<String> = Vec::new();
+    let mut media_by_blob = std::collections::HashMap::new();
     if let Some(entries) = content["resources"].as_object() {
         for asset in entries.values() {
             if let Some(hash) = asset["data"]
@@ -837,36 +849,30 @@ fn stream_release_digest(
             {
                 let media = crate::runtime_content::open_media(connection, game_id, hash)?
                     .ok_or_else(|| packages::error("missingAsset"))?;
-                if let Some(object_id) = media.object_id {
-                    objects.push(object_id);
+                if let Some(object_id) = &media.object_id {
+                    objects.push(object_id.clone());
                 }
+                media_by_blob.insert(hash, media);
             }
         }
     }
     objects.sort();
     objects.dedup();
-    let mut leases: Vec<String> = Vec::new();
+    let mut leases = read_leases::ReadLeases::new(connection, now());
     for object in &objects {
-        let id = uuid()?;
-        connection.execute(
-            "INSERT INTO media_leases(id,game_id,object_id,kind,expires_at) VALUES(?1,?2,?3,'read',strftime('%Y-%m-%dT%H:%M:%fZ','now','+3 minutes'))",
-            params![id, game_id, object],
-        ).map_err(db_error)?;
-        leases.push(id);
+        leases.add(game_id, object)?;
     }
-    let result = crate::media_identity::hash_release_content(content, &mut |reference, sink| {
+    crate::media_identity::hash_release_content(content, &mut |reference, sink| {
         let hash = reference.strip_prefix("helia-asset:").ok_or(ERROR)?;
-        let media = crate::runtime_content::open_media(connection, game_id, hash)?
+        let media = media_by_blob
+            .get(hash)
             .ok_or_else(|| packages::error("missingAsset"))?;
         for chunk in media.read(0, media.size)? {
-            sink(&chunk?);
+            leases.renew(now())?;
+            sink(&chunk.map_err(|_| packages::error("missingAsset"))?);
         }
         Ok(())
-    });
-    for id in &leases {
-        let _ = connection.execute("DELETE FROM media_leases WHERE id=?1", [id]);
-    }
-    result
+    })
 }
 
 fn release_digest(
@@ -1096,10 +1102,9 @@ pub(super) fn request(connection: &mut Connection, input: Value) -> Result<Value
                 .map_err(|_| "Game release not found")?;
             let content: Value = serde_json::from_str(&raw).map_err(|_| ERROR)?;
             let hash = release_digest(connection, &game, &content)?;
-            if hash != stored {
-                return Err(packages::error("integrity"));
-            }
-            Ok(json!({"version":version,"records":[],"releaseVerification":{"contentHash":hash}}))
+            Ok(
+                json!({"version":version,"records":[],"releaseVerification":{"contentHash":hash,"valid":hash == stored}}),
+            )
         }
         Request::Read { .. } => {
             // Advisory read: the digest is streamed outside any write lock.
@@ -1719,6 +1724,7 @@ mod tests {
         let hash = verified["releaseVerification"]["contentHash"]
             .as_str()
             .unwrap();
+        assert_eq!(verified["releaseVerification"]["valid"], true);
         assert_eq!(
             hash,
             released["state"]["currentRelease"]["contentHash"]
@@ -1788,5 +1794,91 @@ mod tests {
         )
         .unwrap();
         assert_eq!(released["releaseResult"]["kind"], "released");
+    }
+
+    #[test]
+    fn reference_verification_detects_changed_truncated_and_missing_chunks() {
+        for damage in ["changed", "truncated", "missing"] {
+            let mut db = media_connection();
+            let mut game = install(&db, "one");
+            let blob = seed_media(&db, "one", &[1, 2, 3], "image/png");
+            game["resources"] = reference_resources(blob["id"].as_str().unwrap(), "image/png");
+            save(&db, &game);
+            let released = release(&mut db, "one", "1.0.0");
+            let release_id = released["state"]["currentRelease"]["id"].clone();
+            if damage == "missing" {
+                db.execute("DELETE FROM media_chunks", []).unwrap();
+            } else {
+                let bytes: Vec<u8> = if damage == "changed" {
+                    vec![3, 2, 1]
+                } else {
+                    vec![1, 2]
+                };
+                db.execute("UPDATE media_chunks SET data=?1", [bytes])
+                    .unwrap();
+            }
+            let result = request(
+                &mut db,
+                json!({"kind":"versioning","action":"verifyRelease","gameId":"one","releaseId":release_id}),
+            );
+            if damage == "changed" {
+                assert_eq!(result.unwrap()["releaseVerification"]["valid"], false);
+            } else {
+                assert_eq!(result.unwrap_err(), packages::error("missingAsset"));
+            }
+            assert_eq!(
+                db.query_row("SELECT count(*) FROM media_leases", [], |r| r
+                    .get::<_, i64>(0))
+                    .unwrap(),
+                0
+            );
+        }
+    }
+
+    #[test]
+    fn reference_digest_renews_every_object_while_streaming_with_a_fake_clock() {
+        use std::time::{Duration, Instant};
+        let db = media_connection();
+        let mut game = install(&db, "one");
+        install(&db, "two");
+        let blob = seed_media(&db, "one", &vec![1; 4 * 1_048_576], "image/png");
+        let other = seed_media(&db, "two", &[2], "image/png");
+        // Two ready objects owned by the same game, both pinned before hashing begins.
+        db.execute(
+            "UPDATE media_objects SET game_id='one' WHERE game_id='two'",
+            [],
+        )
+        .unwrap();
+        let mut other = other;
+        other["gameId"] = json!("one");
+        db.execute(
+            "UPDATE blobs SET game_id='one',value=?1 WHERE game_id='two'",
+            [other.to_string()],
+        )
+        .unwrap();
+        game["resources"] = reference_resources(blob["id"].as_str().unwrap(), "image/png");
+        game["resources"]["second"] =
+            reference_resources(other["id"].as_str().unwrap(), "image/png")["portrait"].clone();
+        game["resources"]["second"]["name"] = json!("images/second.png");
+        let content = content(&db, &game).unwrap();
+        db.execute_batch("CREATE TABLE renewals(id TEXT); CREATE TRIGGER renewed AFTER UPDATE ON media_leases BEGIN INSERT INTO renewals VALUES(NEW.id); END;").unwrap();
+        let mut tick = Instant::now();
+        let hash = stream_release_digest_with_clock(&db, "one", &content, || {
+            tick += Duration::from_secs(61);
+            tick
+        })
+        .unwrap();
+        assert_eq!(
+            db.query_row("SELECT count(*) FROM renewals", [], |r| r.get::<_, i64>(0))
+                .unwrap(),
+            10
+        );
+        assert_eq!(
+            db.query_row("SELECT count(DISTINCT id) FROM renewals", [], |r| r
+                .get::<_, i64>(0))
+                .unwrap(),
+            2
+        );
+        assert_eq!(hash, stream_release_digest(&db, "one", &content).unwrap());
     }
 }

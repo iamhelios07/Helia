@@ -5,7 +5,7 @@ import { mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 
 import { hostAILeases } from '#lib/games/ai/leases.js';
-import { gameSummary } from '#lib/games/model.js';
+import { gameSummary, parseGame } from '#lib/games/model.js';
 import { record } from '#lib/games/state/model.js';
 import mediaSchema from '#lib/storage/media.sql?raw';
 import migration from '#lib/storage/migrations/0000_initial.sql?raw';
@@ -184,7 +184,6 @@ class Storage {
 	}
 	private writeGamesRow(row: StoredRecord, create: boolean, value: string) {
 		const game = preserveOriginalGameId(this.connection, row.id, JSON.parse(value));
-		assertOwnedResources(this.connection, row.id, game.resources ?? {});
 		value = JSON.stringify(game);
 		if (create) {
 			this.db.run(sql`insert into games (id, value) values (${row.id}, ${value})`);
@@ -345,6 +344,11 @@ class Storage {
 		);
 		for (const row of records) {
 			this.writeRow(row, command.kind === 'create');
+		}
+		// Validate after all rows land: this request may introduce the referenced blobs.
+		for (const row of records.filter((row) => row.table === 'games')) {
+			const game = parseGame(row.value);
+			assertOwnedResources(this.connection, row.id, game.resources ?? {});
 		}
 		for (const sessionId of new Set(
 			records

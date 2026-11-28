@@ -117,10 +117,11 @@ export class MemoryVersioning {
 				throw Error('Game release not found');
 			}
 			const contentHash = await hashGameReleaseContent(release.content);
-			if (contentHash !== release.contentHash) {
-				throw Error('Release integrity check failed');
-			}
-			return parseReply({ version, records: [], releaseVerification: { contentHash } });
+			return parseReply({
+				version,
+				records: [],
+				releaseVerification: { contentHash, valid: contentHash === release.contentHash }
+			});
 		}
 		const game = parseGame(row.value);
 		const content = gameReleaseContent(game, (reference) => {

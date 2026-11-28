@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, expect, it } from 'vitest';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
 import { createEditorDraft, editorContent } from '#lib/games/editor.js';
 import { encodeGamePackage } from '#lib/games/package/codec.js';
@@ -16,6 +16,7 @@ import { CONFLICT, storedRecord } from '#lib/storage/protocol.js';
 import { synchronizedStorage } from '#lib/storage/sync-client.js';
 
 import { editorDraftStorage } from './editor-drafts.js';
+import { RuntimeContent } from './runtime-content.js';
 import { openStorage } from './sqlite.js';
 import { storageAsset, storageSyncAsync } from './storage-sync.js';
 
@@ -39,6 +40,7 @@ beforeEach(() => {
 	);
 });
 afterEach(() => {
+	vi.restoreAllMocks();
 	store.close();
 	rmSync(directory, { recursive: true, force: true });
 });
@@ -114,6 +116,7 @@ it('stores a reference release, confirms host asset metadata and verifies the st
 		[blob.id]: { mime: 'image/png', size: bytes.length, sha256: identity.raw }
 	});
 	const verification = await repo.verifyRelease(game.id, releaseId);
+	expect(verification.valid).toBe(true);
 	expect(verification.contentHash).toBe(result.state.currentRelease.contentHash);
 	// Streaming the referenced bytes must equal hashing the same bytes inline.
 	const inline = {
@@ -126,6 +129,115 @@ it('stores a reference release, confirms host asset metadata and verifies the st
 		}
 	};
 	expect(await hashGameReleaseContent(inline)).toBe(verification.contentHash);
+});
+
+it.each(['changed', 'truncated', 'missing'])(
+	'detects %s stored v2 bytes during release verification',
+	async (damage) => {
+		const { game } = await referenceGame();
+		const result = await repo.createGameRelease(game.id, '1.0.0');
+		if (result.kind !== 'released' || !result.state.currentRelease) {
+			throw Error('Expected release');
+		}
+		if (damage === 'missing') {
+			store.connection.prepare('DELETE FROM media_chunks').run();
+		} else {
+			store.connection
+				.prepare('UPDATE media_chunks SET data=?')
+				.run(Buffer.from(damage === 'changed' ? [3, 2, 1] : [1, 2]));
+		}
+		const pending = repo.verifyRelease(game.id, result.state.currentRelease.id);
+		if (damage === 'changed') {
+			expect(await pending).toMatchObject({ valid: false });
+		} else {
+			await expect(pending).rejects.toMatchObject({ code: 'missingAsset' });
+		}
+		expect(store.connection.prepare('SELECT count(*) FROM media_leases').pluck().get()).toBe(0);
+	}
+);
+
+it('renews all read leases while streaming longer than their original lifetime', async () => {
+	const { game, blob } = await referenceGame(new Uint8Array(chunkSize * 4));
+	const second = seedMedia(store.connection, game.id, new Uint8Array([7]));
+	const current = (await repo.getGameWorkspace(game.id))!.game;
+	await repo.applyGameDraft(game.id, {
+		baseContent: editorContent(current),
+		content: {
+			...editorContent(current),
+			resources: {
+				...referenceResource(blob.id),
+				second: { ...referenceResource(second.blob.id).portrait, name: 'images/second.png' }
+			}
+		}
+	});
+	let time = Date.now();
+	vi.spyOn(Date, 'now').mockImplementation(() => time);
+	const original = RuntimeContent.prototype.openMedia;
+	vi.spyOn(RuntimeContent.prototype, 'openMedia').mockImplementation(function (
+		this: RuntimeContent,
+		gameId,
+		hash
+	) {
+		const media = original.call(this, gameId, hash);
+		if (!media) {
+			return null;
+		}
+		const read = media.read;
+		return {
+			...media,
+			read: () => {
+				const reader = read().getReader();
+				return new ReadableStream(
+					{
+						async pull(controller) {
+							const chunk = await reader.read();
+							if (chunk.done) {
+								controller.close();
+								return;
+							}
+							time += 61000;
+							controller.enqueue(chunk.value);
+						}
+					},
+					{ highWaterMark: 0 }
+				);
+			}
+		};
+	});
+	store.connection.exec(`CREATE TABLE renewals(expires TEXT);
+		CREATE TRIGGER renewed AFTER UPDATE ON media_leases BEGIN
+		INSERT INTO renewals VALUES(NEW.expires_at); END;`);
+	const result = await repo.createGameRelease(game.id, '1.0.0');
+	expect(result.kind).toBe('released');
+	expect(store.connection.prepare('SELECT count(*) FROM renewals').pluck().get()).toBe(10);
+	expect(store.connection.prepare('SELECT max(expires) FROM renewals').pluck().get()).toBe(
+		new Date(time + 180000).toISOString()
+	);
+});
+
+it('accepts a game reference to a blob introduced by the same commit and rolls back mismatches', async () => {
+	const game = await repo.createGame({ title: 'Same request', genre: '', description: '' });
+	const blob = {
+		schemaVersion: 1,
+		id: 'a'.repeat(64),
+		gameId: game.id,
+		mime: 'image/png',
+		data: 'data:image/png;base64,AA=='
+	};
+	const commit = (mime: string) =>
+		store.request({
+			kind: 'commit',
+			gameId: game.id,
+			version: 0,
+			deleteSessions: [],
+			records: [
+				storedRecord('games', { ...game, resources: referenceResource(blob.id, mime) }),
+				storedRecord('blobs', blob)
+			]
+		});
+	expect(packageCode(() => commit('video/mp4'))).toBe('mediaType');
+	expect(store.connection.prepare('SELECT count(*) FROM blobs').pluck().get()).toBe(0);
+	expect(commit('image/png').version).toBe(1);
 });
 
 it('rejects missing, foreign and MIME-mismatched references at the commit boundary', async () => {

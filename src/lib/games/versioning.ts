@@ -39,6 +39,7 @@ export type GameRelease = GameReleaseSummary & {
 /** Result of recomputing a stored release digest on the host (`verifyRelease`). */
 export interface ReleaseVerification {
 	contentHash: string;
+	valid: boolean;
 }
 export interface GameReleaseOptions {
 	ignoreConflict?: boolean;

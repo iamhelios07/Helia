@@ -256,7 +256,11 @@ function parseGameReleaseAssets(
 }
 
 export function parseReleaseVerification(value: unknown): ReleaseVerification {
-	return { contentHash: releaseHash(object(value).contentHash) };
+	const input = object(value);
+	if (typeof input.valid !== 'boolean') {
+		throw Error('Invalid release verification');
+	}
+	return { contentHash: releaseHash(input.contentHash), valid: input.valid };
 }
 
 export function validateGameReleaseContent(

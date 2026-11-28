@@ -55,6 +55,24 @@ const counts = () =>
 		store.connection.prepare(`SELECT count(*) FROM ${table}`).pluck().get()
 	);
 
+it('rejects package asset references before looking up blobs, regardless of DB contents', async () => {
+	const input = request();
+	const id = '0'.repeat(64);
+	input.release.content = {
+		...minimal.content,
+		resources: { portrait: { name: 'portrait.png', mime: 'image/png', data: `helia-asset:${id}` } }
+	};
+	await expect(store.requestAsync(input)).rejects.toMatchObject({ code: 'missingAsset' });
+	store.connection.prepare('INSERT INTO games(id,value) VALUES(?,?)').run(input.gameId, '{}');
+	store.connection
+		.prepare('INSERT INTO blobs VALUES(?,?,?)')
+		.run(id, input.gameId, '{"data":"data:image/png;base64,AA=="}');
+	await expect(store.requestAsync(input)).rejects.toMatchObject({ code: 'missingAsset' });
+	// Even a broken blob table cannot influence input verification.
+	store.connection.exec('DROP TABLE blobs');
+	await expect(store.requestAsync(input)).rejects.toMatchObject({ code: 'missingAsset' });
+});
+
 interface Fixture {
 	request: unknown;
 	expect: {

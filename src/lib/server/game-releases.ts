@@ -3,7 +3,7 @@ import type Database from 'better-sqlite3';
 import { createHash, randomUUID } from 'node:crypto';
 
 import { parseGame, type Game } from '#lib/games/model.js';
-import { requirePackage } from '#lib/games/package/limits.js';
+import { GamePackageError, requirePackage } from '#lib/games/package/limits.js';
 import {
 	canonicalReleaseContent,
 	gameReleaseContent,
@@ -22,9 +22,9 @@ import releaseSchema from '#lib/storage/game-releases.sql?raw';
 import { CONFLICT, type StorageReply, type StorageRequest } from '#lib/storage/protocol.js';
 
 import { guardGameContent, guardGameEdit } from './game-edit-lock.js';
-import { deadline } from './media-lifetime.js';
 import { assertOwnedResources, ownedBlob } from './media-references.js';
-import { RuntimeContent } from './runtime-content.js';
+import { ReleaseReadLeases } from './release-read-leases.js';
+import { RuntimeContent, type OpenMedia } from './runtime-content.js';
 
 type ReleaseRequest = Extract<StorageRequest, { kind: 'versioning' }>;
 type ContentRequest = Exclude<ReleaseRequest, { action: 'getRelease' | 'verifyRelease' }>;
@@ -77,32 +77,42 @@ async function streamReleaseDigest(
 	content: GameReleaseContent
 ): Promise<string> {
 	const runtime = new RuntimeContent(db);
-	const objects = new Map<string, string>();
+	const objects = new Set<string>();
+	const mediaByBlob = new Map<string, OpenMedia>();
 	for (const blobId of releaseReferences(content)) {
 		const media = runtime.openMedia(gameId, blobId);
 		requirePackage(media && media.objectId, 'missingAsset');
-		objects.set(media.objectId, blobId);
+		objects.add(media.objectId);
+		mediaByBlob.set(blobId, media);
 	}
-	const leaseIds: string[] = [];
-	const insertLease = db.prepare(
-		"INSERT INTO media_leases(id,game_id,object_id,kind,expires_at) VALUES(?,?,?,'read',?)"
-	);
-	for (const objectId of objects.keys()) {
-		const id = randomUUID();
-		insertLease.run(id, gameId, objectId, deadline(3));
-		leaseIds.push(id);
-	}
+	const leases = new ReleaseReadLeases(db);
 	try {
-		return await hashGameReleaseContentStream(content, (reference) => {
-			const media = runtime.openMedia(gameId, reference.slice(12));
+		for (const objectId of objects.keys()) {
+			leases.add(gameId, objectId);
+		}
+		return await hashGameReleaseContentStream(content, async function* (reference) {
+			const media = mediaByBlob.get(reference.slice(12));
 			requirePackage(media, 'missingAsset');
-			return media.read();
+			const reader = media.read().getReader();
+			try {
+				while (true) {
+					leases.renew();
+					const chunk = await reader.read().catch(() => {
+						throw new GamePackageError('missingAsset');
+					});
+					if (chunk.done) {
+						break;
+					}
+					leases.renew();
+					yield chunk.value;
+				}
+			} finally {
+				await reader.cancel().catch(() => undefined);
+				reader.releaseLock();
+			}
 		});
 	} finally {
-		const remove = db.prepare('DELETE FROM media_leases WHERE id=?');
-		for (const id of leaseIds) {
-			remove.run(id);
-		}
+		leases.close();
 	}
 }
 
@@ -424,6 +434,9 @@ async function verifyRelease(
 	}
 	const content = JSON.parse(row.content) as GameReleaseContent;
 	const contentHash = await releaseDigest(db, parseGame(JSON.parse(saved.value)), content);
-	requirePackage(contentHash === row.contentHash, 'integrity');
-	return { version: saved.version, records: [], releaseVerification: { contentHash } };
+	return {
+		version: saved.version,
+		records: [],
+		releaseVerification: { contentHash, valid: contentHash === row.contentHash }
+	};
 }

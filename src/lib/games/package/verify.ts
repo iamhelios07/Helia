@@ -43,12 +43,33 @@ function validateUnicode(value: unknown): void {
 	}
 }
 
+function rejectPackageReferences(content: unknown): void {
+	if (!content || typeof content !== 'object' || !('resources' in content)) {
+		return;
+	}
+	const resources = content.resources;
+	if (resources && typeof resources === 'object') {
+		requirePackage(
+			!Object.values(resources).some(
+				(asset: unknown) =>
+					asset &&
+					typeof asset === 'object' &&
+					'data' in asset &&
+					typeof asset.data === 'string' &&
+					asset.data.startsWith('helia-asset:')
+			),
+			'missingAsset'
+		);
+	}
+}
+
 /** Shared client/Node boundary. Never execute or compile authored code here. */
 export async function verifyReleaseContent(
 	release: { originalGameId: string; contentHash: string; content: unknown },
 	ids: PackageVerificationIds
 ): Promise<{ content: GameReleaseContent; contentHash: string }> {
 	try {
+		rejectPackageReferences(release.content);
 		validateGameReleaseContent(release.content);
 		validateUnicode(release.content);
 		const input = packageObject(release.content);

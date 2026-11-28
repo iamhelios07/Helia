@@ -987,7 +987,7 @@ fn installs_packages_carrying_hundreds_of_small_resources() {
 }
 
 #[test]
-fn blob_state_only_affects_rejected_asset_references() {
+fn blob_state_never_affects_rejected_asset_references() {
     let mut db = connection();
     let mut value = input();
     let data = "data:image/png;base64,aGVsbG8=";
@@ -1004,7 +1004,7 @@ fn blob_state_only_affects_rejected_asset_references() {
         json!(format!("helia-asset:{hash}"));
     assert_eq!(
         verify(&db, &reference, timestamp).unwrap_err(),
-        error("content")
+        error("missingAsset")
     );
     db.execute(
         "INSERT INTO blobs(id,game_id,value) VALUES(?1,?2,?3)",
@@ -1017,11 +1017,16 @@ fn blob_state_only_affects_rejected_asset_references() {
     .unwrap();
     assert_eq!(
         verify(&db, &reference, timestamp).unwrap_err(),
-        error("nonCanonical")
+        error("missingAsset")
     );
     assert_eq!(verify(&db, &value, timestamp).unwrap(), verified);
     db.execute("DELETE FROM blobs", []).unwrap();
     assert_eq!(verify(&db, &value, timestamp).unwrap(), verified);
+    db.execute("DROP TABLE blobs", []).unwrap();
+    assert_eq!(
+        verify(&db, &reference, timestamp).unwrap_err(),
+        error("missingAsset")
+    );
 }
 
 #[test]

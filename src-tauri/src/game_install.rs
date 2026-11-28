@@ -259,6 +259,7 @@ fn verify(
 ) -> Result<(Value, Value, String), String> {
     let input = &request["release"]["content"];
     require(input.is_object(), "format")?;
+    require(!content_has_references(input), "missingAsset")?;
     let install_only = [
         "schemaVersion",
         "id",
@@ -517,11 +518,8 @@ pub(in crate::storage) fn request(
             .transaction_with_behavior(TransactionBehavior::Deferred)
             .map_err(db_error)?;
         let verified = verify(&read, &input, &now)?;
-        // portable_assets may read blobs for helia-asset references, but they
-        // cannot equal the normalized inline data URLs in the canonical tree.
-        // Accepted input is therefore independent of blob state. Close this
-        // snapshot before taking the write lock; existence and conflicts are
-        // checked against current state inside install.
+        // References are rejected before any blob lookup. Close this snapshot
+        // before rechecking existence and conflicts under the write lock.
         read.commit().map_err(db_error)?;
         Some(verified)
     } else {

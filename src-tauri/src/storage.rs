@@ -2083,8 +2083,6 @@ fn write(
         if row.table == Table::Games {
             normalize_write_resources(&mut row.value)?;
             validate_resource_list_budget(row.value.get("resources"))?;
-            // References must point at same-game blobs with matching MIME (§2.4).
-            releases::assert_owned_resources(connection, &row.id, row.value.get("resources"))?;
             row.value = releases::preserve_identity(connection, &row.id, &row.value)?;
         }
         validate(row, game_id)?;
@@ -2105,8 +2103,12 @@ fn write(
         .filter(|row| !matches!(row.table, Table::Games | Table::Sessions))
         .filter_map(|row| row.session_id.clone())
         .collect();
-    for row in records {
-        write_row(connection, &row, version.is_none())?;
+    for row in &records {
+        write_row(connection, row, version.is_none())?;
+    }
+    // All blob rows in this request are now visible; failures roll back the entire request.
+    for row in records.iter().filter(|row| row.table == Table::Games) {
+        releases::assert_owned_resources(connection, &row.id, row.value.get("resources"))?;
     }
     for session_id in affected_sessions {
         validate_history(connection, game_id, &session_id)?;
@@ -3664,6 +3666,42 @@ mod tests {
             .request(commit(version, &[row("games", "game", None, &altered)]))
             .unwrap();
     }
+    #[test]
+    fn commits_accept_new_blob_references_in_the_same_request_and_roll_back_mismatches() {
+        let fixture = Fixture::new();
+        fixture.create();
+        let reply = fixture
+            .request(json!({"kind":"read","gameId":"game"}))
+            .unwrap();
+        let version = reply["version"].as_u64().unwrap();
+        let mut game = reply["records"][0]["value"].clone();
+        let id = "a".repeat(64);
+        let blob = json!({"schemaVersion":1,"id":id,"gameId":"game","mime":"image/png","data":"data:image/png;base64,AA=="});
+        game["resources"] = json!({"portrait":{"name":"portrait.png","mime":"video/mp4","data":format!("helia-asset:{id}")}});
+        let attempt = |game: &Value| {
+            fixture.request(commit(
+                version,
+                &[
+                    row("games", "game", None, game),
+                    row("blobs", &id, None, &blob),
+                ],
+            ))
+        };
+        assert_eq!(
+            attempt(&game).unwrap_err(),
+            releases::packages::error("mediaType")
+        );
+        let db = open(&fixture.0).unwrap();
+        assert_eq!(
+            db.query_row("SELECT count(*) FROM blobs", [], |r| r.get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
+        drop(db);
+        game["resources"]["portrait"]["mime"] = json!("image/png");
+        assert_eq!(attempt(&game).unwrap()["version"], version + 1);
+    }
+
     #[test]
     fn drafts_reject_unowned_references_and_accept_matching_ones() {
         let fixture = Fixture::new();
