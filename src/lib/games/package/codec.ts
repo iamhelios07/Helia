@@ -32,6 +32,8 @@ function base64(bytes: Uint8Array): string {
 async function packageResources(content: GameReleaseContent): Promise<ZipEntry[]> {
 	const assets = new Map<string, Uint8Array>();
 	for (const resource of Object.values(content.resources ?? {})) {
+		// Reference-bearing releases need the v2 package writer (U10); v1 cannot carry them.
+		requirePackage(!resource.data.startsWith('helia-asset:'), 'exportFormatPending');
 		const prefix = `data:${resource.mime};base64,`;
 		requirePackage(resource.data.startsWith(prefix), 'content');
 		const encoded = resource.data.slice(prefix.length);

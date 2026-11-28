@@ -14,6 +14,7 @@ export const {
 	getGameVersioning,
 	createGameRelease,
 	getGameRelease,
+	verifyRelease,
 	getGameWorkspace,
 	getPlayWorkspace,
 	updateGame,

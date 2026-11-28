@@ -44,6 +44,10 @@ function portableResources(game: Game, resolve?: AssetResolver) {
 		Object.fromEntries(
 			Object.entries(game.resources ?? {}).map(([id, asset]) => {
 				const data = asset.data.startsWith('helia-asset:') ? resolve?.(asset.data) : asset.data;
+				// A resolver may keep a stored reference (v2 media) instead of expanding it to bytes.
+				if (data?.startsWith('helia-asset:')) {
+					return [id, { ...asset, data }];
+				}
 				if (!data?.startsWith(`data:${asset.mime};base64,`)) {
 					throw Error('Release asset unavailable');
 				}

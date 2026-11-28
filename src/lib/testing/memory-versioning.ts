@@ -109,6 +109,19 @@ export class MemoryVersioning {
 			}
 			return parseReply({ version, records: [], release });
 		}
+		if (request.action === 'verifyRelease') {
+			const release = this.releases
+				.get(request.gameId)
+				?.find((item) => item.id === request.releaseId);
+			if (!release) {
+				throw Error('Game release not found');
+			}
+			const contentHash = await hashGameReleaseContent(release.content);
+			if (contentHash !== release.contentHash) {
+				throw Error('Release integrity check failed');
+			}
+			return parseReply({ version, records: [], releaseVerification: { contentHash } });
+		}
 		const game = parseGame(row.value);
 		const content = gameReleaseContent(game, (reference) => {
 			const blob = [...this.rows()].find(

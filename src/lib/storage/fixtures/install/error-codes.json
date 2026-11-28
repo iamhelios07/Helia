@@ -22,5 +22,6 @@
 	"requestLimit",
 	"inProgress",
 	"missingAsset",
-	"packageReference"
+	"packageReference",
+	"exportFormatPending"
 ]

@@ -22,7 +22,11 @@ export async function storageSyncAsync(
 	input: unknown
 ): Promise<StorageReply | SyncReply> {
 	const envelope = record(input);
-	if (envelope.kind === 'install') {
+	if (
+		envelope.kind === 'install' ||
+		envelope.kind === 'installPreview' ||
+		envelope.kind === 'versioning'
+	) {
 		return store.requestAsync(input);
 	}
 	const { request, claim } = resolveBodyRef(store, input);

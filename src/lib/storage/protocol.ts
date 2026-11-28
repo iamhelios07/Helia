@@ -23,13 +23,15 @@ import {
 	releaseHash,
 	parseGameVersioning,
 	parseGameRelease,
-	parseCreateGameReleaseResult
+	parseCreateGameReleaseResult,
+	parseReleaseVerification
 } from '#lib/games/versioning-validation.js';
 import {
 	type GameVersioning,
 	type GameRelease,
 	type CreateGameReleaseResult,
-	type GameReleaseOptions
+	type GameReleaseOptions,
+	type ReleaseVerification
 } from '#lib/games/versioning.js';
 
 import {
@@ -76,6 +78,7 @@ export type StorageRequest =
 	| InstallPreviewRequest
 	| { kind: 'versioning'; gameId: string; action: 'read' }
 	| { kind: 'versioning'; gameId: string; action: 'getRelease'; releaseId: string }
+	| { kind: 'versioning'; gameId: string; action: 'verifyRelease'; releaseId: string }
 	| ({
 			kind: 'versioning';
 			gameId: string;
@@ -105,6 +108,7 @@ export interface StorageReply {
 	versioning?: GameVersioning;
 	release?: GameRelease;
 	releaseResult?: CreateGameReleaseResult;
+	releaseVerification?: ReleaseVerification;
 	installResult?: InstallResult;
 	installPreview?: InstallPreviewEntry[];
 }
@@ -277,7 +281,12 @@ export function patchedGame(value: unknown, patch: GamePatch): ReturnType<typeof
 }
 function assertPortableResources(value: unknown) {
 	const resources = (value as { resources?: Record<string, { data: string }> }).resources;
-	if (Object.values(resources ?? {}).some((asset) => !asset.data.startsWith('data:'))) {
+	// Inline media stays portable until U13; v2 media travels as a game-owned reference.
+	if (
+		Object.values(resources ?? {}).some(
+			(asset) => !asset.data.startsWith('data:') && !/^helia-asset:[a-f0-9]{64}$/.test(asset.data)
+		)
+	) {
 		throw Error('Stored resources must contain portable media');
 	}
 }
@@ -341,6 +350,9 @@ export function parseReply(value: unknown): StorageReply {
 			? {}
 			: { versioning: parseGameVersioning(input.versioning) }),
 		...(input.release === undefined ? {} : { release: parseGameRelease(input.release) }),
+		...(input.releaseVerification === undefined
+			? {}
+			: { releaseVerification: parseReleaseVerification(input.releaseVerification) }),
 		...(input.releaseResult === undefined
 			? {}
 			: { releaseResult: parseCreateGameReleaseResult(input.releaseResult) })
@@ -351,11 +363,11 @@ function parseVersioningRequest(gameId: string, input: Record<string, unknown>):
 	if (input.action === 'read') {
 		return { kind: 'versioning', gameId, action: 'read' };
 	}
-	if (input.action === 'getRelease') {
+	if (input.action === 'getRelease' || input.action === 'verifyRelease') {
 		return {
 			kind: 'versioning',
 			gameId,
-			action: 'getRelease',
+			action: input.action,
 			releaseId: identifier(input.releaseId)
 		};
 	}

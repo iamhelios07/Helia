@@ -3,6 +3,7 @@ import type Database from 'better-sqlite3';
 import { readEditorDraft, type EditorDraft } from '#lib/games/editor.js';
 
 import { guardGameEdit } from './game-edit-lock.js';
+import { assertOwnedDraftReferences } from './media-references.js';
 
 export interface SavedEditorDraft {
 	version: number;
@@ -38,7 +39,8 @@ export function editorDraftStorage(connection: Database.Database) {
 			}
 			const text = draft === null ? null : JSON.stringify(draft);
 			if (text !== null) {
-				readEditorDraft(text, gameId, { write: true });
+				const stored = readEditorDraft(text, gameId, { write: true });
+				assertOwnedDraftReferences(connection, gameId, stored);
 			}
 			connection
 				.prepare(

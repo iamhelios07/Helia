@@ -1,13 +1,16 @@
 import type {
 	CreateGameReleaseResult,
 	GameRelease,
+	GameReleaseAsset,
 	GameReleaseSummary,
-	GameVersioning
+	GameVersioning,
+	ReleaseVerification
 } from './versioning.js';
 
 import { parseGame } from './model.js';
 import { gameReleaseContent } from './release-content.js';
 import {
+	MEDIA_MIMES,
 	parseResources,
 	RESOURCE_LIMITS,
 	RESOURCE_LIST_BYTES,
@@ -212,7 +215,48 @@ export function parseGameRelease(value: unknown): GameRelease {
 		createdAt: summary.createdAt,
 		updatedAt: summary.createdAt
 	});
-	return { ...summary, content: gameReleaseContent(game) };
+	// Stored releases may keep `helia-asset:` references; the host confirms their bytes.
+	const stored = gameReleaseContent(game, (reference) => reference);
+	const assets = row.assets === undefined ? undefined : parseGameReleaseAssets(row.assets, stored);
+	return { ...summary, content: stored, ...(assets === undefined ? {} : { assets }) };
+}
+
+/** Each reference in the stored content must carry host-confirmed {mime, size, sha256}. */
+function parseGameReleaseAssets(
+	value: unknown,
+	content: ReturnType<typeof gameReleaseContent>
+): Record<string, GameReleaseAsset> {
+	const rows = object(value);
+	const referenced = new Set(
+		Object.values(content.resources ?? {})
+			.map((asset) => asset.data)
+			.filter((data) => data.startsWith('helia-asset:'))
+			.map((data) => data.slice(12))
+	);
+	const result: Record<string, GameReleaseAsset> = {};
+	for (const [blobId, raw] of Object.entries(rows)) {
+		if (!referenced.has(blobId) || !/^[a-f0-9]{64}$/.test(blobId)) {
+			throw Error('Invalid release asset reference');
+		}
+		const item = object(raw);
+		const mime = text(item.mime, 200);
+		if (!MEDIA_MIMES.has(mime)) {
+			throw Error('Invalid release asset MIME');
+		}
+		const size = item.size;
+		if (typeof size !== 'number' || !Number.isSafeInteger(size) || size <= 0) {
+			throw Error('Invalid release asset size');
+		}
+		result[blobId] = { mime, size, sha256: releaseHash(item.sha256) };
+	}
+	if (Object.keys(result).length !== referenced.size) {
+		throw Error('Missing release asset metadata');
+	}
+	return result;
+}
+
+export function parseReleaseVerification(value: unknown): ReleaseVerification {
+	return { contentHash: releaseHash(object(value).contentHash) };
 }
 
 export function validateGameReleaseContent(

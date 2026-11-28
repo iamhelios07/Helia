@@ -26,7 +26,20 @@ export type GameReleaseContent = Pick<
 	'title' | 'genre' | 'description' | 'settings' | 'schema' | 'initialState'
 > &
 	Partial<Pick<Game, 'code' | 'scripts' | 'ui' | 'ai' | 'regex' | 'resources'>>;
-export type GameRelease = GameReleaseSummary & { content: GameReleaseContent };
+/** Host-confirmed metadata for each `helia-asset:<blobId>` reference in a stored release. */
+export interface GameReleaseAsset {
+	mime: string;
+	size: number;
+	sha256: string;
+}
+export type GameRelease = GameReleaseSummary & {
+	content: GameReleaseContent;
+	assets?: Record<string, GameReleaseAsset>;
+};
+/** Result of recomputing a stored release digest on the host (`verifyRelease`). */
+export interface ReleaseVerification {
+	contentHash: string;
+}
 export interface GameReleaseOptions {
 	ignoreConflict?: boolean;
 	expectedContentHash?: string;

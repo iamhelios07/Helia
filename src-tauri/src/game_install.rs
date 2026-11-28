@@ -29,6 +29,7 @@ const ERROR_CODES: &[&str] = &[
     "inProgress",
     "missingAsset",
     "packageReference",
+    "exportFormatPending",
 ];
 pub(in crate::storage) fn error(code: &str) -> String {
     format!("{ERROR_PREFIX}{code}")

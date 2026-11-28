@@ -1225,6 +1225,9 @@ fn write_draft(
         return Err("다른 편집기에서 초안이 변경되었어요.".into());
     }
     validate_draft(game_id, draft)?;
+    if !draft.is_null() {
+        releases::assert_owned_draft_references(connection, game_id, draft)?;
+    }
     let text = if draft.is_null() {
         None
     } else {
@@ -2080,15 +2083,8 @@ fn write(
         if row.table == Table::Games {
             normalize_write_resources(&mut row.value)?;
             validate_resource_list_budget(row.value.get("resources"))?;
-            if row.value["resources"].as_object().is_some_and(|entries| {
-                entries.values().any(|asset| {
-                    asset["data"]
-                        .as_str()
-                        .is_some_and(|data| data.starts_with("helia-asset:"))
-                })
-            }) {
-                return Err("Stored resources must contain portable media".into());
-            }
+            // References must point at same-game blobs with matching MIME (§2.4).
+            releases::assert_owned_resources(connection, &row.id, row.value.get("resources"))?;
             row.value = releases::preserve_identity(connection, &row.id, &row.value)?;
         }
         validate(row, game_id)?;
@@ -3613,6 +3609,86 @@ mod tests {
     }
     fn commit(version: u64, records: &[Value]) -> Value {
         json!({ "kind": "commit", "gameId": "game", "version": version, "records": records, "deleteSessions": [] })
+    }
+    #[test]
+    fn commits_reject_unowned_references_and_accept_matching_ones() {
+        let fixture = Fixture::new();
+        fixture.create();
+        let db = open(&fixture.0).unwrap();
+        // A same-game v1 blob plus a blob owned by a different installation.
+        let owned = "a".repeat(64);
+        db.execute(
+            "INSERT INTO blobs(id,game_id,value) VALUES(?1,'game',?2)",
+            params![owned, json!({"schemaVersion":1,"id":owned,"gameId":"game","mime":"image/png","data":"data:image/png;base64,AA=="}).to_string()],
+        ).unwrap();
+        db.execute("INSERT INTO games(id,value) VALUES('other','{}')", [])
+            .unwrap();
+        let foreign = "b".repeat(64);
+        db.execute(
+            "INSERT INTO blobs(id,game_id,value) VALUES(?1,'other',?2)",
+            params![foreign, json!({"schemaVersion":1,"id":foreign,"gameId":"other","mime":"image/png","data":"data:image/png;base64,AA=="}).to_string()],
+        ).unwrap();
+        drop(db);
+        let reference = |id: &str, mime: &str| json!({"portrait":{"name":"images/portrait.png","mime":mime,"data":format!("helia-asset:{id}")}});
+        let attempt = |resources: Value| -> String {
+            let reply = fixture
+                .request(json!({"kind":"read","gameId":"game"}))
+                .unwrap();
+            let version = reply["version"].as_u64().unwrap();
+            let mut altered = reply["records"][0]["value"].clone();
+            altered["resources"] = resources;
+            fixture
+                .request(commit(version, &[row("games", "game", None, &altered)]))
+                .unwrap_err()
+        };
+        assert_eq!(
+            attempt(reference(&"0".repeat(64), "image/png")),
+            releases::packages::error("missingAsset")
+        );
+        assert_eq!(
+            attempt(reference(&foreign, "image/png")),
+            releases::packages::error("missingAsset")
+        );
+        assert_eq!(
+            attempt(reference(&owned, "video/mp4")),
+            releases::packages::error("mediaType")
+        );
+        // The matching reference is accepted.
+        let reply = fixture
+            .request(json!({"kind":"read","gameId":"game"}))
+            .unwrap();
+        let version = reply["version"].as_u64().unwrap();
+        let mut altered = reply["records"][0]["value"].clone();
+        altered["resources"] = reference(&owned, "image/png");
+        fixture
+            .request(commit(version, &[row("games", "game", None, &altered)]))
+            .unwrap();
+    }
+    #[test]
+    fn drafts_reject_unowned_references_and_accept_matching_ones() {
+        let fixture = Fixture::new();
+        fixture.create();
+        let db = open(&fixture.0).unwrap();
+        let owned = "a".repeat(64);
+        db.execute(
+            "INSERT INTO blobs(id,game_id,value) VALUES(?1,'game',?2)",
+            params![owned, json!({"schemaVersion":1,"id":owned,"gameId":"game","mime":"image/png","data":"data:image/png;base64,AA=="}).to_string()],
+        ).unwrap();
+        drop(db);
+        let base = game("Draft");
+        let draft = |assets: String| json!({"version":3,"gameId":"game","baseContent":base.clone(),"documents":{"info":"{}","instructions":"{}","state":"{}","lorebook":"{}","code":"{}","assets":assets}});
+        let assets = |id: &str| {
+            json!({"portrait":{"name":"images/portrait.png","mime":"image/png","data":format!("helia-asset:{id}")}}).to_string()
+        };
+        assert_eq!(
+            fixture
+                .request(json!({"kind":"writeDraft","gameId":"game","version":0,"draft":draft(assets(&"0".repeat(64)))}))
+                .unwrap_err(),
+            releases::packages::error("missingAsset")
+        );
+        fixture
+            .request(json!({"kind":"writeDraft","gameId":"game","version":0,"draft":draft(assets(&owned))}))
+            .unwrap();
     }
     #[test]
     fn restored_games_rejoin_active_listings_and_accept_commits() {

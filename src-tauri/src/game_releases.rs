@@ -168,6 +168,12 @@ enum Request {
         game_id: String,
         release_id: String,
     },
+    VerifyRelease {
+        #[serde(rename = "kind")]
+        _kind: String,
+        game_id: String,
+        release_id: String,
+    },
     Release {
         #[serde(rename = "kind")]
         _kind: String,
@@ -209,6 +215,7 @@ fn source_modules(value: &Value, ui: bool) -> Result<Value, String> {
 fn portable_assets(connection: &Connection, game: &Value) -> Result<Value, String> {
     let mut result = Map::new();
     let empty = Map::new();
+    let game_id = game["id"].as_str().ok_or(ERROR)?;
     for (id, asset) in game
         .get("resources")
         .map(|v| v.as_object().ok_or(ERROR))
@@ -217,22 +224,32 @@ fn portable_assets(connection: &Connection, game: &Value) -> Result<Value, Strin
     {
         let mime = asset["mime"].as_str().ok_or(ERROR)?;
         let raw = asset["data"].as_str().ok_or(ERROR)?;
-        let data = if let Some(hash) = raw.strip_prefix("helia-asset:") {
+        let prefix = format!("data:{mime};base64,");
+        if let Some(hash) = raw.strip_prefix("helia-asset:") {
             if !valid_hash(hash) {
                 return Err(ERROR.into());
             }
-            connection
-                .query_row(
-                    "SELECT json_extract(value,'$.data') FROM blobs WHERE game_id=?1 AND id=?2",
-                    params![game["id"].as_str().ok_or(ERROR)?, hash],
-                    |row| row.get::<_, String>(0),
-                )
-                .map_err(db_error)?
-        } else {
-            raw.to_owned()
-        };
-        let prefix = format!("data:{mime};base64,");
-        let encoded = data.strip_prefix(&prefix).ok_or(ERROR)?;
+            let blob = blob_row(connection, game_id, hash)?;
+            if blob["schemaVersion"] == 2 {
+                if blob["mime"].as_str() != Some(mime) {
+                    return Err(packages::error("mediaType"));
+                }
+                // v2 media stays a reference; legacy v1 rows resolve to their inline bytes.
+                result.insert(
+                    id.clone(),
+                    json!({"name":asset["name"],"mime":mime,"data":raw}),
+                );
+                continue;
+            }
+            let data = blob["data"].as_str().ok_or(ERROR)?;
+            let encoded = data.strip_prefix(&prefix).ok_or(ERROR)?;
+            let bytes = base64::engine::general_purpose::STANDARD
+                .decode(encoded)
+                .map_err(|_| ERROR)?;
+            result.insert(id.clone(),json!({"name":asset["name"],"mime":mime,"data":format!("{prefix}{}",base64::engine::general_purpose::STANDARD.encode(bytes))}));
+            continue;
+        }
+        let encoded = raw.strip_prefix(&prefix).ok_or(ERROR)?;
         let bytes = base64::engine::general_purpose::STANDARD
             .decode(encoded)
             .map_err(|_| ERROR)?;
@@ -243,6 +260,88 @@ fn portable_assets(connection: &Connection, game: &Value) -> Result<Value, Strin
         return Err(ERROR.into());
     }
     Ok(assets)
+}
+
+/// Read a same-game blob row by id. The WHERE clause scopes ownership to this game;
+/// callers that need the JSON identity guard use `owned_blob` instead.
+fn blob_row(connection: &Connection, game_id: &str, blob_id: &str) -> Result<Value, String> {
+    let text: Option<String> = connection
+        .query_row(
+            "SELECT value FROM blobs WHERE game_id=?1 AND id=?2",
+            params![game_id, blob_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(db_error)?;
+    let text = text.ok_or_else(|| packages::error("missingAsset"))?;
+    serde_json::from_str(&text).map_err(|_| packages::error("missingAsset"))
+}
+
+/// A blob row owned by this exact game; missing or foreign rows are `missingAsset` (§2.4).
+pub(super) fn owned_blob(
+    connection: &Connection,
+    game_id: &str,
+    blob_id: &str,
+) -> Result<Value, String> {
+    let blob = blob_row(connection, game_id, blob_id)?;
+    if blob["gameId"].as_str() != Some(game_id) || blob["id"].as_str() != Some(blob_id) {
+        return Err(packages::error("missingAsset"));
+    }
+    Ok(blob)
+}
+
+/// Every `helia-asset:` reference must point at a same-game blob with the same MIME.
+pub(super) fn assert_owned_resources(
+    connection: &Connection,
+    game_id: &str,
+    resources: Option<&Value>,
+) -> Result<(), String> {
+    let Some(entries) = resources.and_then(Value::as_object) else {
+        return Ok(());
+    };
+    for asset in entries.values() {
+        let Some(hash) = asset["data"]
+            .as_str()
+            .and_then(|data| data.strip_prefix("helia-asset:"))
+        else {
+            continue;
+        };
+        let blob = owned_blob(connection, game_id, hash)?;
+        let mime = asset["mime"].as_str().ok_or(ERROR)?;
+        if blob["mime"].as_str() != Some(mime) {
+            return Err(packages::error("mediaType"));
+        }
+    }
+    Ok(())
+}
+
+/// Drafts keep the working asset document as text; it may be unfinished JSON while editing,
+/// so its references are only checked when it parses into an object.
+pub(super) fn assert_owned_draft_references(
+    connection: &Connection,
+    game_id: &str,
+    draft: &Value,
+) -> Result<(), String> {
+    assert_owned_resources(connection, game_id, draft["baseContent"].get("resources"))?;
+    if let Some(text) = draft["documents"]["assets"].as_str() {
+        if let Ok(Value::Object(entries)) = serde_json::from_str::<Value>(text) {
+            for asset in entries.values() {
+                let Some(hash) = asset["data"]
+                    .as_str()
+                    .and_then(|data| data.strip_prefix("helia-asset:"))
+                else {
+                    continue;
+                };
+                let blob = owned_blob(connection, game_id, hash)?;
+                if let Some(mime) = asset["mime"].as_str() {
+                    if blob["mime"].as_str() != Some(mime) {
+                        return Err(packages::error("mediaType"));
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 fn text(value: Option<&Value>, fallback: &str) -> Result<Value, String> {
@@ -712,6 +811,111 @@ fn content_hash(content: &Value) -> Result<String, String> {
         .map(|b| format!("{b:02x}"))
         .collect())
 }
+
+fn content_has_references(content: &Value) -> bool {
+    content["resources"].as_object().is_some_and(|entries| {
+        entries.values().any(|asset| {
+            asset["data"]
+                .as_str()
+                .is_some_and(|data| data.starts_with("helia-asset:"))
+        })
+    })
+}
+
+/// Stream the canonical digest outside any write transaction, under read leases (§2.8, §7.3).
+fn stream_release_digest(
+    connection: &Connection,
+    game_id: &str,
+    content: &Value,
+) -> Result<String, String> {
+    let mut objects: Vec<String> = Vec::new();
+    if let Some(entries) = content["resources"].as_object() {
+        for asset in entries.values() {
+            if let Some(hash) = asset["data"]
+                .as_str()
+                .and_then(|data| data.strip_prefix("helia-asset:"))
+            {
+                let media = crate::runtime_content::open_media(connection, game_id, hash)?
+                    .ok_or_else(|| packages::error("missingAsset"))?;
+                if let Some(object_id) = media.object_id {
+                    objects.push(object_id);
+                }
+            }
+        }
+    }
+    objects.sort();
+    objects.dedup();
+    let mut leases: Vec<String> = Vec::new();
+    for object in &objects {
+        let id = uuid()?;
+        connection.execute(
+            "INSERT INTO media_leases(id,game_id,object_id,kind,expires_at) VALUES(?1,?2,?3,'read',strftime('%Y-%m-%dT%H:%M:%fZ','now','+3 minutes'))",
+            params![id, game_id, object],
+        ).map_err(db_error)?;
+        leases.push(id);
+    }
+    let result = crate::media_identity::hash_release_content(content, &mut |reference, sink| {
+        let hash = reference.strip_prefix("helia-asset:").ok_or(ERROR)?;
+        let media = crate::runtime_content::open_media(connection, game_id, hash)?
+            .ok_or_else(|| packages::error("missingAsset"))?;
+        for chunk in media.read(0, media.size)? {
+            sink(&chunk?);
+        }
+        Ok(())
+    });
+    for id in &leases {
+        let _ = connection.execute("DELETE FROM media_leases WHERE id=?1", [id]);
+    }
+    result
+}
+
+fn release_digest(
+    connection: &Connection,
+    game: &Value,
+    content: &Value,
+) -> Result<String, String> {
+    if content_has_references(content) {
+        stream_release_digest(connection, game["id"].as_str().ok_or(ERROR)?, content)
+    } else {
+        content_hash(content)
+    }
+}
+
+/// Host-confirmed {mime, size, sha256} for every reference kept in a stored release.
+fn release_assets(
+    connection: &Connection,
+    game_id: &str,
+    content: &Value,
+) -> Result<Option<Value>, String> {
+    let mut references: Vec<String> = Vec::new();
+    if let Some(entries) = content["resources"].as_object() {
+        for asset in entries.values() {
+            if let Some(hash) = asset["data"]
+                .as_str()
+                .and_then(|data| data.strip_prefix("helia-asset:"))
+            {
+                references.push(hash.to_owned());
+            }
+        }
+    }
+    references.sort();
+    references.dedup();
+    if references.is_empty() {
+        return Ok(None);
+    }
+    let mut assets = Map::new();
+    for blob_id in references {
+        let blob = owned_blob(connection, game_id, &blob_id)?;
+        if blob["schemaVersion"] != 2 {
+            return Err(packages::error("missingAsset"));
+        }
+        assets.insert(
+            blob_id,
+            json!({"mime":blob["mime"],"size":blob["size"],"sha256":blob["object"]}),
+        );
+    }
+    Ok(Some(Value::Object(assets)))
+}
 fn summaries(connection: &Connection, game_id: &str) -> Result<Vec<Value>, String> {
     let mut query=connection.prepare("SELECT id,original_game_id,content_version,content_hash,created_at FROM game_releases WHERE game_id=?1 ORDER BY rowid").map_err(db_error)?;
     let releases=query.query_map([game_id],|r|Ok(json!({"id":r.get::<_,String>(0)?,"originalGameId":r.get::<_,String>(1)?,"contentVersion":r.get::<_,String>(2)?,"contentHash":r.get::<_,String>(3)?,"createdAt":r.get::<_,String>(4)?}))).map_err(db_error)?.collect::<Result<Vec<_>,_>>().map_err(db_error)?;
@@ -761,7 +965,11 @@ fn get_release(connection: &Connection, game_id: &str, release_id: &str) -> Resu
             |r| r.get(0),
         )
         .map_err(db_error)?;
-    summary["content"] = serde_json::from_str(&raw).map_err(|_| ERROR)?;
+    let content: Value = serde_json::from_str(&raw).map_err(|_| ERROR)?;
+    summary["content"] = content.clone();
+    if let Some(assets) = release_assets(connection, game_id, &content)? {
+        summary["assets"] = assets;
+    }
     Ok(summary)
 }
 fn finalize(
@@ -770,6 +978,8 @@ fn finalize(
     version: &str,
     ignore: bool,
     expected: Option<&str>,
+    content: &Value,
+    hash: &str,
 ) -> Result<Value, String> {
     super::validate_resource_list_budget(game.get("resources"))?;
     if !semver(version)
@@ -781,8 +991,6 @@ fn finalize(
     if game.get("trashedAt").is_some_and(|v| !v.is_null()) {
         return Err("Cannot release a trashed game".into());
     }
-    let content = content(connection, game)?;
-    let hash = content_hash(&content)?;
     if expected.is_some_and(|value| value != hash) {
         return Err(super::CONFLICT.into());
     }
@@ -832,22 +1040,10 @@ fn finalize(
         connection.execute("INSERT INTO game_releases(id,game_id,original_game_id,content_version,content_hash,created_at,content) VALUES(?1,?2,?3,?4,?5,?6,?7)",params![id,game_id,game["originalGameId"].as_str().ok_or(ERROR)?,version,hash,created,content.to_string()]).map_err(db_error)?;
     }
     connection.execute("INSERT INTO game_release_selection(game_id,release_id) VALUES(?1,?2) ON CONFLICT(game_id) DO UPDATE SET release_id=excluded.release_id",params![game_id,id]).map_err(db_error)?;
-    Ok(json!({"kind":"released","state":state(connection,game,&hash)?}))
+    Ok(json!({"kind":"released","state":state(connection,game,hash)?}))
 }
-pub(super) fn request(connection: &mut Connection, input: Value) -> Result<Value, String> {
-    let request: Request = serde_json::from_value(input).map_err(|_| ERROR)?;
-    let game_id = match &request {
-        Request::Read { game_id, .. }
-        | Request::GetRelease { game_id, .. }
-        | Request::Release { game_id, .. } => game_id,
-    };
-    if game_id.trim().is_empty() {
-        return Err(ERROR.into());
-    }
-    let tx = connection
-        .transaction_with_behavior(TransactionBehavior::Immediate)
-        .map_err(db_error)?;
-    let (raw, version): (String, i64) = tx
+fn read_saved(connection: &Connection, game_id: &str) -> Result<(Value, i64), String> {
+    let (raw, version): (String, i64) = connection
         .query_row(
             "SELECT value,version FROM games WHERE id=?1",
             [game_id],
@@ -857,38 +1053,97 @@ pub(super) fn request(connection: &mut Connection, input: Value) -> Result<Value
     if !(0..=9_007_199_254_740_991).contains(&version) {
         return Err(ERROR.into());
     }
-    let mut reply = json!({"version":version,"records":[]});
-    if let Request::GetRelease { release_id, .. } = &request {
-        reply["release"] = get_release(&tx, game_id, release_id)?;
-    } else {
-        let game: Value = serde_json::from_str(&raw).map_err(|_| ERROR)?;
-        if !game["originalGameId"].as_str().is_some_and(valid_uuid) {
-            return Err(ERROR.into());
+    let game: Value = serde_json::from_str(&raw).map_err(|_| ERROR)?;
+    if !game["originalGameId"].as_str().is_some_and(valid_uuid) {
+        return Err(ERROR.into());
+    }
+    Ok((game, version))
+}
+
+pub(super) fn request(connection: &mut Connection, input: Value) -> Result<Value, String> {
+    let request: Request = serde_json::from_value(input).map_err(|_| ERROR)?;
+    let game_id = match &request {
+        Request::Read { game_id, .. }
+        | Request::GetRelease { game_id, .. }
+        | Request::VerifyRelease { game_id, .. }
+        | Request::Release { game_id, .. } => game_id,
+    };
+    if game_id.trim().is_empty() {
+        return Err(ERROR.into());
+    }
+    match &request {
+        Request::GetRelease { release_id, .. } => {
+            let tx = connection
+                .transaction_with_behavior(TransactionBehavior::Deferred)
+                .map_err(db_error)?;
+            let (_, version) = read_saved(&tx, game_id)?;
+            let mut reply = json!({"version":version,"records":[]});
+            reply["release"] = get_release(&tx, game_id, release_id)?;
+            tx.commit().map_err(db_error)?;
+            Ok(reply)
         }
-        match &request {
-            Request::Read { .. } => {
-                reply["versioning"] = state(&tx, &game, &content_hash(&content(&tx, &game)?)?)?
+        Request::VerifyRelease { release_id, .. } => {
+            if !valid_uuid(release_id) {
+                return Err(ERROR.into());
             }
-            Request::Release {
+            let (game, version) = read_saved(connection, game_id)?;
+            let (raw, stored): (String, String) = connection
+                .query_row(
+                    "SELECT content,content_hash FROM game_releases WHERE game_id=?1 AND id=?2",
+                    params![game_id, release_id],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+                .map_err(|_| "Game release not found")?;
+            let content: Value = serde_json::from_str(&raw).map_err(|_| ERROR)?;
+            let hash = release_digest(connection, &game, &content)?;
+            if hash != stored {
+                return Err(packages::error("integrity"));
+            }
+            Ok(json!({"version":version,"records":[],"releaseVerification":{"contentHash":hash}}))
+        }
+        Request::Read { .. } => {
+            // Advisory read: the digest is streamed outside any write lock.
+            let (game, version) = read_saved(connection, game_id)?;
+            let content = content(connection, &game)?;
+            let hash = release_digest(connection, &game, &content)?;
+            let mut reply = json!({"version":version,"records":[]});
+            reply["versioning"] = state(connection, &game, &hash)?;
+            Ok(reply)
+        }
+        Request::Release {
+            content_version,
+            ignore_conflict,
+            expected_content_hash,
+            ..
+        } => {
+            // The edit lock outranks content validation; check it before hashing (§2.8).
+            let (game, version) = read_saved(connection, game_id)?;
+            super::edit_lock::guard(connection, game_id, "release")?;
+            let content = content(connection, &game)?;
+            let hash = release_digest(connection, &game, &content)?;
+            let tx = connection
+                .transaction_with_behavior(TransactionBehavior::Immediate)
+                .map_err(db_error)?;
+            let (fresh, fresh_version) = read_saved(&tx, game_id)?;
+            if fresh_version != version {
+                return Err(super::CONFLICT.into());
+            }
+            super::edit_lock::guard(&tx, game_id, "release")?;
+            assert_owned_resources(&tx, game_id, fresh.get("resources"))?;
+            let mut reply = json!({"version":fresh_version,"records":[]});
+            reply["releaseResult"] = finalize(
+                &tx,
+                &fresh,
                 content_version,
-                ignore_conflict,
-                expected_content_hash,
-                ..
-            } => {
-                super::edit_lock::guard(&tx, game_id, "release")?;
-                reply["releaseResult"] = finalize(
-                    &tx,
-                    &game,
-                    content_version,
-                    *ignore_conflict,
-                    expected_content_hash.as_deref(),
-                )?
-            }
-            Request::GetRelease { .. } => unreachable!(),
+                *ignore_conflict,
+                expected_content_hash.as_deref(),
+                &content,
+                &hash,
+            )?;
+            tx.commit().map_err(db_error)?;
+            Ok(reply)
         }
     }
-    tx.commit().map_err(db_error)?;
-    Ok(reply)
 }
 
 #[cfg(test)]
@@ -1382,5 +1637,156 @@ mod tests {
         assert_ne!(backfilled, "one");
         initialize(&mut db).unwrap();
         assert_eq!(read(&mut db, "one")["originalGameId"], backfilled);
+    }
+
+    /// The release `connection()` omits runtime/media tables; reference digests need them.
+    fn media_connection() -> Connection {
+        let db = connection();
+        db.execute_batch(crate::runtime_content::SCHEMA).unwrap();
+        db.execute_batch(crate::runtime_content::MEDIA_SCHEMA)
+            .unwrap();
+        db
+    }
+
+    /// Seed a ready v2 object plus its owning blob, mirroring runtime_content::tests::seed_media.
+    fn seed_media(db: &Connection, game_id: &str, bytes: &[u8], mime: &str) -> Value {
+        let mut identity = crate::media_identity::MediaIdentity::new(game_id, mime);
+        identity.update(bytes).unwrap();
+        let identity = identity.digest();
+        let object_id = format!("object-{game_id}");
+        db.execute(
+            "INSERT INTO media_objects(id,game_id,state,size,chunk_size,sha256,crc32,created_at) VALUES(?1,?2,'ready',?3,1048576,?4,?5,'now')",
+            params![object_id, game_id, bytes.len() as i64, identity.raw, identity.crc],
+        ).unwrap();
+        for (index, chunk) in bytes.chunks(1_048_576).enumerate() {
+            let mut chunk_identity = crate::media_identity::MediaIdentity::new(game_id, mime);
+            chunk_identity.update(chunk).unwrap();
+            db.execute(
+                "INSERT INTO media_chunks VALUES(?1,?2,?3,?4)",
+                params![object_id, index as i64, chunk_identity.digest().raw, chunk],
+            )
+            .unwrap();
+        }
+        let blob = json!({"schemaVersion":2,"id":identity.blob_id,"gameId":game_id,"mime":mime,"object":identity.raw,"size":bytes.len()});
+        db.execute(
+            "INSERT OR REPLACE INTO blobs VALUES(?1,?2,?3)",
+            params![identity.blob_id, game_id, blob.to_string()],
+        )
+        .unwrap();
+        for hash in [&identity.asset_hash, &identity.blob_id] {
+            db.execute(
+                "INSERT OR REPLACE INTO runtime_assets VALUES(?1,?2,?3)",
+                params![game_id, hash, identity.blob_id],
+            )
+            .unwrap();
+        }
+        blob
+    }
+
+    fn reference_resources(blob_id: &str, mime: &str) -> Value {
+        json!({"portrait":{"name":"images/portrait.png","mime":mime,"data":format!("helia-asset:{blob_id}")}})
+    }
+
+    #[test]
+    fn reference_releases_keep_references_confirm_assets_and_verify_the_streamed_digest() {
+        let mut db = media_connection();
+        let mut game = install(&db, "one");
+        let bytes = vec![1u8, 2, 3];
+        let blob = seed_media(&db, "one", &bytes, "image/png");
+        let blob_id = blob["id"].as_str().unwrap().to_owned();
+        game["resources"] = reference_resources(&blob_id, "image/png");
+        save(&db, &game);
+        let released = release(&mut db, "one", "1.0.0");
+        assert_eq!(released["kind"], "released");
+        let release_id = released["state"]["currentRelease"]["id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let frozen = get_release(&db, "one", &release_id).unwrap();
+        // The stored release keeps the reference instead of inline bytes.
+        assert_eq!(
+            frozen["content"]["resources"]["portrait"]["data"],
+            format!("helia-asset:{blob_id}")
+        );
+        assert_eq!(frozen["assets"][blob_id.as_str()]["mime"], "image/png");
+        assert_eq!(frozen["assets"][blob_id.as_str()]["size"], 3);
+        assert_eq!(frozen["assets"][blob_id.as_str()]["sha256"], blob["object"]);
+        let verified = request(
+            &mut db,
+            json!({"kind":"versioning","action":"verifyRelease","gameId":"one","releaseId":release_id}),
+        )
+        .unwrap();
+        let hash = verified["releaseVerification"]["contentHash"]
+            .as_str()
+            .unwrap();
+        assert_eq!(
+            hash,
+            released["state"]["currentRelease"]["contentHash"]
+                .as_str()
+                .unwrap()
+        );
+        // Streaming the referenced bytes equals hashing the same bytes inline.
+        let mut inline = frozen["content"].clone();
+        inline["resources"]["portrait"]["data"] = json!(format!(
+            "data:image/png;base64,{}",
+            base64::engine::general_purpose::STANDARD.encode(&bytes)
+        ));
+        assert_eq!(content_hash(&inline).unwrap(), hash);
+    }
+
+    #[test]
+    fn releases_reject_missing_foreign_and_mime_mismatched_references() {
+        let mut db = media_connection();
+        let mut game = install(&db, "one");
+        install(&db, "two");
+        let attempt = |db: &mut Connection| {
+            request(
+                db,
+                json!({"kind":"versioning","action":"release","gameId":"one","contentVersion":"1.0.0"}),
+            )
+            .unwrap_err()
+        };
+        // Missing blob.
+        game["resources"] = reference_resources(&"0".repeat(64), "image/png");
+        save(&db, &game);
+        assert_eq!(attempt(&mut db), packages::error("missingAsset"));
+        // A blob owned by another installation is not visible to this game.
+        let foreign = seed_media(&db, "two", &[1], "image/png");
+        game["resources"] = reference_resources(foreign["id"].as_str().unwrap(), "image/png");
+        save(&db, &game);
+        assert_eq!(attempt(&mut db), packages::error("missingAsset"));
+        // Same-game blob but a declared MIME that does not match.
+        let owned = seed_media(&db, "one", &[1], "image/png");
+        game["resources"] = reference_resources(owned["id"].as_str().unwrap(), "video/mp4");
+        save(&db, &game);
+        assert_eq!(attempt(&mut db), packages::error("mediaType"));
+        // The matching reference is accepted.
+        game["resources"] = reference_resources(owned["id"].as_str().unwrap(), "image/png");
+        save(&db, &game);
+        assert_eq!(release(&mut db, "one", "1.0.0")["kind"], "released");
+    }
+
+    #[test]
+    fn reference_releases_require_fresh_content_confirmation() {
+        let mut db = media_connection();
+        let mut game = install(&db, "one");
+        let blob = seed_media(&db, "one", &[1, 2, 3], "image/png");
+        game["resources"] = reference_resources(blob["id"].as_str().unwrap(), "image/png");
+        save(&db, &game);
+        assert_eq!(
+            request(
+                &mut db,
+                json!({"kind":"versioning","action":"release","gameId":"one","contentVersion":"1.0.0","expectedContentHash":"0".repeat(64)}),
+            )
+            .unwrap_err(),
+            super::super::CONFLICT
+        );
+        let hash = read(&mut db, "one")["contentHash"].clone();
+        let released = request(
+            &mut db,
+            json!({"kind":"versioning","action":"release","gameId":"one","contentVersion":"1.0.0","expectedContentHash":hash}),
+        )
+        .unwrap();
+        assert_eq!(released["releaseResult"]["kind"], "released");
     }
 }

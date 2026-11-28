@@ -24,9 +24,20 @@ import fileSchema from '#lib/storage/session-files.sql?raw';
 import { validateStoredHistory } from '#lib/storage/validate-history.js';
 
 import { unlockGame } from './game-edit-lock.js';
-import { installGame, installPreview, prepareInstall } from './game-install.js';
-import { gameReleases, initializeGameReleases, preserveOriginalGameId } from './game-releases.js';
+import {
+	installGame,
+	installPreview,
+	installPreviewAsync,
+	prepareInstall
+} from './game-install.js';
+import {
+	gameReleases,
+	gameReleasesAsync,
+	initializeGameReleases,
+	preserveOriginalGameId
+} from './game-releases.js';
 import { MediaLifetime, purgeMedia } from './media-lifetime.js';
+import { assertOwnedResources } from './media-references.js';
 import { MediaUploads } from './media-uploads.js';
 import { RUNTIME_SCHEMA } from './runtime-content.js';
 
@@ -172,7 +183,9 @@ class Storage {
 		}
 	}
 	private writeGamesRow(row: StoredRecord, create: boolean, value: string) {
-		value = JSON.stringify(preserveOriginalGameId(this.connection, row.id, JSON.parse(value)));
+		const game = preserveOriginalGameId(this.connection, row.id, JSON.parse(value));
+		assertOwnedResources(this.connection, row.id, game.resources ?? {});
+		value = JSON.stringify(game);
 		if (create) {
 			this.db.run(sql`insert into games (id, value) values (${row.id}, ${value})`);
 			return;
@@ -447,7 +460,22 @@ class Storage {
 	};
 	/** The verified private copy is the only request used after the async boundary. */
 	requestAsync = async (input: unknown): Promise<StorageReply> => {
-		if (record(input).kind !== 'install') {
+		const kind = record(input).kind;
+		if (kind === 'versioning') {
+			const command = parseRequest(input);
+			if (command.kind !== 'versioning') {
+				throw Error('Invalid versioning request');
+			}
+			return gameReleasesAsync(this.connection, command);
+		}
+		if (kind === 'installPreview') {
+			const command = parseRequest(input);
+			if (command.kind !== 'installPreview') {
+				throw Error('Invalid install preview request');
+			}
+			return installPreviewAsync(this.connection, command);
+		}
+		if (kind !== 'install') {
 			return this.request(input);
 		}
 		const command = structuredClone(parseRequest(input));

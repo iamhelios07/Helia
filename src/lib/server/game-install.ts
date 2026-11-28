@@ -1,7 +1,11 @@
 import type Database from 'better-sqlite3';
 
-import type { GameReleaseSummary } from '#lib/games/versioning.js';
-import type { InstallRequest, InstallPreviewRequest } from '#lib/storage/install.js';
+import type { GameReleaseSummary, GameVersioning } from '#lib/games/versioning.js';
+import type {
+	InstallRequest,
+	InstallPreviewRequest,
+	InstallPreviewEntry
+} from '#lib/storage/install.js';
 import type { StorageReply } from '#lib/storage/protocol.js';
 
 import { parseGame, parseSession } from '#lib/games/model.js';
@@ -9,7 +13,7 @@ import { requirePackage } from '#lib/games/package/limits.js';
 import { verifyReleaseContent } from '#lib/games/package/verify.js';
 import { effectiveContentVersion, packageInstalledFrom } from '#lib/storage/install.js';
 
-import { gameReleases, readGameVersioning } from './game-releases.js';
+import { gameReleases, readGameVersioning, readGameVersioningAsync } from './game-releases.js';
 import {
 	packageConflictDecision,
 	packageConflictHashes,
@@ -106,23 +110,7 @@ export function installPreview(
 	db: Database.Database,
 	request: InstallPreviewRequest
 ): StorageReply {
-	const hasDraftTable = Boolean(
-		db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='editor_drafts'").get()
-	);
-	const rows = db
-		.prepare(
-			`SELECT g.id, g.value, s.release_id AS selectedReleaseId FROM games g
-		LEFT JOIN game_release_selection s ON s.game_id=g.id
-		WHERE json_extract(g.value,'$.originalGameId')=? AND json_extract(g.value,'$.trashedAt') IS NULL
-		ORDER BY g.id LIMIT 10001`
-		)
-		.all(request.originalGameId) as {
-		id: string;
-		value: string;
-		selectedReleaseId: string | null;
-	}[];
-	requirePackage(rows.length <= 10000, 'limit');
-	const histories = previewReleaseHistories(db, request.originalGameId);
+	const { rows, histories, hasDraftTable } = previewRows(db, request);
 	return {
 		version: 0,
 		records: [],
@@ -134,26 +122,88 @@ export function installPreview(
 				histories.get(row.id) ?? [],
 				row.selectedReleaseId
 			);
-			return {
-				gameId: row.id,
-				title: game.title,
-				versioning,
-				hasDraft:
-					hasDraftTable &&
-					Boolean(
-						db
-							.prepare('SELECT 1 FROM editor_drafts WHERE game_id=? AND value IS NOT NULL')
-							.get(row.id)
-					),
-				existingHashes: [
-					...new Set(
-						versioning.releases
-							.filter((release) => release.contentVersion === request.contentVersion)
-							.map((release) => release.contentHash)
-					)
-				].sort()
-			};
+			return previewEntry(row, game, versioning, {
+				hasDraft: draftExists(db, hasDraftTable, row.id),
+				contentVersion: request.contentVersion
+			});
 		})
+	};
+}
+
+/** Reference-bearing working content streams its digest, so preview can run outside a write lock. */
+export async function installPreviewAsync(
+	db: Database.Database,
+	request: InstallPreviewRequest
+): Promise<StorageReply> {
+	const { rows, histories, hasDraftTable } = previewRows(db, request);
+	const entries: InstallPreviewEntry[] = [];
+	for (const row of rows) {
+		const game = parseGame(JSON.parse(row.value));
+		const versioning = await readGameVersioningAsync(
+			db,
+			game,
+			histories.get(row.id) ?? [],
+			row.selectedReleaseId
+		);
+		entries.push(
+			previewEntry(row, game, versioning, {
+				hasDraft: draftExists(db, hasDraftTable, row.id),
+				contentVersion: request.contentVersion
+			})
+		);
+	}
+	return { version: 0, records: [], installPreview: entries };
+}
+
+type PreviewRow = {
+	id: string;
+	value: string;
+	selectedReleaseId: string | null;
+};
+
+function previewRows(db: Database.Database, request: InstallPreviewRequest) {
+	const hasDraftTable = Boolean(
+		db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='editor_drafts'").get()
+	);
+	const rows = db
+		.prepare(
+			`SELECT g.id, g.value, s.release_id AS selectedReleaseId FROM games g
+		LEFT JOIN game_release_selection s ON s.game_id=g.id
+		WHERE json_extract(g.value,'$.originalGameId')=? AND json_extract(g.value,'$.trashedAt') IS NULL
+		ORDER BY g.id LIMIT 10001`
+		)
+		.all(request.originalGameId) as PreviewRow[];
+	requirePackage(rows.length <= 10000, 'limit');
+	return { rows, histories: previewReleaseHistories(db, request.originalGameId), hasDraftTable };
+}
+
+function draftExists(db: Database.Database, hasDraftTable: boolean, gameId: string): boolean {
+	return (
+		hasDraftTable &&
+		Boolean(
+			db.prepare('SELECT 1 FROM editor_drafts WHERE game_id=? AND value IS NOT NULL').get(gameId)
+		)
+	);
+}
+
+function previewEntry(
+	row: PreviewRow,
+	game: ReturnType<typeof parseGame>,
+	versioning: GameVersioning,
+	options: { hasDraft: boolean; contentVersion: string }
+): InstallPreviewEntry {
+	return {
+		gameId: row.id,
+		title: game.title,
+		versioning,
+		hasDraft: options.hasDraft,
+		existingHashes: [
+			...new Set(
+				versioning.releases
+					.filter((release) => release.contentVersion === options.contentVersion)
+					.map((release) => release.contentHash)
+			)
+		].sort()
 	};
 }
 

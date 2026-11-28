@@ -44,7 +44,8 @@ const messages = {
 	nonCanonical: '정규형 콘텐츠가 아니에요. 더 새 Helia가 필요할 수 있어요.',
 	installOnlyKey: '게임 콘텐츠에 설치 전용 정보가 들어 있어요.',
 	newerHeliaRequired: '이 게임 패키지를 열려면 더 새 Helia가 필요해요.',
-	staleAcknowledgement: '설치 확인 정보가 바뀌었어요. 다시 확인해 주세요.'
+	staleAcknowledgement: '설치 확인 정보가 바뀌었어요. 다시 확인해 주세요.',
+	exportFormatPending: '이 버전은 새 내보내기 형식이 준비된 뒤 내보낼 수 있어요.'
 };
 
 export function isGamePackageErrorCode(value: unknown): value is GamePackageErrorCode {

@@ -57,7 +57,8 @@ import type {
 	GameVersioning,
 	GameRelease,
 	GameReleaseOptions,
-	CreateGameReleaseResult
+	CreateGameReleaseResult,
+	ReleaseVerification
 } from './versioning.js';
 
 import { isSessionBusy } from './ai/activity.js';
@@ -822,6 +823,19 @@ class GameRepository {
 			throw Error('Missing game release');
 		}
 		return reply.release;
+	};
+	/** The host recomputes a stored release digest by streaming referenced bytes (§2.8). */
+	verifyRelease = async (gameId: string, releaseId: string): Promise<ReleaseVerification> => {
+		const reply = await this.transport({
+			kind: 'versioning',
+			action: 'verifyRelease',
+			gameId,
+			releaseId
+		});
+		if (!reply.releaseVerification) {
+			throw Error('Missing release verification');
+		}
+		return reply.releaseVerification;
 	};
 	getGameWorkspace = (gameId: string) => {
 		return this.withGame(gameId, (unit) => {
