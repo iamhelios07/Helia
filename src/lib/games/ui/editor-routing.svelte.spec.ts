@@ -4,6 +4,8 @@ import { beforeEach, expect, it, vi } from 'vitest';
 import { render } from 'vitest-browser-svelte';
 import { page } from 'vitest/browser';
 
+import { storageRequest } from '#lib/storage/transport.js';
+
 import type { EditorDraft } from '../editor.js';
 
 import { loadAuthoringDraft, saveAuthoringDraft } from '../editor-draft-storage.js';
@@ -18,7 +20,7 @@ vi.mock('../editor-draft-storage.js', () => ({
 	saveAuthoringDraft: vi.fn()
 }));
 vi.mock('#lib/storage/transport.js', async () => ({
-	storageRequest: (await import('#lib/testing/memory-storage.js')).memoryStorage()
+	storageRequest: vi.fn((await import('#lib/testing/memory-storage.js')).memoryStorage())
 }));
 
 const drafts = new Map<string, { version: number; draft: EditorDraft | null }>();
@@ -90,6 +92,14 @@ it('canonicalizes the root and navigates document tabs without reloading the edi
 		.element(page.getByRole('textbox', { name: '이름', exact: true }))
 		.toHaveValue('탭 사이에 보존');
 	expect(loadAuthoringDraft).toHaveBeenCalledOnce();
+	const leases = () =>
+		vi
+			.mocked(storageRequest)
+			.mock.calls.map(([request]) => request)
+			.filter((request) => request.kind === 'editorLease');
+	expect(leases()).toEqual([expect.objectContaining({ gameId: game.id, action: 'renew' })]);
+	await view.unmount();
+	await expect.poll(leases).toEqual([leases()[0], { ...leases()[0], action: 'release' }]);
 });
 
 it('opens draft-only nested code directly and retains the same Monaco model on back/forward selection', async () => {

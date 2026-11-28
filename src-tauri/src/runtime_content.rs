@@ -292,7 +292,8 @@ pub(crate) fn project(
             let id = input["id"].as_str().ok_or(ERROR)?;
             connection
                 .execute(
-                    "INSERT OR IGNORE INTO runtime_assets (game_id,hash,blob_id) VALUES (?1,?2,?2)",
+                    "INSERT OR IGNORE INTO runtime_assets (game_id,hash,blob_id)
+                     SELECT game_id,id,id FROM blobs WHERE game_id=?1 AND id=?2",
                     params![game_id, id],
                 )
                 .map_err(|_| ERROR)?;

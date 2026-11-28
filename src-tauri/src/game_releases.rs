@@ -50,10 +50,16 @@ fn valid_hash(value: &str) -> bool {
 pub(super) fn initialize(connection: &mut Connection) -> Result<(), String> {
     connection.execute_batch(SCHEMA).map_err(db_error)?;
     // Existing databases need no write lock, including advisory install previews.
-    let missing: bool = connection.query_row(
-        "SELECT EXISTS(SELECT 1 FROM games WHERE json_extract(value,'$.originalGameId') IS NULL)",
-        [], |row| row.get(0),
-    ).map_err(db_error)?;
+    // Leave unreadable/non-object games intact so manual media cleanup can skip them.
+    const MISSING_ORIGIN: &str = "CASE WHEN json_valid(value)
+        THEN json_type(value)='object' AND json_extract(value,'$.originalGameId') IS NULL ELSE 0 END";
+    let missing: bool = connection
+        .query_row(
+            &format!("SELECT EXISTS(SELECT 1 FROM games WHERE {MISSING_ORIGIN})"),
+            [],
+            |row| row.get(0),
+        )
+        .map_err(db_error)?;
     if !missing {
         return Ok(());
     }
@@ -62,9 +68,9 @@ pub(super) fn initialize(connection: &mut Connection) -> Result<(), String> {
         .map_err(db_error)?;
     let rows: Vec<(String, String)> = {
         let mut query = tx
-            .prepare(
-                "SELECT id,value FROM games WHERE json_extract(value,'$.originalGameId') IS NULL",
-            )
+            .prepare(&format!(
+                "SELECT id,value FROM games WHERE {MISSING_ORIGIN}"
+            ))
             .map_err(db_error)?;
         query
             .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
@@ -73,11 +79,13 @@ pub(super) fn initialize(connection: &mut Connection) -> Result<(), String> {
             .map_err(db_error)?
     };
     for (id, raw) in rows {
-        let mut game: Value = serde_json::from_str(&raw).map_err(|_| ERROR)?;
-        game["originalGameId"] = json!(uuid()?);
+        let Ok(Value::Object(mut game)) = serde_json::from_str(&raw) else {
+            continue;
+        };
+        game.insert("originalGameId".into(), json!(uuid()?));
         tx.execute(
             "UPDATE games SET value=?1,version=version+1 WHERE id=?2",
-            params![game.to_string(), id],
+            params![Value::Object(game).to_string(), id],
         )
         .map_err(db_error)?;
     }

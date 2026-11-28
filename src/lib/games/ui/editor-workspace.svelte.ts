@@ -1,6 +1,6 @@
 import { beforeNavigate, goto } from '$app/navigation';
 import { resolve } from '$app/paths';
-import { onMount, onDestroy } from 'svelte';
+import { onMount, onDestroy, untrack } from 'svelte';
 import { SvelteDate } from 'svelte/reactivity';
 
 import type { CodeDiagnostic } from '../code-authoring.js';
@@ -28,6 +28,7 @@ import { getGameWorkspace, applyGameDraft } from '../repository.js';
 import { loadSettingsDraft, clearSettingsDraft } from '../settings-draft.js';
 import { generateStateTypes } from '../state/schema.js';
 import { EditorRouting } from './editor-routing.svelte.js';
+import { holdEditorLease } from './editor/editor-lease.js';
 import { MonacoProject } from './editor/monaco-project.js';
 export type DocumentId =
 	| Exclude<EditorDocumentId, 'code' | 'assets'>
@@ -1033,6 +1034,13 @@ export class EditorWorkspace {
 	initialize() {
 		this.monacoProject.openSource = this.openSource;
 		onDestroy(() => this.monacoProject.dispose());
+		const leaseGameId = $derived(this.gameId);
+		$effect(() => {
+			const gameId = leaseGameId;
+			if (gameId) {
+				return untrack(() => holdEditorLease(gameId, () => this.saveQueue));
+			}
+		});
 		$effect(() => {
 			this.monacoProject.update(
 				this.codeProject?.files ?? {},

@@ -23,6 +23,7 @@ import { pruneRecords } from '#lib/storage/prune.js';
 import fileSchema from '#lib/storage/session-files.sql?raw';
 import { validateStoredHistory } from '#lib/storage/validate-history.js';
 
+import { initializeEditorDrafts } from './editor-drafts.js';
 import { unlockGame } from './game-edit-lock.js';
 import {
 	installGame,
@@ -36,7 +37,8 @@ import {
 	initializeGameReleases,
 	preserveOriginalGameId
 } from './game-releases.js';
-import { MediaLifetime, purgeMedia } from './media-lifetime.js';
+import { cleanStorage } from './media-cleanup.js';
+import { MediaLifetime, purgeMedia, updateEditorLease } from './media-lifetime.js';
 import { assertOwnedResources } from './media-references.js';
 import { MediaUploads } from './media-uploads.js';
 import { RUNTIME_SCHEMA } from './runtime-content.js';
@@ -113,6 +115,7 @@ class Storage {
 		this.db = drizzle(this.connection);
 		this.connection.exec(fileSchema);
 		this.connection.exec(mediaSchema);
+		initializeEditorDrafts(this.connection);
 		initializeGameReleases(this.connection);
 		this.connection.exec(RUNTIME_SCHEMA);
 		this.mediaLifetime = new MediaLifetime(this.connection);
@@ -375,7 +378,11 @@ class Storage {
 		this.validateActiveSession(command);
 		return { version: command.kind === 'create' ? 0 : command.version + 1, records: [] };
 	}
-	private execute(command: StorageRequest): StorageReply {
+	private execute(command: Exclude<StorageRequest, { kind: 'cleanStorage' }>): StorageReply {
+		if (command.kind === 'editorLease') {
+			updateEditorLease(this.connection, command);
+			return { version: 0, records: [] };
+		}
 		if (command.kind === 'unlockGame') {
 			return unlockGame(this.connection, command.gameId);
 		}
@@ -450,6 +457,9 @@ class Storage {
 	}
 	request = (input: unknown): StorageReply => {
 		const command = parseRequest(input);
+		if (command.kind === 'cleanStorage') {
+			throw Error('Storage cleanup requires requestAsync');
+		}
 		hostAILeases.guard(command);
 		const result = this.db.transaction(() => this.execute(command), {
 			behavior:
@@ -465,6 +475,11 @@ class Storage {
 	/** The verified private copy is the only request used after the async boundary. */
 	requestAsync = async (input: unknown): Promise<StorageReply> => {
 		const kind = record(input).kind;
+		if (kind === 'cleanStorage') {
+			parseRequest(input);
+			const storageCleanup = await cleanStorage(this.connection, this.mediaLifetime);
+			return { version: 0, records: [], storageCleanup };
+		}
 		if (kind === 'versioning') {
 			const command = parseRequest(input);
 			if (command.kind !== 'versioning') {

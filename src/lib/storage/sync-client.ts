@@ -107,7 +107,9 @@ class StorageSynchronization {
 		if (
 			request.kind === 'versioning' ||
 			request.kind === 'install' ||
-			request.kind === 'installPreview'
+			request.kind === 'installPreview' ||
+			request.kind === 'cleanStorage' ||
+			request.kind === 'editorLease'
 		) {
 			return parseReply(await this.send(request));
 		}

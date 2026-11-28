@@ -13,7 +13,7 @@
 			class="icon-button"
 			type="button"
 			aria-label="설정 닫기"
-			disabled={controller.busy || controller.promptPanel?.isBusy()}
+			disabled={controller.navigationBusy}
 			onclick={() => controller.changeView(onclose)}><Icon name="close" size={19} /></button
 		>
 	</div>
@@ -23,14 +23,14 @@
 			type="button"
 			aria-label="모델"
 			aria-current={controller.section === 'models' ? 'page' : undefined}
-			disabled={controller.busy || controller.promptPanel?.isBusy()}
+			disabled={controller.navigationBusy}
 			onclick={() => controller.switchSection('models')}><Icon name="chat" size={18} />모델</button
 		><button
 			class={{ selected: controller.section === 'connections' }}
 			type="button"
 			aria-label="API 연결"
 			aria-current={controller.section === 'connections' ? 'page' : undefined}
-			disabled={controller.busy || controller.promptPanel?.isBusy()}
+			disabled={controller.navigationBusy}
 			onclick={() => controller.switchSection('connections')}
 			><Icon name="tool" size={18} />API 연결</button
 		>
@@ -39,7 +39,7 @@
 			type="button"
 			aria-label="프롬프트"
 			aria-current={controller.section === 'prompts' ? 'page' : undefined}
-			disabled={controller.busy || controller.promptPanel?.isBusy()}
+			disabled={controller.navigationBusy}
 			onclick={() => controller.switchSection('prompts')}
 			><Icon name="book" size={18} />프롬프트</button
 		>
@@ -48,7 +48,7 @@
 			type="button"
 			aria-label="페르소나"
 			aria-current={controller.section === 'personas' ? 'page' : undefined}
-			disabled={controller.busy || controller.promptPanel?.isBusy()}
+			disabled={controller.navigationBusy}
 			onclick={() => controller.switchSection('personas')}
 			><Icon name="user" size={18} />페르소나</button
 		>
@@ -57,9 +57,17 @@
 			type="button"
 			aria-label="외부 연결"
 			aria-current={controller.section === 'network' ? 'page' : undefined}
-			disabled={controller.busy || controller.promptPanel?.isBusy()}
+			disabled={controller.navigationBusy}
 			onclick={() => controller.switchSection('network')}
 			><Icon name="globe" size={18} />외부 연결</button
+		>
+		<button
+			class={{ selected: controller.section === 'storage' }}
+			type="button"
+			aria-current={controller.section === 'storage' ? 'page' : undefined}
+			disabled={controller.navigationBusy}
+			onclick={() => controller.switchSection('storage')}
+			><Icon name="folder" size={18} />저장 공간</button
 		>
 	</nav>
 	<div class="rail-footer"><Icon name="sun" size={19} /><span>Helia</span></div>

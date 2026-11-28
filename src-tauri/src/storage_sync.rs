@@ -25,7 +25,7 @@ pub(crate) fn execute(path: &Path, input: Value) -> Result<Value, String> {
     }
     if matches!(
         input["request"]["kind"].as_str(),
-        Some("install" | "installJson" | "installPreview")
+        Some("install" | "installJson" | "installPreview" | "cleanStorage" | "editorLease")
     ) {
         return Err(ERROR.into());
     }

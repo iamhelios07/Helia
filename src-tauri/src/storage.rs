@@ -154,6 +154,9 @@ mod releases;
 #[path = "game_edit_lock.rs"]
 mod edit_lock;
 
+#[path = "media_cleanup.rs"]
+mod media_cleanup;
+
 #[path = "media_uploads.rs"]
 pub(crate) mod media_uploads;
 
@@ -1307,6 +1310,9 @@ pub(crate) fn execute_request(path: &Path, input: Value) -> Result<Value, String
             serde_json::from_value(input).map_err(|_| releases::packages::error("format"))?;
         return media_uploads::request(path, command);
     }
+    if matches!(input["kind"].as_str(), Some("cleanStorage" | "editorLease")) {
+        return media_cleanup::request(path, input);
+    }
     if input["kind"] == "installJson" {
         let request = releases::packages::parse_install_json(&input)?;
         return releases::packages::request(&mut open(path)?, request);
@@ -2147,6 +2153,9 @@ pub async fn storage_request<R: tauri::Runtime>(
 
 #[cfg(test)]
 mod tests {
+    mod cleanup {
+        include!("media_cleanup_tests.rs");
+    }
     use super::*;
 
     #[test]

@@ -72,7 +72,18 @@ export interface GamePatch {
 	set: Record<string, unknown>;
 	remove: string[];
 }
+export interface StorageCleanupResult {
+	cleanedFiles: number;
+	removedBlobs: number;
+	queuedObjects: number;
+	/** Count each queued object's bytes once, even if several blobs shared it. */
+	reclaimableBytes: string;
+	skippedEditing: number;
+	skippedUnreadable: number;
+}
 export type StorageRequest =
+	| { kind: 'cleanStorage' }
+	| { kind: 'editorLease'; gameId: string; leaseId: string; action: 'renew' | 'release' }
 	| InstallRequest
 	| { kind: 'unlockGame'; gameId: string }
 	| InstallPreviewRequest
@@ -111,6 +122,7 @@ export interface StorageReply {
 	releaseVerification?: ReleaseVerification;
 	installResult?: InstallResult;
 	installPreview?: InstallPreviewEntry[];
+	storageCleanup?: StorageCleanupResult;
 }
 export type StorageTransport = (request: StorageRequest) => Promise<StorageReply>;
 export const CONFLICT = 'STORAGE_CONFLICT';
@@ -226,10 +238,6 @@ function createRequest(gameId: string, records: StoredRecord[]): StorageRequest 
 	return { kind: 'create', gameId, records };
 }
 
-function parseGameScopedRequest(kind: string, gameId: string): StorageRequest {
-	return { kind: kind as 'trash' | 'restore' | 'purge', gameId };
-}
-
 /** Reads take optional history and session scoping. */
 function parseReadRequest(gameId: string, input: Record<string, unknown>): StorageRequest {
 	return {
@@ -291,44 +299,82 @@ function assertPortableResources(value: unknown) {
 	}
 }
 
+function parseEditorLease(input: Record<string, unknown>): StorageRequest {
+	const { action, leaseId } = input;
+	if (
+		Object.keys(input).length !== 4 ||
+		(action !== 'renew' && action !== 'release') ||
+		typeof leaseId !== 'string' ||
+		!/^[a-f0-9]{32}$/.test(leaseId)
+	) {
+		throw Error('Invalid editor lease request');
+	}
+	return { kind: 'editorLease', gameId: identifier(input.gameId), action, leaseId };
+}
+
 export function parseRequest(value: unknown): StorageRequest {
 	const input = record(value);
-	if (input.kind === 'install' || input.kind === 'installPreview') {
-		return parseInstallRequest(input);
-	}
-	if (input.kind === 'list') {
-		return { kind: 'list', ...(input.includeTrashed === true ? { includeTrashed: true } : {}) };
+	switch (input.kind) {
+		case 'install':
+		case 'installPreview':
+			return parseInstallRequest(input);
+		case 'list':
+			return { kind: 'list', ...(input.includeTrashed === true ? { includeTrashed: true } : {}) };
+		case 'cleanStorage':
+			if (Object.keys(input).length !== 1) {
+				throw Error('Invalid storage cleanup request');
+			}
+			return { kind: 'cleanStorage' };
+		case 'editorLease':
+			return parseEditorLease(input);
 	}
 	const gameId = identifier(input.gameId);
-	if (input.kind === 'unlockGame') {
-		return { kind: 'unlockGame', gameId };
-	}
-	if (input.kind === 'versioning') {
-		return parseVersioningRequest(gameId, input);
-	}
-	if (['trash', 'restore', 'purge'].includes(String(input.kind))) {
-		return parseGameScopedRequest(String(input.kind), gameId);
-	}
-	if (input.kind === 'prune') {
-		return {
-			kind: 'prune',
-			gameId,
-			sessionId: identifier(input.sessionId),
-			eventId: identifier(input.eventId),
-			expectedRevision: counter(input.expectedRevision)
-		};
-	}
-	if (input.kind === 'read') {
-		return parseReadRequest(gameId, input);
-	}
-	const records = parseRecords(input.records, gameId, true);
-	if (input.kind === 'create') {
-		return createRequest(gameId, records);
-	}
-	if (input.kind === 'commit' && Array.isArray(input.deleteSessions)) {
-		return parseCommitRequest(gameId, input, records);
+	switch (input.kind) {
+		case 'unlockGame':
+			return { kind: 'unlockGame', gameId };
+		case 'versioning':
+			return parseVersioningRequest(gameId, input);
+		case 'trash':
+		case 'restore':
+		case 'purge':
+			return { kind: input.kind, gameId };
+		case 'prune':
+			return {
+				kind: 'prune',
+				gameId,
+				sessionId: identifier(input.sessionId),
+				eventId: identifier(input.eventId),
+				expectedRevision: counter(input.expectedRevision)
+			};
+		case 'read':
+			return parseReadRequest(gameId, input);
+		case 'create':
+			return createRequest(gameId, parseRecords(input.records, gameId, true));
+		case 'commit':
+			if (Array.isArray(input.deleteSessions)) {
+				return parseCommitRequest(gameId, input, parseRecords(input.records, gameId, true));
+			}
+			break;
 	}
 	throw new Error('지원하지 않는 저장 요청이에요.');
+}
+
+function parseStorageCleanup(value: unknown): StorageCleanupResult {
+	const input = record(value);
+	if (
+		typeof input.reclaimableBytes !== 'string' ||
+		!/^(0|[1-9][0-9]{0,38})$/.test(input.reclaimableBytes)
+	) {
+		throw Error('Invalid storage cleanup result');
+	}
+	return {
+		cleanedFiles: counter(input.cleanedFiles),
+		removedBlobs: counter(input.removedBlobs),
+		queuedObjects: counter(input.queuedObjects),
+		reclaimableBytes: input.reclaimableBytes,
+		skippedEditing: counter(input.skippedEditing),
+		skippedUnreadable: counter(input.skippedUnreadable)
+	};
 }
 
 export function parseReply(value: unknown): StorageReply {
@@ -339,6 +385,9 @@ export function parseReply(value: unknown): StorageReply {
 	return {
 		version: counter(input.version),
 		records: parseRecords(input.records),
+		...(input.storageCleanup === undefined
+			? {}
+			: { storageCleanup: parseStorageCleanup(input.storageCleanup) }),
 		...(input.installResult === undefined
 			? {}
 			: { installResult: parseInstallResult(input.installResult) }),

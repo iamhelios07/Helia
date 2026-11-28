@@ -26,7 +26,8 @@ export async function storageSyncAsync(
 	if (
 		envelope.kind === 'install' ||
 		envelope.kind === 'installPreview' ||
-		envelope.kind === 'versioning'
+		envelope.kind === 'versioning' ||
+		envelope.kind === 'cleanStorage'
 	) {
 		return store.requestAsync(request);
 	}
@@ -73,8 +74,13 @@ export function storageSync(store: Store, input: unknown): StorageReply | SyncRe
 		return store.request(input);
 	}
 	const kind = record(envelope.request).kind;
-	if (kind === 'install' || kind === 'installPreview') {
-		throw Error('Package requests must be sent directly');
+	if (
+		kind === 'install' ||
+		kind === 'installPreview' ||
+		kind === 'cleanStorage' ||
+		kind === 'editorLease'
+	) {
+		throw Error('Operations must be sent directly');
 	}
 	const known = syncKnown(envelope.known);
 	const request = expandGamePatches(store, envelope.request);

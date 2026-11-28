@@ -23,6 +23,14 @@ pub(super) fn wake() {
     lifetime::wake();
 }
 #[cfg(test)]
+pub(super) fn step_for_test(db: &mut Connection) -> bool {
+    lifetime::step(db).unwrap()
+}
+#[cfg(test)]
+pub(super) fn expire_for_test(db: &mut Connection, startup: bool) {
+    lifetime::expire(db, startup).unwrap();
+}
+#[cfg(test)]
 #[path = "media_upload_tests.rs"]
 mod tests;
 const CHUNK: i64 = 1048576;

@@ -195,7 +195,11 @@ class MemoryStorage {
 		if (request.kind === 'read') {
 			return this.read(request);
 		}
+		if (request.kind === 'editorLease') {
+			return { version: 0, records: [] };
+		}
 		if (
+			request.kind === 'cleanStorage' ||
 			request.kind === 'install' ||
 			request.kind === 'installPreview' ||
 			request.kind === 'unlockGame'

@@ -92,6 +92,14 @@ Both hosts initialize the shared [release tables](./game-releases.sql). Immutabl
 
 A same-origin, same-version release with different content produces a conflict result. The UI offers changing the version, ignoring the conflict or canceling. Ignoring requires the confirmed content hash and preserves both variants. Hosts recheck content and active-installation conflicts inside the write transaction; stale confirmations fail without changing the selection or adding a release. Reconfirming an existing version/hash reuses it. Release summaries are bounded to 10,000 entries per installation, with capacity checked before inserting a new release. Package export/import is a separate feature.
 
+## Manual media cleanup
+
+**설정 → 저장 공간 → 저장 공간 정리** is the only user-facing trigger for the `cleanStorage` request. Save Draft, Apply, release creation, startup and expiry ticks do not sweep unused blobs. Web and desktop inspect persisted media references and delete unreferenced v2 blob rows and their runtime aliases in one IMMEDIATE transaction per game. An unreadable root or a failed transaction leaves that game untouched; v1 blobs are not swept.
+
+A completed edit upload protects its result for one hour. Each open editor renews its own 15-minute lease every five minutes. An active editor lease skips the entire game; a read lease protects its object, not the blob's aliases. References that exist only in a browser recovery copy do not protect bytes once the editor lease and upload result expire.
+
+The reported size is the sum of newly queued objects, not the sum of blob sizes. The existing worker deletes up to 32 chunks per transaction. SQLite reuses reclaimed pages rather than shrinking the database file.
+
 ## Current runtime behavior
 
 ### Session files

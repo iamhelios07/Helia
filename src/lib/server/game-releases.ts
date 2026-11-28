@@ -176,7 +176,11 @@ export function initializeGameReleases(db: Database.Database) {
 	db.exec(releaseSchema);
 	db.transaction(() => {
 		const rows = db
-			.prepare("SELECT id, value FROM games WHERE json_extract(value, '$.originalGameId') IS NULL")
+			// Leave unreadable/non-object games intact so manual media cleanup can skip them.
+			.prepare(
+				`SELECT id, value FROM games WHERE CASE WHEN json_valid(value)
+				THEN json_type(value)='object' AND json_extract(value,'$.originalGameId') IS NULL ELSE 0 END`
+			)
 			.all() as { id: string; value: string }[];
 		for (const row of rows) {
 			const game = { ...JSON.parse(row.value), originalGameId: randomUUID() };

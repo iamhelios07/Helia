@@ -8,3 +8,4 @@ CREATE TABLE IF NOT EXISTS runtime_assets (
  hash TEXT NOT NULL, blob_id TEXT NOT NULL,
  PRIMARY KEY(game_id,hash)
 );
+CREATE INDEX IF NOT EXISTS runtime_assets_blob ON runtime_assets(game_id, blob_id);

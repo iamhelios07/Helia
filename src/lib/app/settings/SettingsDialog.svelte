@@ -12,6 +12,7 @@
 	import PromptSettingsPanel from './PromptSettingsPanel.svelte';
 	import { SettingsDialogController } from './settings-dialog-controller.svelte.js';
 	import SettingsRail from './SettingsRail.svelte';
+	import StorageSettingsPanel from './StorageSettingsPanel.svelte';
 
 	let { onclose }: { onclose: () => void } = $props();
 	const controller = new SettingsDialogController();
@@ -66,6 +67,8 @@
 						controller.confirmation = { heading, message, label, action };
 					}}
 				/>
+			{:else if controller.section === 'storage'}
+				<StorageSettingsPanel {controller} />
 			{:else if controller.loadError}
 				<div class="notice" role="alert">
 					<p>{controller.loadError}</p>

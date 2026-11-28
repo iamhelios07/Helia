@@ -116,8 +116,11 @@ async function send(request: unknown): Promise<unknown> {
 	if (isDesktopBuild) {
 		return sendNative(prepared.native);
 	}
+	const releaseLease =
+		field(request, 'kind') === 'editorLease' && field(request, 'action') === 'release';
 	const response = await fetch('/api/storage', {
 		method: 'POST',
+		keepalive: releaseLease,
 		headers: { 'content-type': 'application/json' },
 		body: prepared.body
 	});

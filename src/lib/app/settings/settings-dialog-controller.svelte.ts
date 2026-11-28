@@ -1,3 +1,7 @@
+import type { StorageCleanupResult } from '#lib/storage/protocol.js';
+
+import { storageRequest } from '#lib/storage/transport.js';
+
 import {
 	getCredentialStatus,
 	saveCredential,
@@ -20,7 +24,7 @@ import {
 import { loadAISettings, saveAISettings } from './repository.js';
 import { SERVICE_PRESETS, getServicePreset, type ServiceId } from './services.js';
 import { parseServiceAccountJson, vertexBaseUrl } from './vertex.js';
-type Section = 'connections' | 'models' | 'prompts' | 'personas' | 'network';
+type Section = 'connections' | 'models' | 'prompts' | 'personas' | 'network' | 'storage';
 type Confirmation = { heading: string; message: string; label: string; action: () => void };
 const SECTION_HEADINGS = {
 	personas: {
@@ -33,6 +37,10 @@ const SECTION_HEADINGS = {
 	network: {
 		title: '외부 연결',
 		description: '게임이 외부 주소에 연결하도록 다시 묻지 않기로 한 허용을 확인하고 취소하세요.'
+	},
+	storage: {
+		title: '저장 공간',
+		description: '어떤 게임에서도 더 이상 쓰지 않는 파일을 정리해요.'
 	}
 };
 export class SettingsDialogController {
@@ -118,6 +126,28 @@ export class SettingsDialogController {
 	error = $state('');
 	status = $state('');
 	busy = $state(false);
+	cleaning = $state(false);
+	cleanupResult = $state.raw<StorageCleanupResult>();
+	cleanupError = $state(false);
+	cleanStorage = async () => {
+		if (this.cleaning) {
+			return;
+		}
+		this.cleaning = true;
+		this.cleanupError = false;
+		this.cleanupResult = undefined;
+		try {
+			const { storageCleanup } = await storageRequest({ kind: 'cleanStorage' });
+			if (!storageCleanup) {
+				throw Error('Missing storage cleanup result');
+			}
+			this.cleanupResult = storageCleanup;
+		} catch {
+			this.cleanupError = true;
+		} finally {
+			this.cleaning = false;
+		}
+	};
 	creating = $state(false);
 	providerDraft = $state<ProviderSettings | null>(null);
 	initialProvider = $state('');
@@ -433,8 +463,11 @@ export class SettingsDialogController {
 			this.initialProvider = '';
 		}
 	};
+	get navigationBusy() {
+		return this.busy || this.cleaning || this.promptPanel?.isBusy() === true;
+	}
 	changeView = (action: () => void, dirtyOverride?: boolean) => {
-		if (this.busy || this.promptPanel?.isBusy()) {
+		if (this.navigationBusy) {
 			return;
 		}
 		this.personaPanel?.flushPending();

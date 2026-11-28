@@ -10,10 +10,14 @@ export interface SavedEditorDraft {
 	draft: EditorDraft | null;
 }
 /** Separate from installed content; the game foreign key gives drafts the same deletion lifetime. */
-export function editorDraftStorage(connection: Database.Database) {
+export function initializeEditorDrafts(connection: Database.Database) {
 	connection.exec(
 		'CREATE TABLE IF NOT EXISTS editor_drafts (game_id TEXT PRIMARY KEY REFERENCES games(id) ON DELETE CASCADE, version INTEGER NOT NULL, value TEXT)'
 	);
+}
+
+export function editorDraftStorage(connection: Database.Database) {
+	initializeEditorDrafts(connection);
 	function read(gameId: string): SavedEditorDraft {
 		if (!connection.prepare('SELECT id FROM games WHERE id=?').get(gameId)) {
 			throw Error('게임을 찾을 수 없어요.');

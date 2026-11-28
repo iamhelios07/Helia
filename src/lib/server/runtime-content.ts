@@ -97,8 +97,11 @@ export class RuntimeContent {
 			throw Error('Invalid media alias');
 		}
 		this.db
-			.prepare('INSERT OR IGNORE INTO runtime_assets (game_id,hash,blob_id) VALUES (?,?,?)')
-			.run(gameId, blob.id, blob.id);
+			.prepare(
+				`INSERT OR IGNORE INTO runtime_assets (game_id,hash,blob_id)
+				SELECT game_id,id,id FROM blobs WHERE game_id=? AND id=?`
+			)
+			.run(gameId, blob.id);
 		return blob.id;
 	}
 	artifact(gameId: string, kind: 'logic' | 'ui', value: unknown): string {

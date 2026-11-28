@@ -1,6 +1,35 @@
 import type Database from 'better-sqlite3';
 
+import type { StorageRequest } from '#lib/storage/protocol.js';
+
 export const deadline = (minutes: number) => new Date(Date.now() + minutes * 60000).toISOString();
+
+/** Each editor/tab owns its own lease; never overwrite a read lease or another game's lease. */
+export function updateEditorLease(
+	db: Database.Database,
+	request: Extract<StorageRequest, { kind: 'editorLease' }>
+) {
+	const { gameId, action } = request;
+	const id = `editor:${request.leaseId}`;
+	if (action === 'release') {
+		db.prepare("DELETE FROM media_leases WHERE id=? AND game_id=? AND kind='editor'").run(
+			id,
+			gameId
+		);
+		return;
+	}
+	const { changes } = db
+		.prepare(
+			`INSERT INTO media_leases(id,game_id,object_id,kind,expires_at)
+		SELECT ?, id, NULL, 'editor', ? FROM games WHERE id=?
+		ON CONFLICT(id) DO UPDATE SET expires_at=excluded.expires_at
+		WHERE media_leases.game_id=excluded.game_id AND media_leases.kind='editor' AND media_leases.object_id IS NULL`
+		)
+		.run(id, deadline(15), gameId);
+	if (changes !== 1) {
+		throw Error('편집 중인 게임을 보호할 수 없어요.');
+	}
+}
 
 /** End a session and detach its bytes atomically. Caller holds the write transaction. */
 export function endUpload(db: Database.Database, id: string, reason: string, state = 'cancelled') {
