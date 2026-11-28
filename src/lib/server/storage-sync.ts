@@ -21,15 +21,15 @@ export async function storageSyncAsync(
 	store: Store,
 	input: unknown
 ): Promise<StorageReply | SyncReply> {
-	const envelope = record(input);
+	const { request, claim } = resolveBodyRef(store, input);
+	const envelope = record(request);
 	if (
 		envelope.kind === 'install' ||
 		envelope.kind === 'installPreview' ||
 		envelope.kind === 'versioning'
 	) {
-		return store.requestAsync(input);
+		return store.requestAsync(request);
 	}
-	const { request, claim } = resolveBodyRef(store, input);
 	if (!claim) {
 		return storageSync(store, request);
 	}

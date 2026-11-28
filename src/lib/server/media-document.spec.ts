@@ -432,22 +432,30 @@ it('rejects a body JSON gameId that differs from its upload scope and stub', asy
 	expect(documentState(store, uploaded.uploadId)).toBe('verified');
 });
 
-it('rejects versioning bodyRefs with scopeMismatch both directly and inside sync', async () => {
-	const store = fixture();
-	const game = await createGame(store);
-	const command = {
-		kind: 'versioning',
-		action: 'release',
-		gameId: game.id,
-		contentVersion: '1.0.0'
-	};
-	const uploaded = await uploadDocument(store, game.id, 'releaseCreate', JSON.stringify(command));
-	const stub = { ...command, bodyRef: uploaded.ref };
-	for (const input of [stub, { kind: 'sync', known: [], request: stub }]) {
-		await expect(storageSyncAsync(store, input)).rejects.toMatchObject({ code: 'scopeMismatch' });
+it.each(['versioning', 'install', 'installPreview', 'read'])(
+	'rejects %s bodyRefs with scopeMismatch both directly and inside sync',
+	async (kind) => {
+		const store = fixture();
+		const game = await createGame(store);
+		const command = {
+			kind,
+			action: 'release',
+			gameId: game.id,
+			contentVersion: '1.0.0'
+		};
+		const uploaded = await uploadDocument(store, game.id, 'releaseCreate', JSON.stringify(command));
+		for (const bodyRef of [uploaded.ref, null]) {
+			const stub = { ...command, bodyRef };
+			for (const input of [stub, { kind: 'sync', known: [], request: stub }]) {
+				await expect(storageSyncAsync(store, input)).rejects.toMatchObject({
+					code: 'scopeMismatch'
+				});
+			}
+		}
+		expect(documentState(store, uploaded.uploadId)).toBe('verified');
+		expect(store.connection.prepare('SELECT count(*) FROM game_releases').pluck().get()).toBe(0);
 	}
-	expect(documentState(store, uploaded.uploadId)).toBe('verified');
-});
+);
 
 // Keep this input table paired with storage.rs::document_failed_write_retries_same_body_ref.
 it.each([

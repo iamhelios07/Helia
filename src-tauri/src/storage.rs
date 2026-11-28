@@ -1289,6 +1289,16 @@ enum MediaRequest {
 }
 
 pub(crate) fn execute_request(path: &Path, input: Value) -> Result<Value, String> {
+    let command = if input["kind"] == "sync" {
+        &input["request"]
+    } else {
+        &input
+    };
+    if command.get("bodyRef").is_some()
+        && !matches!(command["kind"].as_str(), Some("commit" | "writeDraft"))
+    {
+        return Err(releases::packages::error("scopeMismatch"));
+    }
     if input["kind"]
         .as_str()
         .is_some_and(|k| k.starts_with("mediaUpload"))
@@ -1308,9 +1318,6 @@ pub(crate) fn execute_request(path: &Path, input: Value) -> Result<Value, String
         return releases::packages::request(&mut open(path)?, input);
     }
     if input["kind"] == "versioning" {
-        if input.get("bodyRef").is_some() {
-            return Err(releases::packages::error("scopeMismatch"));
-        }
         return releases::request(&mut open(path)?, input);
     }
     if input["kind"] == "artifact" {
@@ -2841,19 +2848,30 @@ mod tests {
         fixture.create();
         let mut command = json!({"kind":"versioning","action":"release","gameId":"game","contentVersion":"1.0.0"});
         let (reference, _) = upload_document(&fixture, "releaseCreate", &command.to_string());
-        command["bodyRef"] = json!(reference);
-        for input in [
-            command.clone(),
-            json!({"kind":"sync","known":[],"request":command}),
-        ] {
-            assert!(
-                fixture
-                    .request(input)
-                    .unwrap_err()
-                    .contains("scopeMismatch")
-            );
+        for kind in ["versioning", "install", "installPreview", "read"] {
+            command["kind"] = json!(kind);
+            for body_ref in [json!(reference), Value::Null] {
+                command["bodyRef"] = body_ref;
+                for input in [
+                    command.clone(),
+                    json!({"kind":"sync","known":[],"request":command}),
+                ] {
+                    assert_eq!(
+                        fixture.request(input).unwrap_err(),
+                        releases::packages::error("scopeMismatch")
+                    );
+                }
+            }
         }
         assert_eq!(document_session(&fixture, &reference).0, "verified");
+        assert_eq!(
+            open(&fixture.0)
+                .unwrap()
+                .query_row("SELECT count(*) FROM game_releases", [], |r| r
+                    .get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
     }
     // Keep this input table paired with media-document.spec.ts's failed-write retries.
     #[test]
