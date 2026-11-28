@@ -20,10 +20,22 @@ function event<T extends UploadEvent>(
 	return {
 		params,
 		url,
-		request: new Request(url, { method, body, headers: { origin: url.origin, ...headers } })
+		request: new Request(url, {
+			method,
+			body,
+			duplex: 'half',
+			headers: { origin: url.origin, ...headers }
+		} as RequestInit)
 	} as T;
 }
-afterEach(() => vi.restoreAllMocks());
+const type = {
+	'content-type': 'application/octet-stream',
+	'x-helia-chunk-sha256': '6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d'
+};
+afterEach(() => {
+	vi.restoreAllMocks();
+	vi.useRealTimers();
+});
 it('serves edit upload routes with no-store, origin checks and stable errors', async () => {
 	const store = sqlite.openStorage(':memory:');
 	vi.spyOn(sqlite, 'serverStorage').mockReturnValue(store);
@@ -36,10 +48,6 @@ it('serves edit upload routes with no-store, origin checks and stable errors', a
 		expect(forbidden.headers.get('cache-control')).toBe('no-store');
 		const start = await POST(event('POST', params, begin));
 		params.uploadId = (await start.json()).uploadId;
-		const type = {
-			'content-type': 'application/octet-stream',
-			'x-helia-chunk-sha256': '6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d'
-		};
 		const tooLong = await PUT(event('PUT', params, new Uint8Array(2), type));
 		expect(await tooLong.json()).toEqual({ errorCode: 'chunkInvalid' });
 		const put = await PUT(event('PUT', params, new Uint8Array(1), type));
@@ -55,6 +63,54 @@ it('serves edit upload routes with no-store, origin checks and stable errors', a
 			expect(response.headers.get('cache-control')).toBe('no-store');
 		}
 	} finally {
+		store.close();
+	}
+});
+it('returns busy for a queued PUT and admits its retry once idle bodies time out', async () => {
+	vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] });
+	const store = sqlite.openStorage(':memory:');
+	vi.spyOn(sqlite, 'serverStorage').mockReturnValue(store);
+	const closing = Promise.withResolvers<void>();
+	const cancel = vi.fn(() => closing.promise);
+	try {
+		store.connection.exec("INSERT INTO games(id,value) VALUES('g','{}')");
+		const { uploadId } = store.uploads.begin('g', { purpose: 'edit', mime: 'image/png', size: 1 });
+		const put = (body: BodyInit) =>
+			PUT(event('PUT', { id: 'g', uploadId, index: '0' }, body, type));
+		const sources: ReadableStreamDefaultController<Uint8Array>[] = [];
+		const occupied = Array.from({ length: 4 }, () =>
+			put(
+				new ReadableStream<Uint8Array>({
+					start(c) {
+						sources.push(c);
+					},
+					cancel
+				})
+			)
+		);
+		const queued = put(new Uint8Array(1));
+		await vi.advanceTimersByTimeAsync(20000);
+		for (const source of sources) {
+			source.enqueue(new Uint8Array(1)); // Progress restarts the idle timer, not the queue timer.
+		}
+		await vi.advanceTimersByTimeAsync(10000);
+		const busy = await queued;
+		expect(busy.status).toBe(503);
+		expect(busy.headers.get('retry-after')).toBe('1');
+		expect(busy.headers.get('cache-control')).toBe('no-store');
+		expect(await busy.json()).toEqual({ errorCode: 'busy' });
+		const retry = put(new Uint8Array(1));
+		await vi.advanceTimersByTimeAsync(19999);
+		expect(cancel).not.toHaveBeenCalled();
+		expect(store.uploads.status('g', uploadId).received).toBe(0);
+		await vi.advanceTimersByTimeAsync(1);
+		for (const response of await Promise.all(occupied)) {
+			expect(await response.json()).toEqual({ errorCode: 'chunkInvalid' });
+		}
+		expect(cancel).toHaveBeenCalledTimes(4);
+		expect(await (await retry).json()).toEqual({ received: 0 });
+	} finally {
+		closing.resolve();
 		store.close();
 	}
 });

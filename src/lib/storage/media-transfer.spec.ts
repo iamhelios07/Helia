@@ -52,7 +52,7 @@ it('honors Retry-After without spending retries, retries lost chunks and replays
 			if (times.length <= 6) {
 				return Response.json(
 					{ errorCode: 'busy' },
-					{ status: 503, headers: { 'retry-after': '2' } }
+					{ status: 503, headers: { 'retry-after': times.length === 1 ? '0' : '2' } }
 				);
 			}
 			if (times.length === 7) {
@@ -76,7 +76,8 @@ it('honors Retry-After without spending retries, retries lost chunks and replays
 	await vi.runAllTimersAsync();
 	expect(await task).toEqual(result);
 	expect(times).toHaveLength(8);
-	expect(times[6] - times[0]).toBe(12000);
+	expect(times[1] - times[0]).toBe(100);
+	expect(times[6] - times[1]).toBe(10000);
 	expect(times[7] - times[6]).toBe(250);
 	expect(finishes).toBe(3);
 	expect(send.mock.calls.filter(([url]) => url.endsWith('/uploads'))).toHaveLength(1);

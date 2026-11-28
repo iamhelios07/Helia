@@ -4,9 +4,9 @@ use std::path::PathBuf;
 struct Db(PathBuf);
 impl Db {
     fn new() -> Self {
-        let path = std::env::current_dir()
-            .unwrap()
-            .join(format!("media-test-{}.sqlite", releases::uuid().unwrap()));
+        let dir = std::env::temp_dir().join(format!("media-test-{}", releases::uuid().unwrap()));
+        std::fs::create_dir(&dir).unwrap();
+        let path = dir.join("db.sqlite");
         let db = super::super::open(&path).unwrap();
         db.execute("INSERT INTO games(id,value) VALUES('g','{}')", [])
             .unwrap();
@@ -18,7 +18,8 @@ impl Db {
 }
 impl Drop for Db {
     fn drop(&mut self) {
-        std::fs::remove_file(&self.0).unwrap();
+        // The private directory also contains any remaining SQLite -wal and -shm files.
+        std::fs::remove_dir_all(self.0.parent().unwrap()).unwrap();
     }
 }
 fn new_upload(db: &mut Connection, size: i64) -> Value {
@@ -130,6 +131,17 @@ fn ownership_purpose_lock_and_disk_full() {
     assert_eq!(status(&mut db, &u).unwrap()["received"], 0);
 }
 #[test]
+fn locked_game_takes_precedence_over_invalid_chunk() {
+    let f = Db::new();
+    let mut db = f.connect();
+    let mut u = new_upload(&mut db, 1);
+    u["index"] = json!(0);
+    u["data"] = json!("invalid base64");
+    db.execute("UPDATE games SET value='{\"editLock\":true}'", [])
+        .unwrap();
+    assert_eq!(reason(chunk(&mut db, &u)), "gameNotWritable");
+}
+#[test]
 fn declarations_and_failed_integrity_reclaim() {
     let f = Db::new();
     let mut db = f.connect();
@@ -175,7 +187,7 @@ fn cancel_interrupts_hash_after_claim_and_preserves_cancelled_state() {
         cancel(&mut f.connect(), &u).unwrap();
         if let Some(job) = job {
             assert_eq!(
-                reason(hash_chunks(&f.connect(), &mut db, &job)),
+                reason(hash_chunks(&f.connect(), &mut db, &job, Instant::now)),
                 "uploadState"
             );
         }
@@ -296,6 +308,154 @@ fn purge_preserves_active_tombstones_and_leased_bytes() {
     drain(&mut db);
     assert_eq!(count(&db, "media_objects"), 0);
     assert_eq!(count(&db, "media_chunks"), 0);
+}
+#[test]
+fn publish_rechecks_game_and_session_after_the_last_read() {
+    for change in ["purge", "trash", "editLock"] {
+        let f = Db::new();
+        let mut db = f.connect();
+        let u = new_upload(&mut db, 1);
+        chunk(&mut db, &packet(&u, 0, b"x")).unwrap();
+        let job = start_hash(&mut db, &u).unwrap();
+        let digest = hash_chunks(&hash_reader(&f.0).unwrap(), &mut db, &job, Instant::now).unwrap();
+        // Interleave a competing commit exactly between the last read and the publishing IMMEDIATE.
+        let other = f.connect();
+        let purged = change == "purge";
+        let value = if change == "editLock" {
+            json!({"editLock":true})
+        } else {
+            json!({"trashedAt":"today"})
+        };
+        other
+            .execute("UPDATE games SET value=? WHERE id='g'", [value.to_string()])
+            .unwrap();
+        if purged {
+            super::super::execute_request(&f.0, json!({"kind":"purge","gameId":"g"})).unwrap();
+        }
+        assert_eq!(
+            reason(finish_hash(&mut db, &u, &job, Ok(digest))),
+            if purged {
+                "uploadState"
+            } else {
+                "gameNotWritable"
+            }
+        );
+        let (state, object, error, result): (
+            String,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+        ) = db
+            .query_row(
+                "SELECT state,object_id,error,result FROM media_uploads WHERE id=?",
+                [&job.id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .unwrap();
+        assert_eq!(state, if purged { "cancelled" } else { "finishing" });
+        assert_eq!(object, if purged { None } else { job.object.clone() });
+        assert_eq!(error.as_deref(), purged.then_some("gameDeleted"));
+        assert!(result.is_none());
+        let state: String = db
+            .query_row(
+                "SELECT state FROM media_objects WHERE id=?",
+                [&job.object],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(state, if purged { "deleting" } else { "staging" });
+        for table in ["media_leases", "blobs", "runtime_assets"] {
+            assert_eq!(count(&db, table), 0);
+        }
+        drain(&mut db);
+        assert_eq!(count(&db, "media_chunks"), if purged { 0 } else { 1 });
+    }
+}
+#[test]
+fn heartbeat_renews_scope_and_lease_and_retries_a_blocked_write_on_the_next_chunk() {
+    for block_first in [false, true] {
+        let f = Db::new();
+        let mut db = f.connect();
+        let _sibling = new_upload(&mut db, 1);
+        let u = new_upload(&mut db, CHUNK + 1);
+        chunk(&mut db, &packet(&u, 0, &vec![0; CHUNK as usize])).unwrap();
+        chunk(&mut db, &packet(&u, 1, b"x")).unwrap();
+        let job = start_hash(&mut db, &u).unwrap();
+        // Age the persisted wall-clock deadlines, and advance the hash worker's monotonic clock.
+        db.execute_batch(
+            "UPDATE media_uploads SET expires_at=strftime('%Y-%m-%dT%H:%M:%fZ','now','+9 minutes');
+            UPDATE media_leases SET expires_at=strftime('%Y-%m-%dT%H:%M:%fZ','now','+2 minutes')",
+        )
+        .unwrap();
+        db.busy_timeout(Duration::ZERO).unwrap();
+        let other = f.connect();
+        if block_first {
+            other.execute_batch("BEGIN IMMEDIATE").unwrap();
+        }
+        let scope_renewed = || {
+            count(
+                &other,
+                "media_uploads WHERE expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now','+595 seconds')",
+            )
+        };
+        let lease_renewed = || {
+            count(
+                &other,
+                "media_leases WHERE kind='read' AND expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now','+175 seconds')",
+            )
+        };
+        let start = Instant::now();
+        let mut ticks = [0, 60, 61].into_iter();
+        let hashed = hash_chunks(&hash_reader(&f.0).unwrap(), &mut db, &job, || {
+            let seconds = ticks.next().unwrap();
+            if seconds == 61 {
+                assert_eq!(scope_renewed(), if block_first { 0 } else { 2 });
+                assert_eq!(lease_renewed(), if block_first { 0 } else { 1 });
+                if block_first {
+                    other.execute_batch("ROLLBACK").unwrap();
+                }
+            }
+            start + Duration::from_secs(seconds)
+        });
+        assert_eq!(scope_renewed(), 2);
+        assert_eq!(lease_renewed(), 1);
+        assert!(finish_hash(&mut db, &u, &job, hashed).is_ok());
+    }
+}
+#[test]
+fn hash_reads_retry_both_sqlite_lock_codes() {
+    use rusqlite::ffi::{Error, SQLITE_BUSY, SQLITE_LOCKED};
+    let mut conflicts = [SQLITE_BUSY, SQLITE_LOCKED].into_iter();
+    let read = retry_busy(|| match conflicts.next() {
+        Some(code) => Err(rusqlite::Error::SqliteFailure(Error::new(code), None).into()),
+        None => Ok(b'x'),
+    });
+    assert_eq!(read.unwrap(), b'x');
+}
+#[test]
+fn busy_hash_read_preserves_chunks_for_a_second_finish() {
+    let f = Db::new();
+    let mut db = f.connect();
+    let u = new_upload(&mut db, 1);
+    chunk(&mut db, &packet(&u, 0, b"x")).unwrap();
+    let job = start_hash(&mut db, &u).unwrap();
+    // In rollback-journal mode a competing EXCLUSIVE transaction blocks the separate reader.
+    db.execute_batch("PRAGMA journal_mode=DELETE").unwrap();
+    let reader = hash_reader(&f.0).unwrap();
+    let timeout: i64 = reader
+        .pragma_query_value(None, "busy_timeout", |r| r.get(0))
+        .unwrap();
+    assert_eq!(timeout, 5000);
+    reader.busy_timeout(Duration::ZERO).unwrap();
+    let other = Connection::open(&f.0).unwrap();
+    other.execute_batch("BEGIN EXCLUSIVE").unwrap();
+    let hashed = hash_chunks(&reader, &mut db, &job, Instant::now);
+    other.execute_batch("ROLLBACK").unwrap();
+    assert_eq!(reason(finish_hash(&mut db, &u, &job, hashed)), "busy");
+    assert_eq!(status(&mut db, &u).unwrap()["state"], "receiving");
+    assert_eq!(count(&db, "media_leases"), 0);
+    assert_eq!(count(&db, "media_chunks"), 1);
+    assert_eq!(finish(&mut db, &f.0, &u).unwrap()["sha256"], sha256(b"x"));
 }
 #[test]
 fn busy_does_not_starve_another_game() {

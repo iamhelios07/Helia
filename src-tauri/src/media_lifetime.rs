@@ -114,7 +114,8 @@ pub(crate) fn start(path: &Path) -> std::result::Result<(), String> {
                 tick = Instant::now() + period;
             }
             if step(&mut db).unwrap_or(false) {
-                thread::yield_now();
+                // Give ordinary saves a chance to acquire the writer between committed batches.
+                thread::sleep(Duration::from_millis(2));
                 continue;
             }
             let _ = recv.recv_timeout(tick.saturating_duration_since(Instant::now()));

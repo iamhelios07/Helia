@@ -1,9 +1,11 @@
 import { createHash } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setImmediate as nextTurn } from 'node:timers/promises';
 import { afterEach, expect, it, vi } from 'vitest';
 
+import { MediaIdentity } from '#lib/storage/media-identity.js';
 import { MEDIA_CHUNK_SIZE as C } from '#lib/storage/media-protocol.js';
 
 import { MediaQueue } from './media-queue.js';
@@ -13,6 +15,7 @@ import { openStorage } from './sqlite.js';
 const stores: ReturnType<typeof openStorage>[] = [];
 const dirs: string[] = [];
 afterEach(() => {
+	vi.restoreAllMocks();
 	vi.useRealTimers();
 	for (const store of stores.splice(0)) {
 		if (store.connection.open) {
@@ -24,7 +27,7 @@ afterEach(() => {
 	}
 });
 function file() {
-	const dir = mkdtempSync(join(process.cwd(), '.media-test-'));
+	const dir = mkdtempSync(join(tmpdir(), 'media-test-'));
 	dirs.push(dir);
 	return join(dir, 'db.sqlite');
 }
@@ -160,6 +163,68 @@ it('cancels each active state, interrupting a running Finish before it can publi
 	expect(f.count('media_leases')).toBe(0);
 	expect(f.count('blobs')).toBe(0);
 	expect(f.count('media_objects')).toBe(0);
+});
+it.each(['purge', 'trash', 'editLock'])(
+	'rechecks %s at publication after reading the last chunk',
+	async (change) => {
+		const f = fixture(),
+			id = f.begin();
+		await f.put(id, 0, one);
+		const object = f.db.prepare('SELECT object_id FROM media_uploads').pluck().get();
+		const digest = MediaIdentity.prototype.digest;
+		vi.spyOn(MediaIdentity.prototype, 'digest').mockImplementationOnce(function (
+			this: MediaIdentity
+		) {
+			const value = change === 'editLock' ? { editLock: true } : { trashedAt: 'today' };
+			f.db.prepare('UPDATE games SET value=? WHERE id=?').run(JSON.stringify(value), 'g');
+			if (change === 'purge') {
+				f.store.request({ kind: 'purge', gameId: 'g' });
+			}
+			return digest.call(this);
+		});
+		const purged = change === 'purge';
+		await expect(f.finish(id)).rejects.toMatchObject({
+			code: purged ? 'uploadState' : 'gameNotWritable'
+		});
+		expect(f.db.prepare('SELECT state,object_id,error,result FROM media_uploads').get()).toEqual({
+			state: purged ? 'cancelled' : 'finishing',
+			object_id: purged ? null : object,
+			error: purged ? 'gameDeleted' : null,
+			result: null
+		});
+		expect(f.db.prepare('SELECT state FROM media_objects WHERE id=?').pluck().get(object)).toBe(
+			purged ? 'deleting' : 'staging'
+		);
+		for (const table of ['blobs', 'runtime_assets', 'media_leases']) {
+			expect(f.count(table)).toBe(0);
+		}
+		f.drain();
+		expect(f.count('media_chunks')).toBe(purged ? 0 : 1);
+	}
+);
+it('renews the scope and read lease at 60 seconds while Finish is between chunks', async () => {
+	vi.useFakeTimers({ toFake: ['Date'] });
+	const f = fixture(),
+		sibling = f.begin(),
+		id = f.begin(C + 1);
+	await f.put(id, 0, Buffer.alloc(C));
+	await f.put(id, 1, one);
+	const work = f.finish(id);
+	await Promise.resolve(); // Hash has claimed its lease and yielded before the first read.
+	const lease = () =>
+		f.db.prepare('SELECT expires_at FROM media_leases WHERE id=?').pluck().get(id);
+	const start = Date.now();
+	const time = (minutes: number) => new Date(start + minutes * 60000).toISOString();
+	expect(lease()).toBe(time(3));
+	expect(f.status(sibling).expiresAt).toBe(time(10));
+	vi.setSystemTime(start + 60000);
+	await nextTurn();
+	expect(lease()).toBe(time(4));
+	for (const session of [id, sibling]) {
+		expect(f.status(session).expiresAt).toBe(time(11));
+	}
+	await work;
+	expect(lease()).toBeUndefined();
 });
 it('cancels a verified install session without claiming it as an edit upload', async () => {
 	const f = fixture(),

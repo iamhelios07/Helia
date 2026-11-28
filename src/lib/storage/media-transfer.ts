@@ -20,7 +20,7 @@ function retryAfter(value: string | null) {
 		return 1000;
 	}
 	const ms = /^\d+$/.test(value) ? Number(value) * 1000 : Date.parse(value) - Date.now();
-	return Number.isFinite(ms) ? Math.max(1, ms) : 1000;
+	return Number.isFinite(ms) ? Math.max(100, ms) : 1000;
 }
 async function http(url: string, init: RequestInit): Promise<unknown> {
 	const response = await fetch(url, init);

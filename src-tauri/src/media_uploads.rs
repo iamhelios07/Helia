@@ -215,9 +215,22 @@ fn sha256(data: &[u8]) -> String {
         .map(|b| format!("{b:02x}"))
         .collect()
 }
+fn receiving(db: &Connection, v: &Value) -> Result<Upload> {
+    let u = session(db, v)?;
+    ensure(u.state == "receiving", "uploadState")?;
+    Ok(u)
+}
 fn chunk(db: &mut Connection, v: &Value) -> Result<Value> {
     let _permit = queue::WRITES.acquire(game(v)?, WAIT)?;
-    let index = integer(&v["index"]).ok_or(Failure("chunkInvalid"))?;
+    let u = {
+        let tx = immediate(db)?;
+        let u = receiving(&tx, v)?;
+        tx.commit()?;
+        u
+    };
+    let index = integer(&v["index"])
+        .filter(|i| *i < u.count)
+        .ok_or(Failure("chunkInvalid"))?;
     let sha = v["sha256"]
         .as_str()
         .filter(|s| valid_hash(s))
@@ -229,14 +242,13 @@ fn chunk(db: &mut Connection, v: &Value) -> Result<Value> {
     let data = STANDARD
         .decode(encoded)
         .map_err(|_| Failure("chunkInvalid"))?;
-    ensure(sha256(&data) == sha, "chunkInvalid")?;
-    let tx = immediate(db)?;
-    let u = session(&tx, v)?;
-    ensure(u.state == "receiving", "uploadState")?;
     ensure(
-        index < u.count && data.len() as i64 == CHUNK.min(u.size - index * CHUNK),
+        data.len() as i64 == CHUNK.min(u.size - index * CHUNK) && sha256(&data) == sha,
         "chunkInvalid",
     )?;
+    // Decode and hash outside the writer; Cancel, purge or a lock may have won meanwhile.
+    let tx = immediate(db)?;
+    let u = receiving(&tx, v)?;
     let existing: Option<String> = tx
         .query_row(
             "SELECT sha256 FROM media_chunks WHERE object_id=? AND idx=?",
@@ -322,26 +334,60 @@ fn start_hash(db: &mut Connection, v: &Value) -> Result<Upload> {
     tx.commit()?;
     Ok(u)
 }
+fn retry_busy<T>(mut work: impl FnMut() -> Result<T>) -> Result<T> {
+    for delay in [10, 20, 40] {
+        match work() {
+            Err(Failure("busy")) => std::thread::sleep(Duration::from_millis(delay)),
+            result => return result,
+        }
+    }
+    work()
+}
+fn hash_reader(path: &Path) -> Result<Connection> {
+    let reader = Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+    reader.busy_timeout(Duration::from_secs(5))?;
+    reader.pragma_update(None, "foreign_keys", true)?;
+    Ok(reader)
+}
+fn renew_hash(db: &mut Connection, u: &Upload) -> Result<()> {
+    let tx = immediate(db)?;
+    // A previous heartbeat may have missed the shorter lease TTL. Reacquire only for a live job.
+    let live = tx.execute("INSERT OR REPLACE INTO media_leases
+        SELECT id,scope,object_id,'read',strftime('%Y-%m-%dT%H:%M:%fZ','now','+3 minutes')
+        FROM media_uploads WHERE id=? AND state='finishing' AND expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now')", [&u.id])?;
+    ensure(live == 1, "uploadState")?;
+    activity(&tx, &u.scope)?;
+    tx.commit()?;
+    Ok(())
+}
 fn hash_chunks(
     reader: &Connection,
     db: &mut Connection,
     u: &Upload,
+    mut now: impl FnMut() -> Instant,
 ) -> Result<MediaIdentityResult> {
     let mut identity = MediaIdentity::new(&u.scope, &u.mime);
-    let mut statement=reader.prepare("SELECT data FROM media_uploads u JOIN media_chunks c ON c.object_id=u.object_id WHERE u.id=? AND u.state='finishing' AND c.idx=?")?;
-    let mut renewed = Instant::now();
+    let mut statement = retry_busy(|| {
+        Ok(reader.prepare("SELECT data FROM media_uploads u JOIN media_chunks c ON c.object_id=u.object_id WHERE u.id=? AND u.state='finishing' AND c.idx=?")?)
+    })?;
+    let mut renewed = now();
     for i in 0..u.count {
-        let data: Vec<u8> = statement
-            .query_row(params![u.id, i], |r| r.get(0))
-            .optional()?
-            .ok_or(Failure("uploadState"))?;
+        let data: Vec<u8> = retry_busy(|| {
+            Ok(statement
+                .query_row(params![u.id, i], |r| r.get(0))
+                .optional()?)
+        })?
+        .ok_or(Failure("uploadState"))?;
         identity.update(&data).map_err(|_| Failure("integrity"))?;
-        if renewed.elapsed() >= Duration::from_secs(60) {
-            let tx = immediate(db)?;
-            activity(&tx, &u.scope)?;
-            tx.execute("UPDATE media_leases SET expires_at=strftime('%Y-%m-%dT%H:%M:%fZ','now','+3 minutes') WHERE id=?",[&u.id])?;
-            tx.commit()?;
-            renewed = Instant::now();
+        let tick = now();
+        let elapsed = tick.duration_since(renewed);
+        if elapsed >= Duration::from_secs(60) {
+            match renew_hash(db, u) {
+                Ok(()) => renewed = tick,
+                Err(Failure("uploadState")) => return Err(Failure("uploadState")),
+                Err(error) if elapsed >= Duration::from_secs(600) => return Err(error),
+                Err(_) => {} // Still due: retry after the next chunk, without rehashing any bytes.
+            }
         }
     }
     let hash = identity.digest();
@@ -404,29 +450,49 @@ fn finish(db: &mut Connection, path: &Path, v: &Value) -> Result<Value> {
     if u.state == "completed" {
         return u.result();
     }
-    let hashed = (|| {
-        let reader = Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
-        reader.pragma_update(None, "foreign_keys", true)?;
-        hash_chunks(&reader, db, &u)
-    })();
-    let result = match hashed {
-        Ok(hash) => publish(db, v, &u, hash),
-        Err(failure) => {
+    let hashed = retry_busy(|| hash_reader(path))
+        .and_then(|reader| hash_chunks(&reader, db, &u, Instant::now));
+    finish_hash(db, v, &u, hashed)
+}
+/// Release the claim without losing bytes on host errors. Only definitive hash failures detach
+/// the object, and only if another operation hasn't already ended this session.
+fn abandon_hash(tx: &Transaction, id: &str, error: &Failure) -> Result<()> {
+    if !matches!(error.0, "integrity" | "uploadState") {
+        tx.execute(
+            "UPDATE media_uploads SET state='receiving' WHERE id=? AND state='finishing'",
+            [id],
+        )?;
+        return Ok(());
+    }
+    let expired: Option<bool> = tx.query_row(
+        "SELECT expires_at<=strftime('%Y-%m-%dT%H:%M:%fZ','now') FROM media_uploads WHERE id=? AND state='finishing'",
+        [id], |r| r.get(0),
+    ).optional()?;
+    match expired {
+        Some(true) => lifetime::end(tx, id, "cancelled", "expired"),
+        Some(false) => lifetime::end(tx, id, "failed", error.0),
+        None => Ok(()),
+    }
+}
+fn finish_hash(
+    db: &mut Connection,
+    v: &Value,
+    u: &Upload,
+    hashed: Result<MediaIdentityResult>,
+) -> Result<Value> {
+    let hash_failed = hashed.is_err();
+    let result = hashed.and_then(|hash| publish(db, v, u, hash));
+    if let Err(error) = &result {
+        retry_busy(|| {
             let tx = immediate(db)?;
-            let active: bool = tx.query_row(
-                "SELECT EXISTS(SELECT 1 FROM media_uploads WHERE id=? AND state='finishing')",
-                [&u.id],
-                |r| r.get(0),
-            )?;
-            if active {
-                lifetime::end(&tx, &u.id, "failed", failure.0)?;
+            // A publish guard failure leaves the session as-is. A busy writer is retryable.
+            if hash_failed || error.0 == "busy" {
+                abandon_hash(&tx, &u.id, error)?;
             }
+            tx.execute("DELETE FROM media_leases WHERE id=?", [&u.id])?;
             tx.commit()?;
-            Err(failure)
-        }
-    };
-    if result.is_err() {
-        db.execute("DELETE FROM media_leases WHERE id=?", [&u.id])?;
+            Ok(())
+        })?;
     }
     wake();
     result

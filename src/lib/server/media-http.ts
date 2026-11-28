@@ -25,18 +25,31 @@ export async function readBytes(request: Request, limit: number) {
 	requirePackage(reader, 'chunkInvalid');
 	const buffer = Buffer.alloc(limit);
 	let offset = 0;
+	let idle = false;
+	// Cancelling settles the pending read even if the underlying transport is slow to close.
+	const stop = () => void reader.cancel().catch(() => {});
+	const timer = setTimeout(() => {
+		idle = true;
+		stop();
+	}, 30000);
 	try {
 		for (;;) {
 			const { done, value } = await reader.read();
+			requirePackage(!idle, 'chunkInvalid');
 			if (done) {
 				return buffer.subarray(0, offset);
 			}
 			requirePackage(value.length <= limit - offset, 'chunkInvalid');
 			buffer.set(value, offset);
 			offset += value.length;
+			if (value.length) {
+				timer.refresh();
+			}
 		}
 	} finally {
-		await reader.cancel().catch(() => {});
+		clearTimeout(timer);
+		stop();
+		reader.releaseLock();
 	}
 }
 export async function metadata(request: Request): Promise<Record<string, unknown>> {
