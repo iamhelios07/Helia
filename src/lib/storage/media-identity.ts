@@ -62,12 +62,16 @@ export interface MediaIdentityResult {
 	assetHash: string;
 }
 
+interface IncrementalHash {
+	update(bytes: Uint8Array): void;
+	digest(): string;
+}
 /** One ordered pass over media bytes; MIME is the authoritative resource MIME. */
 export class MediaIdentity {
-	private raw = new Sha256();
+	private raw: IncrementalHash;
 	private crc = new Crc32();
-	private blob = new Sha256();
-	private asset = new Sha256();
+	private blob: IncrementalHash;
+	private asset: IncrementalHash;
 	private base64 = new Base64Stream((text) => {
 		const bytes = encoder.encode(text);
 		this.blob.update(bytes);
@@ -75,7 +79,10 @@ export class MediaIdentity {
 	});
 	private result?: MediaIdentityResult;
 
-	constructor(gameId: string, mime: string) {
+	constructor(gameId: string, mime: string, hash: () => IncrementalHash = () => new Sha256()) {
+		this.raw = hash();
+		this.blob = hash();
+		this.asset = hash();
 		const prefix = JSON.stringify(`data:${mime};base64,`).slice(0, -1);
 		this.blob.update(encoder.encode(`[${JSON.stringify(gameId)},${prefix}`));
 		this.asset.update(encoder.encode(prefix));

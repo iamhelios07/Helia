@@ -26,6 +26,9 @@ import { validateStoredHistory } from '#lib/storage/validate-history.js';
 import { unlockGame } from './game-edit-lock.js';
 import { installGame, installPreview, prepareInstall } from './game-install.js';
 import { gameReleases, initializeGameReleases, preserveOriginalGameId } from './game-releases.js';
+import { MediaLifetime, purgeMedia } from './media-lifetime.js';
+import { MediaUploads } from './media-uploads.js';
+import { RUNTIME_SCHEMA } from './runtime-content.js';
 
 type PruneRequest = Extract<StorageRequest, { kind: 'prune' }>;
 type ReadRequest = Extract<StorageRequest, { kind: 'read' }>;
@@ -69,6 +72,8 @@ function readFilter(table: Table, gameId?: string, sessionId?: string) {
 /** One connection owns every read snapshot and every atomic write. No AI work runs here. */
 class Storage {
 	readonly connection: Database.Database;
+	readonly mediaLifetime: MediaLifetime;
+	readonly uploads: MediaUploads;
 	private db: ReturnType<typeof drizzle>;
 	constructor(filename: string) {
 		if (filename !== ':memory:') {
@@ -98,6 +103,9 @@ class Storage {
 		this.connection.exec(fileSchema);
 		this.connection.exec(mediaSchema);
 		initializeGameReleases(this.connection);
+		this.connection.exec(RUNTIME_SCHEMA);
+		this.mediaLifetime = new MediaLifetime(this.connection);
+		this.uploads = new MediaUploads(this.connection, this.mediaLifetime);
 	}
 	private readRows(table: Table, gameId?: string, sessionId?: string): StoredRecord[] {
 		const filter = readFilter(table, gameId, sessionId);
@@ -417,6 +425,7 @@ class Storage {
 		if (trashedAt == null) {
 			throw new Error('휴지통에 있는 게임만 삭제할 수 있어요.');
 		}
+		purgeMedia(this.connection, command.gameId);
 		if (this.db.run(sql`delete from games where id = ${command.gameId}`).changes !== 1) {
 			throw new Error('게임을 찾을 수 없어요.');
 		}
@@ -425,12 +434,16 @@ class Storage {
 	request = (input: unknown): StorageReply => {
 		const command = parseRequest(input);
 		hostAILeases.guard(command);
-		return this.db.transaction(() => this.execute(command), {
+		const result = this.db.transaction(() => this.execute(command), {
 			behavior:
 				command.kind === 'read' || command.kind === 'list' || command.kind === 'installPreview'
 					? 'deferred'
 					: 'immediate'
 		});
+		if (command.kind === 'purge') {
+			this.mediaLifetime.wake();
+		}
+		return result;
 	};
 	/** The verified private copy is the only request used after the async boundary. */
 	requestAsync = async (input: unknown): Promise<StorageReply> => {
@@ -444,7 +457,10 @@ class Storage {
 		const prepared = await prepareInstall(command);
 		return this.connection.transaction(() => installGame(this.connection, prepared)).immediate();
 	};
-	close = () => this.connection.close();
+	close = () => {
+		this.mediaLifetime.close();
+		this.connection.close();
+	};
 }
 export function openStorage(filename: string) {
 	return new Storage(filename);

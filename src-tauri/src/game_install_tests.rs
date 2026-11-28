@@ -197,7 +197,7 @@ fn shared_reconflict_scenario() {
     }
 }
 #[test]
-fn structured_bridge_errors_share_all_nine_codes() {
+fn structured_bridge_errors_share_all_package_codes() {
     let codes: Vec<String> = serde_json::from_str(include_str!(
         "../../src/lib/storage/fixtures/install/error-codes.json"
     ))

@@ -25,7 +25,9 @@ pub fn run() {
         .setup(|app| {
             let directory = app.path().app_data_dir()?;
             std::fs::create_dir_all(&directory)?;
-            app.manage(storage::StoragePath(directory.join("helia.sqlite")));
+            let path = directory.join("helia.sqlite");
+            storage::media_uploads::start(&path).map_err(std::io::Error::other)?;
+            app.manage(storage::StoragePath(path));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

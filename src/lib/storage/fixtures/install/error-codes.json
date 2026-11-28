@@ -7,5 +7,20 @@
 	"nonCanonical",
 	"installOnlyKey",
 	"newerHeliaRequired",
-	"staleAcknowledgement"
+	"staleAcknowledgement",
+	"mediaType",
+	"mediaSize",
+	"uploadMissing",
+	"uploadState",
+	"scopeMismatch",
+	"gameNotWritable",
+	"chunkInvalid",
+	"chunkConflict",
+	"uploadIncomplete",
+	"storageFull",
+	"busy",
+	"requestLimit",
+	"inProgress",
+	"missingAsset",
+	"packageReference"
 ]

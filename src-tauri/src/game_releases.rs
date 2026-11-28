@@ -15,7 +15,7 @@ pub(super) mod packages;
 fn db_error(_: rusqlite::Error) -> String {
     "Game release storage unavailable".into()
 }
-fn uuid() -> Result<String, String> {
+pub(super) fn uuid() -> Result<String, String> {
     let mut bytes = [0u8; 16];
     getrandom::fill(&mut bytes).map_err(|_| ERROR)?;
     bytes[6] = (bytes[6] & 15) | 64;

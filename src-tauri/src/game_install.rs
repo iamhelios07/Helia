@@ -14,8 +14,23 @@ const ERROR_CODES: &[&str] = &[
     "installOnlyKey",
     "newerHeliaRequired",
     "staleAcknowledgement",
+    "mediaType",
+    "mediaSize",
+    "uploadMissing",
+    "uploadState",
+    "scopeMismatch",
+    "gameNotWritable",
+    "chunkInvalid",
+    "chunkConflict",
+    "uploadIncomplete",
+    "storageFull",
+    "busy",
+    "requestLimit",
+    "inProgress",
+    "missingAsset",
+    "packageReference",
 ];
-fn error(code: &str) -> String {
+pub(in crate::storage) fn error(code: &str) -> String {
     format!("{ERROR_PREFIX}{code}")
 }
 fn require(condition: bool, code: &str) -> Result<(), String> {

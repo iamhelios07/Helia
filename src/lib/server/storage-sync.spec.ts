@@ -42,19 +42,17 @@ it.each([1, 2])(
 			const bytes = Buffer.alloc(200000, 1);
 			const identity = new MediaIdentity(game.id, legacy.mime).update(bytes).digest();
 			expect(identity.blobId).toBe(saved.id);
-			const blob = {
-				schemaVersion: 2,
-				id: saved.id,
-				gameId: game.id,
+			db.prepare('DELETE FROM blobs WHERE id=?').run(saved.id);
+			const { uploadId } = store.uploads.begin(game.id, {
+				purpose: 'edit',
 				mime: legacy.mime,
-				object: identity.raw,
-				size: 200000
-			};
-			db.prepare('UPDATE blobs SET value=? WHERE id=?').run(JSON.stringify(blob), saved.id);
-			db.prepare(
-				"INSERT INTO media_objects(id,game_id,state,size,chunk_size,sha256,crc32,created_at) VALUES(?,?,'ready',200000,1048576,?,?,'now')"
-			).run('object', game.id, blob.object, identity.crc);
-			db.prepare('INSERT INTO media_chunks VALUES(?,0,?,?)').run('object', identity.raw, bytes);
+				size: bytes.length
+			});
+			await store.uploads.chunk(game.id, uploadId, 0, {
+				sha256: identity.raw,
+				read: async () => bytes
+			});
+			expect((await store.uploads.finish(game.id, uploadId)).blobId).toBe(saved.id);
 			const current = (await direct.getGameWorkspace(game.id))!.game;
 			current.resources!.portrait.data = reference;
 			db.prepare('UPDATE games SET value=? WHERE id=?').run(JSON.stringify(current), game.id);

@@ -150,6 +150,9 @@ mod releases;
 #[path = "game_edit_lock.rs"]
 mod edit_lock;
 
+#[path = "media_uploads.rs"]
+pub(crate) mod media_uploads;
+
 pub struct StoragePath(pub PathBuf);
 
 /// A per-process credential injected into a main-frame-only JavaScript closure.
@@ -1268,7 +1271,25 @@ fn read_game(
         json!({ "version": 0, "records": [] })
     })
 }
+#[derive(Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+enum MediaRequest {
+    MediaUploadBegin(Value),
+    MediaUploadChunk(Value),
+    MediaUploadStatus(Value),
+    MediaUploadFinish(Value),
+    MediaUploadCancel(Value),
+}
+
 pub(crate) fn execute_request(path: &Path, input: Value) -> Result<Value, String> {
+    if input["kind"]
+        .as_str()
+        .is_some_and(|k| k.starts_with("mediaUpload"))
+    {
+        let command =
+            serde_json::from_value(input).map_err(|_| releases::packages::error("format"))?;
+        return media_uploads::request(path, command);
+    }
     if input["kind"] == "installJson" {
         let request = releases::packages::parse_install_json(&input)?;
         return releases::packages::request(&mut open(path)?, request);
@@ -1310,6 +1331,7 @@ pub(crate) fn execute_request(path: &Path, input: Value) -> Result<Value, String
             TransactionBehavior::Immediate
         })
         .map_err(db_error)?;
+    let purging = matches!(request, Request::Purge { .. });
     let result = match request {
         Request::UnlockGame { game_id } => edit_lock::unlock(&transaction, &game_id)?,
         Request::ReadDraft { game_id } => read_draft(&transaction, &game_id)?,
@@ -1436,6 +1458,9 @@ pub(crate) fn execute_request(path: &Path, input: Value) -> Result<Value, String
         }
     };
     transaction.commit().map_err(db_error)?;
+    if purging {
+        media_uploads::wake();
+    }
     Ok(result)
 }
 
@@ -1936,6 +1961,7 @@ fn purge(connection: &Connection, game_id: &str) -> Result<Value, String> {
     if parsed.get("trashedAt").map(Value::is_null).unwrap_or(true) {
         return Err("휴지통에 있는 게임만 삭제할 수 있어요.".into());
     }
+    media_uploads::purge(connection, game_id).map_err(db_error)?;
     connection
         .execute("DELETE FROM games WHERE id=?1", [game_id])
         .map_err(db_error)?;
@@ -2783,11 +2809,13 @@ mod tests {
                 [current.to_string()],
             )
             .unwrap();
-            db.execute(
-                "INSERT INTO blobs(id,game_id,value) VALUES(?1,'game',?2)",
-                params![id, blob.to_string()],
-            )
-            .unwrap();
+            if version == 1 {
+                db.execute(
+                    "INSERT INTO blobs(id,game_id,value) VALUES(?1,'game',?2)",
+                    params![id, blob.to_string()],
+                )
+                .unwrap();
+            }
             db.execute(
                 "INSERT INTO snapshots(id,game_id,value) VALUES(?1,'game',?2)",
                 params![snapshot_id, legacy["snapshot"].to_string()],
@@ -2801,12 +2829,10 @@ mod tests {
             )
             .unwrap();
             if version == 2 {
-                db.execute("INSERT INTO media_objects(id,game_id,state,size,chunk_size,sha256,crc32,created_at) VALUES('object','game','ready',5,1048576,?1,?2,'now')", params![identity.raw, identity.crc]).unwrap();
-                db.execute(
-                    "INSERT INTO media_chunks VALUES('object',0,?1,?2)",
-                    params![identity.raw, b"hello".as_slice()],
-                )
-                .unwrap();
+                let upload = fixture.request(json!({"kind":"mediaUploadBegin","gameId":"game","purpose":"edit","mime":"image/png","size":5})).unwrap();
+                fixture.request(json!({"kind":"mediaUploadChunk","gameId":"game","uploadId":upload["uploadId"],"index":0,"sha256":identity.raw,"data":"aGVsbG8="})).unwrap();
+                let result = fixture.request(json!({"kind":"mediaUploadFinish","gameId":"game","uploadId":upload["uploadId"]})).unwrap();
+                assert_eq!(result["blobId"], id);
             }
             drop(db);
             for include_history in [false, true] {

@@ -25,7 +25,7 @@ function storageError(error: unknown): Error | undefined {
 	}
 }
 
-async function sendNative(request: unknown): Promise<unknown> {
+export async function sendNative(request: unknown): Promise<unknown> {
 	if (!isTauri()) {
 		throw new Error('데스크톱 저장소는 Helia 앱에서 사용할 수 있어요.');
 	}

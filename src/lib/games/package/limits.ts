@@ -18,18 +18,24 @@ export const PACKAGE_LIMITS = {
 	entries: 65534
 } as const;
 
-export type GamePackageErrorCode =
-	| 'format'
-	| 'version'
-	| 'integrity'
-	| 'limit'
-	| 'content'
-	| 'nonCanonical'
-	| 'installOnlyKey'
-	| 'newerHeliaRequired'
-	| 'staleAcknowledgement';
+export type GamePackageErrorCode = keyof typeof messages;
 
-const messages: Record<GamePackageErrorCode, string> = {
+const messages = {
+	mediaType: '지원하지 않는 파일 형식이에요.',
+	mediaSize: '파일 크기가 올바르지 않아요.',
+	uploadMissing: '업로드를 찾을 수 없어요. 처음부터 다시 올려 주세요.',
+	uploadState: '이 업로드는 더 이상 변경할 수 없어요.',
+	scopeMismatch: '다른 게임 또는 다른 용도의 업로드예요.',
+	gameNotWritable: '지금은 이 게임을 편집할 수 없어요.',
+	chunkInvalid: '받은 파일 조각을 확인할 수 없어요.',
+	chunkConflict: '이미 받은 파일 조각과 내용이 달라요.',
+	uploadIncomplete: '아직 모든 파일 조각을 받지 못했어요.',
+	storageFull: '저장 공간이 부족해요.',
+	busy: '다른 업로드를 처리하고 있어요. 잠시 뒤 다시 시도해 주세요.',
+	requestLimit: '서버가 받을 수 있는 요청 크기를 넘었어요.',
+	inProgress: '업로드한 파일을 확인하고 있어요.',
+	missingAsset: '저장된 파일을 찾을 수 없어요.',
+	packageReference: '패키지의 파일 참조가 올바르지 않아요.',
 	format: '게임 패키지 형식이 올바르지 않아요.',
 	version: '지원하지 않는 게임 패키지 버전이에요.',
 	integrity: '게임 패키지의 무결성을 확인할 수 없어요.',
