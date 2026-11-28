@@ -4,6 +4,8 @@ import { randomUUID } from 'node:crypto';
 
 import { requirePackage } from '#lib/games/package/limits.js';
 
+import { ownedBlob } from './media-references.js';
+
 function transientLock(error: unknown): boolean {
 	return Boolean(
 		error &&
@@ -19,6 +21,22 @@ export class ReleaseReadLeases {
 	private renewed = Date.now();
 
 	constructor(private db: Database.Database) {}
+
+	/** Resolve and pin under one write lock, before opening the media reader. */
+	pin(gameId: string, blobId: string): string {
+		return this.db
+			.transaction(() => {
+				const blob = ownedBlob(this.db, gameId, blobId);
+				requirePackage(blob.schemaVersion === 2, 'missingAsset');
+				const object = this.db
+					.prepare("SELECT id FROM media_objects WHERE game_id=? AND sha256=? AND state='ready'")
+					.get(gameId, blob.object) as { id: string } | undefined;
+				requirePackage(object, 'missingAsset');
+				this.add(gameId, object.id);
+				return object.id;
+			})
+			.immediate();
+	}
 
 	add(gameId: string, objectId: string): void {
 		const id = randomUUID();

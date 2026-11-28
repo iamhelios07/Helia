@@ -839,7 +839,7 @@ fn stream_release_digest_with_clock(
     content: &Value,
     mut now: impl FnMut() -> std::time::Instant,
 ) -> Result<String, String> {
-    let mut objects: Vec<String> = Vec::new();
+    let mut leases = read_leases::ReadLeases::new(connection, now());
     let mut media_by_blob = std::collections::HashMap::new();
     if let Some(entries) = content["resources"].as_object() {
         for asset in entries.values() {
@@ -847,27 +847,34 @@ fn stream_release_digest_with_clock(
                 .as_str()
                 .and_then(|data| data.strip_prefix("helia-asset:"))
             {
+                if media_by_blob.contains_key(hash) {
+                    continue;
+                }
+                let object_id = leases.pin(game_id, hash)?;
+                #[cfg(test)]
+                tests::run_hook(connection, tests::Checkpoint::BeforeOpen);
                 let media = crate::runtime_content::open_media(connection, game_id, hash)?
                     .ok_or_else(|| packages::error("missingAsset"))?;
-                if let Some(object_id) = &media.object_id {
-                    objects.push(object_id.clone());
+                if media.object_id.as_ref() != Some(&object_id) {
+                    return Err(packages::error("missingAsset"));
                 }
                 media_by_blob.insert(hash, media);
             }
         }
     }
-    objects.sort();
-    objects.dedup();
-    let mut leases = read_leases::ReadLeases::new(connection, now());
-    for object in &objects {
-        leases.add(game_id, object)?;
-    }
+    #[cfg(test)]
+    let mut chunk_index = 0;
     crate::media_identity::hash_release_content(content, &mut |reference, sink| {
         let hash = reference.strip_prefix("helia-asset:").ok_or(ERROR)?;
         let media = media_by_blob
             .get(hash)
             .ok_or_else(|| packages::error("missingAsset"))?;
         for chunk in media.read(0, media.size)? {
+            #[cfg(test)]
+            {
+                chunk_index += 1;
+                tests::run_hook(connection, tests::Checkpoint::Chunk(chunk_index));
+            }
             leases.renew(now())?;
             sink(&chunk.map_err(|_| packages::error("missingAsset"))?);
         }
@@ -1066,6 +1073,40 @@ fn read_saved(connection: &Connection, game_id: &str) -> Result<(Value, i64), St
     Ok((game, version))
 }
 
+fn read_versioning(connection: &mut Connection, game_id: &str) -> Result<Value, String> {
+    for _ in 0..3 {
+        let tx = connection
+            .transaction_with_behavior(TransactionBehavior::Deferred)
+            .map_err(db_error)?;
+        let (game, version) = read_saved(&tx, game_id)?;
+        #[cfg(test)]
+        tests::run_hook(&tx, tests::Checkpoint::ReadSaved);
+        let content = content(&tx, &game)?;
+        if !content_has_references(&content) {
+            let hash = content_hash(&content)?;
+            let reply =
+                json!({"version":version,"records":[],"versioning":state(&tx, &game, &hash)?});
+            tx.commit().map_err(db_error)?;
+            return Ok(reply);
+        }
+        tx.commit().map_err(db_error)?;
+        let hash = release_digest(connection, &game, &content)?;
+        let tx = connection
+            .transaction_with_behavior(TransactionBehavior::Deferred)
+            .map_err(db_error)?;
+        let (fresh, fresh_version) = read_saved(&tx, game_id)?;
+        if version != fresh_version {
+            tx.commit().map_err(db_error)?;
+            continue;
+        }
+        assert_owned_resources(&tx, game_id, fresh.get("resources"))?;
+        let reply = json!({"version":version,"records":[],"versioning":state(&tx, &fresh, &hash)?});
+        tx.commit().map_err(db_error)?;
+        return Ok(reply);
+    }
+    Err(super::CONFLICT.into())
+}
+
 pub(super) fn request(connection: &mut Connection, input: Value) -> Result<Value, String> {
     let request: Request = serde_json::from_value(input).map_err(|_| ERROR)?;
     let game_id = match &request {
@@ -1106,15 +1147,7 @@ pub(super) fn request(connection: &mut Connection, input: Value) -> Result<Value
                 json!({"version":version,"records":[],"releaseVerification":{"contentHash":hash,"valid":hash == stored}}),
             )
         }
-        Request::Read { .. } => {
-            // Advisory read: the digest is streamed outside any write lock.
-            let (game, version) = read_saved(connection, game_id)?;
-            let content = content(connection, &game)?;
-            let hash = release_digest(connection, &game, &content)?;
-            let mut reply = json!({"version":version,"records":[]});
-            reply["versioning"] = state(connection, &game, &hash)?;
-            Ok(reply)
-        }
+        Request::Read { .. } => read_versioning(connection, game_id),
         Request::Release {
             content_version,
             ignore_conflict,
@@ -1154,6 +1187,7 @@ pub(super) fn request(connection: &mut Connection, input: Value) -> Result<Value
 #[cfg(test)]
 mod tests {
     use super::*;
+    include!("game_release_race_tests.rs");
 
     #[test]
     fn resource_budget_counts_keys_and_excludes_resource_nodes() {

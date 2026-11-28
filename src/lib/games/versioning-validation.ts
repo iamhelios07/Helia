@@ -217,7 +217,13 @@ export function parseGameRelease(value: unknown): GameRelease {
 	});
 	// Stored releases may keep `helia-asset:` references; the host confirms their bytes.
 	const stored = gameReleaseContent(game, (reference) => reference);
-	const assets = row.assets === undefined ? undefined : parseGameReleaseAssets(row.assets, stored);
+	const hasReferences = Object.values(stored.resources ?? {}).some((asset) =>
+		asset.data.startsWith('helia-asset:')
+	);
+	const assets =
+		row.assets === undefined && !hasReferences
+			? undefined
+			: parseGameReleaseAssets(row.assets, stored);
 	return { ...summary, content: stored, ...(assets === undefined ? {} : { assets }) };
 }
 

@@ -77,18 +77,14 @@ async function streamReleaseDigest(
 	content: GameReleaseContent
 ): Promise<string> {
 	const runtime = new RuntimeContent(db);
-	const objects = new Set<string>();
 	const mediaByBlob = new Map<string, OpenMedia>();
-	for (const blobId of releaseReferences(content)) {
-		const media = runtime.openMedia(gameId, blobId);
-		requirePackage(media && media.objectId, 'missingAsset');
-		objects.add(media.objectId);
-		mediaByBlob.set(blobId, media);
-	}
 	const leases = new ReleaseReadLeases(db);
 	try {
-		for (const objectId of objects.keys()) {
-			leases.add(gameId, objectId);
+		for (const blobId of releaseReferences(content)) {
+			const objectId = leases.pin(gameId, blobId);
+			const media = runtime.openMedia(gameId, blobId);
+			requirePackage(media && media.objectId === objectId, 'missingAsset');
+			mediaByBlob.set(blobId, media);
 		}
 		return await hashGameReleaseContentStream(content, async function* (reference) {
 			const media = mediaByBlob.get(reference.slice(12));
@@ -389,22 +385,23 @@ export async function gameReleasesAsync(
 	db: Database.Database,
 	request: ReleaseRequest
 ): Promise<StorageReply> {
+	if (request.action === 'release') {
+		guardGameEdit(db, request.gameId, 'release');
+	}
 	if (request.action === 'getRelease') {
 		return gameReleases(db, request);
 	}
 	if (request.action === 'verifyRelease') {
 		return verifyRelease(db, request);
 	}
+	if (request.action === 'read') {
+		return readVersioningAsync(db, request);
+	}
 	const saved = readSaved(db, request.gameId);
 	const game = parseGame(JSON.parse(saved.value));
 	const content = storedReleaseContent(db, game);
 	const contentHash = await releaseDigest(db, game, content);
 	const current = { content, contentHash };
-	if (request.action === 'read') {
-		return db.transaction(() =>
-			new GameReleases(db, request, readSaved(db, request.gameId), current).execute()
-		)();
-	}
 	return db
 		.transaction(() => {
 			const fresh = readSaved(db, request.gameId);
@@ -416,6 +413,32 @@ export async function gameReleasesAsync(
 			return new GameReleases(db, request, fresh, current).execute();
 		})
 		.immediate();
+}
+
+async function readVersioningAsync(
+	db: Database.Database,
+	request: Extract<ReleaseRequest, { action: 'read' }>
+): Promise<StorageReply> {
+	for (let attempt = 0; attempt < 3; attempt++) {
+		const { saved, game, content } = db.transaction(() => {
+			const saved = readSaved(db, request.gameId);
+			const game = parseGame(JSON.parse(saved.value));
+			return { saved, game, content: storedReleaseContent(db, game) };
+		})();
+		const contentHash = await releaseDigest(db, game, content);
+		const reply = db.transaction(() => {
+			const fresh = readSaved(db, request.gameId);
+			if (fresh.version !== saved.version) {
+				return undefined;
+			}
+			assertOwnedResources(db, game.id, game.resources ?? {});
+			return new GameReleases(db, request, fresh, { content, contentHash }).execute();
+		})();
+		if (reply) {
+			return reply;
+		}
+	}
+	throw Error(CONFLICT);
 }
 
 /** Recompute a stored release digest on the host; the client never hashes reference bytes. */

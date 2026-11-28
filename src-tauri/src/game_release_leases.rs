@@ -1,4 +1,4 @@
-use rusqlite::{Connection, ErrorCode, params};
+use rusqlite::{Connection, ErrorCode, OptionalExtension, params};
 use std::time::{Duration, Instant};
 
 /// All referenced objects stay pinned, including objects not yet reached by the digest.
@@ -25,6 +25,30 @@ impl<'a> ReadLeases<'a> {
         ).map_err(super::db_error)?;
         self.ids.push(id);
         Ok(())
+    }
+
+    /// Resolve and pin in one transaction before opening the media reader.
+    pub(super) fn pin(&mut self, game_id: &str, blob_id: &str) -> Result<String, String> {
+        let tx = self
+            .connection
+            .unchecked_transaction()
+            .map_err(super::db_error)?;
+        let blob = super::owned_blob(&tx, game_id, blob_id)?;
+        if blob["schemaVersion"] != 2 {
+            return Err(super::packages::error("missingAsset"));
+        }
+        let object: String = tx
+            .query_row(
+                "SELECT id FROM media_objects WHERE game_id=?1 AND sha256=?2 AND state='ready'",
+                params![game_id, blob["object"].as_str()],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(super::db_error)?
+            .ok_or_else(|| super::packages::error("missingAsset"))?;
+        self.add(game_id, &object)?;
+        tx.commit().map_err(super::db_error)?;
+        Ok(object)
     }
 
     fn update(&self) -> rusqlite::Result<()> {

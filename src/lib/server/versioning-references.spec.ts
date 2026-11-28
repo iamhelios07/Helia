@@ -6,13 +6,14 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
+import { GAME_EDIT_LOCKED } from '#lib/games/edit-lock.js';
 import { createEditorDraft, editorContent } from '#lib/games/editor.js';
 import { encodeGamePackage } from '#lib/games/package/codec.js';
 import { GamePackageError } from '#lib/games/package/limits.js';
 import { hashGameReleaseContent } from '#lib/games/release-content.js';
 import { createGameRepository } from '#lib/games/repository-core.js';
 import { MediaIdentity } from '#lib/storage/media-identity.js';
-import { CONFLICT, storedRecord } from '#lib/storage/protocol.js';
+import { CONFLICT, parseReply, storedRecord } from '#lib/storage/protocol.js';
 import { synchronizedStorage } from '#lib/storage/sync-client.js';
 
 import { editorDraftStorage } from './editor-drafts.js';
@@ -101,6 +102,138 @@ async function referenceGame(bytes: Uint8Array = Uint8Array.from([1, 2, 3])) {
 	});
 	return { game, blob, identity, bytes };
 }
+
+function onSecondChunk(action: () => Promise<void> | void) {
+	const original = RuntimeContent.prototype.openMedia;
+	vi.spyOn(RuntimeContent.prototype, 'openMedia').mockImplementation(function (
+		this: RuntimeContent,
+		gameId,
+		hash
+	) {
+		const media = original.call(this, gameId, hash);
+		if (!media) {
+			return null;
+		}
+		const read = media.read;
+		return {
+			...media,
+			read: () => {
+				let chunks = 0;
+				return read().pipeThrough(
+					new TransformStream<Uint8Array, Uint8Array>({
+						async transform(chunk, controller) {
+							if (++chunks === 2) {
+								await action();
+							}
+							controller.enqueue(chunk);
+						}
+					})
+				);
+			}
+		};
+	});
+}
+
+it('checks the edit lock before broken references on the web async release path', async () => {
+	const { game } = await referenceGame();
+	store.connection
+		.prepare("UPDATE games SET value=json_set(value,'$.editLock',json('true')) WHERE id=?")
+		.run(game.id);
+	store.connection.exec('DELETE FROM blobs');
+	await expect(
+		storageSyncAsync(store, {
+			kind: 'versioning',
+			action: 'release',
+			gameId: game.id,
+			contentVersion: '1.0.0'
+		})
+	).rejects.toThrow(GAME_EDIT_LOCKED);
+});
+
+it('recomputes a versioning read after updateGame interleaves with hashing', async () => {
+	const { game } = await referenceGame(new Uint8Array(chunkSize * 3));
+	const before = await repo.getGameVersioning(game.id);
+	let updated = false;
+	onSecondChunk(async () => {
+		if (updated) {
+			return;
+		}
+		updated = true;
+		await repo.updateGame(game.id, { title: 'Changed during read', genre: '', description: '' });
+	});
+	const reply = parseReply(
+		await storageSyncAsync(store, { kind: 'versioning', action: 'read', gameId: game.id })
+	);
+	expect(updated).toBe(true);
+	expect(reply.version).toBe(store.request({ kind: 'read', gameId: game.id }).version);
+	expect(reply.versioning?.contentHash).not.toBe(before.contentHash);
+	expect(reply.versioning).toEqual(await repo.getGameVersioning(game.id));
+});
+
+it('bounds versioning read retries when every hash is interrupted by a commit', async () => {
+	const { game } = await referenceGame(new Uint8Array(chunkSize * 2));
+	let updates = 0;
+	onSecondChunk(async () => {
+		await repo.updateGame(game.id, { title: `Changed ${++updates}`, genre: '', description: '' });
+	});
+	await expect(repo.getGameVersioning(game.id)).rejects.toThrow(CONFLICT);
+	expect(updates).toBe(3);
+});
+
+it.each(['commit', 'blob deletion', 'purge'])(
+	'rechecks release state after %s during the second chunk',
+	async (change) => {
+		const { game, blob } = await referenceGame(new Uint8Array(chunkSize * 3));
+		let invoked = false;
+		onSecondChunk(async () => {
+			invoked = true;
+			if (change === 'commit') {
+				await repo.updateGame(game.id, { title: 'Racing commit', genre: '', description: '' });
+			} else if (change === 'blob deletion') {
+				store.connection.prepare('DELETE FROM blobs WHERE id=?').run(blob.id);
+			} else {
+				await repo.trashGame(game.id);
+				await repo.purgeGame(game.id);
+			}
+		});
+		const pending = repo.createGameRelease(game.id, '1.0.0');
+		if (change === 'commit') {
+			await expect(pending).rejects.toThrow(CONFLICT);
+		} else if (change === 'blob deletion') {
+			await expect(pending).rejects.toMatchObject({ code: 'missingAsset' });
+		} else {
+			await expect(pending).rejects.toThrow();
+		}
+		expect(invoked).toBe(true);
+		expect(store.connection.prepare('SELECT count(*) FROM game_releases').pluck().get()).toBe(0);
+		expect(store.connection.prepare('SELECT count(*) FROM media_leases').pluck().get()).toBe(0);
+	}
+);
+
+it('requires metadata on reference-bearing release replies', async () => {
+	const { game } = await referenceGame();
+	const result = await repo.createGameRelease(game.id, '1.0.0');
+	if (result.kind !== 'released' || !result.state.currentRelease) {
+		throw Error('Expected release');
+	}
+	const release = await repo.getGameRelease(game.id, result.state.currentRelease.id);
+	expect(() =>
+		parseReply({ version: 0, records: [], release: { ...release, assets: undefined } })
+	).toThrow();
+	expect(() =>
+		parseReply({ version: 0, records: [], release: { ...release, assets: {} } })
+	).toThrow();
+});
+
+it('pins the object before opening media and cleans up if opening fails', async () => {
+	const { game } = await referenceGame();
+	vi.spyOn(RuntimeContent.prototype, 'openMedia').mockImplementation(() => {
+		expect(store.connection.prepare('SELECT count(*) FROM media_leases').pluck().get()).toBe(1);
+		throw Error('Open failed');
+	});
+	await expect(repo.createGameRelease(game.id, '1.0.0')).rejects.toThrow('Open failed');
+	expect(store.connection.prepare('SELECT count(*) FROM media_leases').pluck().get()).toBe(0);
+});
 
 it('stores a reference release, confirms host asset metadata and verifies the streamed digest', async () => {
 	const { game, blob, identity, bytes } = await referenceGame();
