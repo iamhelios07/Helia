@@ -1,4 +1,5 @@
 import { isDesktopBuild } from '#lib/platform/index.js';
+import { uploadDocumentBody } from '#lib/storage/media-transfer.js';
 
 import {
 	readEditorDraft,
@@ -6,7 +7,8 @@ import {
 	type EditorDraft,
 	type EditorDraftBudgetCache
 } from './editor.js';
-import { checkSaveRequestSize } from './package/limits.js';
+import { SAVE_BODY_REF_BYTES } from './package/limits.js';
+import { validateDocumentOperationBytes } from './versioning-validation.js';
 
 export interface SavedEditorDraft {
 	version: number;
@@ -56,14 +58,21 @@ export async function saveAuthoringDraft(
 		validateEditorDraftBudget(draft, cache);
 	}
 	const request = { kind: 'writeDraft', gameId, version, draft };
-	const body = checkSaveRequestSize(request);
+	const body = JSON.stringify(request);
+	const bytes = BigInt(new TextEncoder().encode(body).length);
+	// Only the operation budget rejects a save; larger bodies travel as a document upload.
+	validateDocumentOperationBytes('draftSave', bytes);
+	const split = bytes > SAVE_BODY_REF_BYTES;
+	const payload = split
+		? { kind: 'writeDraft', gameId, bodyRef: await uploadDocumentBody(gameId, 'draftSave', body) }
+		: request;
 	if (isDesktopBuild) {
-		return nativeDraftRequest(gameId, request);
+		return nativeDraftRequest(gameId, payload);
 	}
 	const response = await fetch('/api/games/' + encodeURIComponent(gameId) + '/draft', {
 		method: 'PUT',
 		headers: { 'content-type': 'application/json' },
-		body
+		body: JSON.stringify(payload)
 	});
 	const result: unknown = await response.json();
 	if (!response.ok) {

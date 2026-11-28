@@ -1,9 +1,11 @@
+import { createHash } from 'node:crypto';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
 import { createEditorDraft } from '#lib/games/editor.js';
-import { SAVE_REQUEST_BYTES } from '#lib/games/package/limits.js';
 import { createGameRepository } from '#lib/games/repository-core.js';
+import { DOCUMENT_OPERATION_LIMITS } from '#lib/games/versioning-validation.js';
 import { openStorage } from '#lib/server/sqlite.js';
+import { MEDIA_CHUNK_SIZE } from '#lib/storage/media-protocol.js';
 
 import { GET, PUT } from './+server.js';
 const state = vi.hoisted(() => ({ storage: null as ReturnType<typeof openStorage> | null }));
@@ -72,9 +74,17 @@ it('rejects malformed, foreign-owner and cross-origin draft mutations without lo
 	expect((await current.json()).version).toBe(1);
 });
 
-it('rejects an oversized body before JSON parsing and keeps the saved revision', async () => {
+it('rejects a body above the draftSave budget before JSON parsing and keeps the saved revision', async () => {
 	await PUT(event({ version: 0, draft: createEditorDraft(game) }));
-	const request = event('x'.repeat(Number(SAVE_REQUEST_BYTES) + 1));
+	const oversized = 'x'.repeat(Number(DOCUMENT_OPERATION_LIMITS.draftSave) + 1);
+	const request = {
+		params: { id: game.id },
+		url: new URL('http://localhost/api/games/' + game.id + '/draft'),
+		request: {
+			headers: new Headers({ origin: 'http://localhost', 'content-type': 'application/json' }),
+			text: async () => oversized
+		}
+	} as unknown as Parameters<typeof PUT>[0];
 	const parse = vi.spyOn(JSON, 'parse');
 	let response: Response;
 	try {
@@ -86,13 +96,64 @@ it('rejects an oversized body before JSON parsing and keeps the saved revision',
 	expect(response.status).toBe(400);
 	expect(await response.json()).toEqual({ error: '저장할 내용이 너무 커요' });
 	expect((await (await GET(event(null))).json()).version).toBe(1);
-});
+}, 60000);
 
-it('still checks exact UTF-8 bytes after the cheap text length guard', async () => {
-	const request = { version: 0, draft: null, padding: '한'.repeat(8 * 1024 * 1024) };
-	expect(JSON.stringify(request).length).toBeLessThan(Number(SAVE_REQUEST_BYTES));
-	const response = await PUT(event(request));
+const sha256 = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest('hex');
+async function uploadDocument(gameId: string, operation: string, text: string) {
+	const bytes = new TextEncoder().encode(text);
+	const { uploadId } = state.storage!.uploads.begin(gameId, {
+		purpose: 'document',
+		operation,
+		mime: 'application/json',
+		size: bytes.length
+	});
+	for (let i = 0; i < bytes.length; i += MEDIA_CHUNK_SIZE) {
+		const part = bytes.subarray(i, i + MEDIA_CHUNK_SIZE);
+		await state.storage!.uploads.chunk(gameId, uploadId, i / MEDIA_CHUNK_SIZE, {
+			sha256: sha256(part),
+			read: async () => part
+		});
+	}
+	await state.storage!.uploads.finish(gameId, uploadId);
+	return { ref: `helia-upload:${uploadId}`, uploadId };
+}
+it('saves a draft from a document upload and consumes the session', async () => {
+	const draft = createEditorDraft(game);
+	draft.documents.assets = '{unfinished';
+	const body = JSON.stringify({ kind: 'writeDraft', gameId: game.id, version: 0, draft });
+	const { ref, uploadId } = await uploadDocument(game.id, 'draftSave', body);
+	const objectId = state
+		.storage!.connection.prepare('SELECT object_id FROM media_uploads WHERE id=?')
+		.pluck()
+		.get(uploadId) as string;
+	const response = await PUT(event({ bodyRef: ref }));
+	expect(response.status).toBe(200);
+	expect((await response.json()).version).toBe(1);
+	const read = await GET(event(null));
+	expect((await read.json()).draft.documents.assets).toBe('{unfinished');
+	const session = state
+		.storage!.connection.prepare('SELECT state,object_id FROM media_uploads WHERE id=?')
+		.get(uploadId) as { state: string; object_id: string | null };
+	expect(session.state).toBe('consumed');
+	expect(session.object_id).toBeNull();
+	expect(
+		state
+			.storage!.connection.prepare('SELECT state FROM media_objects WHERE id=?')
+			.pluck()
+			.get(objectId)
+	).toBe('deleting');
+});
+it('rejects a document upload whose operation or game differs from the draft request', async () => {
+	const draft = createEditorDraft(game);
+	const body = JSON.stringify({ kind: 'writeDraft', gameId: game.id, version: 0, draft });
+	const wrongOperation = await uploadDocument(game.id, 'commit', body);
+	const response = await PUT(event({ bodyRef: wrongOperation.ref }));
 	expect(response.status).toBe(400);
-	expect(await response.json()).toEqual({ error: '저장할 내용이 너무 커요' });
+	expect(await response.json()).toMatchObject({ errorCode: 'scopeMismatch' });
+	state.storage!.connection.exec("INSERT OR IGNORE INTO games(id,value) VALUES('other','{}')");
+	const wrongGame = await uploadDocument('other', 'draftSave', body);
+	const foreign = await PUT(event({ bodyRef: wrongGame.ref }));
+	expect(foreign.status).toBe(400);
+	expect(await foreign.json()).toMatchObject({ errorCode: 'scopeMismatch' });
 	expect((await (await GET(event(null))).json()).version).toBe(0);
 });

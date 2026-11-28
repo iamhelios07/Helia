@@ -7,8 +7,17 @@ import { setImmediate as yieldTurn } from 'node:timers/promises';
 
 import { GamePackageError, requirePackage } from '#lib/games/package/limits.js';
 import { MEDIA_MIMES } from '#lib/games/resources.js';
+import { DOCUMENT_OPERATION_LIMITS } from '#lib/games/versioning-validation.js';
 import { MediaIdentity, type MediaIdentityResult } from '#lib/storage/media-identity.js';
-import { isMediaHash, MEDIA_CHUNK_SIZE, type EditBlobResult } from '#lib/storage/media-protocol.js';
+import {
+	isMediaHash,
+	MEDIA_CHUNK_SIZE,
+	DOCUMENT_MIME,
+	bodyRefId,
+	type DocumentOperation,
+	type DocumentUploadResult,
+	type EditBlobResult
+} from '#lib/storage/media-protocol.js';
 
 import { deadline, endUpload, type MediaLifetime } from './media-lifetime.js';
 import { MediaQueue } from './media-queue.js';
@@ -27,9 +36,17 @@ interface Upload {
 	chunk_count: number;
 	generation: number;
 	declared_sha256: string | null;
+	operation: string | null;
 	expires_at: string;
 	result: string | null;
 	error: string | null;
+}
+/** Identifies a verified document session whose bytes a processing request is about to use. */
+export interface DocumentClaim {
+	id: string;
+	game: string;
+	operation: DocumentOperation;
+	generation: number;
 }
 export function uploadError(error: unknown) {
 	if (error instanceof GamePackageError) {
@@ -57,12 +74,22 @@ function spaceAvailable(db: Database.Database, size: number) {
 function beginFields(input: unknown) {
 	requirePackage(input && typeof input === 'object');
 	const { purpose, mime, size, sha256, label, operation } = input as Record<string, unknown>;
-	requirePackage(purpose === 'edit' && operation === undefined, 'scopeMismatch');
-	requirePackage(typeof mime === 'string' && MEDIA_MIMES.has(mime), 'mediaType');
 	requirePackage(typeof size === 'number' && Number.isSafeInteger(size) && size > 0, 'mediaSize');
 	requirePackage(sha256 === undefined || isMediaHash(sha256), 'integrity');
 	requirePackage(label === undefined || (typeof label === 'string' && label.length <= 200));
-	return { mime, size, sha256, label };
+	if (purpose === 'edit') {
+		requirePackage(operation === undefined, 'scopeMismatch');
+		requirePackage(typeof mime === 'string' && MEDIA_MIMES.has(mime), 'mediaType');
+		return { purpose, mime, size, sha256, label, operation: null };
+	}
+	requirePackage(purpose === 'document', 'scopeMismatch');
+	requirePackage(
+		operation === 'draftSave' || operation === 'commit' || operation === 'releaseCreate',
+		'scopeMismatch'
+	);
+	requirePackage(mime === DOCUMENT_MIME, 'mediaType');
+	requirePackage(BigInt(size) <= DOCUMENT_OPERATION_LIMITS[operation], 'mediaSize');
+	return { purpose, mime, size, sha256, label, operation };
 }
 export class MediaUploads {
 	constructor(
@@ -112,8 +139,9 @@ export class MediaUploads {
 			return;
 		}
 		requirePackage(u.scope === game, 'scopeMismatch');
-		// Status and Cancel also operate on verified sessions, but never publish them as edit blobs.
-		requirePackage(!editOnly || u.purpose === 'edit', 'scopeMismatch');
+		// Chunk/Finish accept edit and document sessions; Status/Cancel accept any purpose,
+		// but never publish a non-edit session as an edit blob.
+		requirePackage(!editOnly || u.purpose === 'edit' || u.purpose === 'document', 'scopeMismatch');
 		if (u.error !== 'gameDeleted') {
 			this.checkOwner(u);
 		}
@@ -137,7 +165,7 @@ export class MediaUploads {
 		if (input && typeof input === 'object' && 'gameId' in input) {
 			requirePackage(input.gameId === game, 'scopeMismatch');
 		}
-		const { mime, size, label, sha256 } = beginFields(input);
+		const { purpose, mime, size, label, sha256, operation } = beginFields(input);
 		spaceAvailable(this.db, size);
 		return this.transaction(() => {
 			this.writable(game);
@@ -154,13 +182,15 @@ export class MediaUploads {
 			this.activity(game);
 			this.db
 				.prepare(
-					`INSERT INTO media_uploads(id,scope,purpose,mime,label,size,chunk_size,chunk_count,object_id,state,declared_sha256,created_at,expires_at) VALUES(?,?,'edit',?,?,?,?,?,?,'receiving',?,?,?)`
+					`INSERT INTO media_uploads(id,scope,purpose,mime,label,operation,size,chunk_size,chunk_count,object_id,state,declared_sha256,created_at,expires_at) VALUES(?,?,?,?,?,?,?,?,?,?,'receiving',?,?,?)`
 				)
 				.run(
 					id,
 					game,
+					purpose,
 					mime,
 					label ?? null,
+					operation,
 					size,
 					MEDIA_CHUNK_SIZE,
 					chunkCount,
@@ -248,7 +278,8 @@ export class MediaUploads {
 	}
 	private finishable(game: string, id: string, sha: unknown) {
 		const u = this.session(game, id);
-		if (u.state === 'completed') {
+		// A finished edit session is completed; a finished document session is verified with a result.
+		if (u.state === 'completed' || (u.state === 'verified' && u.result)) {
 			return u;
 		}
 		requirePackage(u.state !== 'finishing', 'inProgress');
@@ -348,6 +379,31 @@ export class MediaUploads {
 		this.db.prepare('DELETE FROM media_leases WHERE id=?').run(u.id);
 		return result;
 	}
+	/** A document upload only confirms verification; its bytes never become a blob (§3.9). */
+	private publishDocument(u: Upload, digest: MediaIdentityResult): DocumentUploadResult {
+		const current = this.session(u.scope, u.id);
+		requirePackage(
+			current.state === 'finishing' && current.generation === u.generation,
+			'uploadState'
+		);
+		this.db
+			.prepare("UPDATE media_objects SET state='verified',sha256=?,crc32=? WHERE id=?")
+			.run(digest.raw, digest.crc, u.object_id);
+		const result: DocumentUploadResult = {
+			kind: 'upload',
+			ref: `helia-upload:${u.id}`,
+			sha256: digest.raw,
+			size: u.size,
+			mime: u.mime,
+			crc32: digest.crc
+		};
+		// Verified document sessions stay active (scope activity extends them) until consumed.
+		this.db
+			.prepare("UPDATE media_uploads SET state='verified',result=?,expires_at=? WHERE id=?")
+			.run(JSON.stringify(result), deadline(10), u.id);
+		this.db.prepare('DELETE FROM media_leases WHERE id=?').run(u.id);
+		return result;
+	}
 	private hashFailed(id: string, code: GamePackageError['code']) {
 		this.transaction(() => {
 			// Do not overwrite a concurrent Cancel, expiry or purge.
@@ -359,7 +415,11 @@ export class MediaUploads {
 			}
 		});
 	}
-	async finish(game: string, id: string, sha?: unknown): Promise<EditBlobResult> {
+	async finish(
+		game: string,
+		id: string,
+		sha?: unknown
+	): Promise<EditBlobResult | DocumentUploadResult> {
 		const before = this.transaction(() => {
 			const u = this.finishable(game, id, sha);
 			this.activity(game);
@@ -380,7 +440,9 @@ export class MediaUploads {
 					throw failure;
 				});
 				// A failed final guard rolls publication back. Do not overwrite the session.
-				return this.transaction(() => this.publish(u, digest));
+				return this.transaction(() =>
+					u.purpose === 'document' ? this.publishDocument(u, digest) : this.publish(u, digest)
+				);
 			} catch (error) {
 				this.transaction(() => this.db.prepare('DELETE FROM media_leases WHERE id=?').run(id));
 				throw error;
@@ -388,5 +450,68 @@ export class MediaUploads {
 				this.lifetime.wake();
 			}
 		});
+	}
+	/** Reads a verified document body within its operation budget for a processing request. */
+	document(
+		game: string,
+		ref: unknown,
+		operation: DocumentOperation
+	): { text: string; claim: DocumentClaim } {
+		const id = bodyRefId(ref);
+		requirePackage(id, 'format');
+		const u = this.transaction(() => {
+			const s = this.lookup(game, id!, false);
+			requirePackage(s, 'uploadMissing');
+			requirePackage(s.purpose === 'document' && s.operation === operation, 'scopeMismatch');
+			requirePackage(s.state === 'verified', 'uploadState');
+			return s;
+		});
+		const bytes = Buffer.alloc(u.size);
+		const chunk = this.db
+			.prepare('SELECT data FROM media_chunks WHERE object_id=? AND idx=?')
+			.pluck();
+		let offset = 0;
+		for (let i = 0; i < u.chunk_count; i++) {
+			const part = chunk.get(u.object_id, i);
+			requirePackage(Buffer.isBuffer(part), 'uploadState');
+			bytes.set(part, offset);
+			offset += part.length;
+		}
+		requirePackage(offset === u.size, 'uploadState');
+		let text: string;
+		try {
+			text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+		} catch {
+			throw new GamePackageError('format');
+		}
+		return { text, claim: { id: u.id, game, operation, generation: u.generation } };
+	}
+	/** Marks the document consumed and its bytes deleting. The caller holds the write transaction. */
+	consumeDocument(claim: DocumentClaim) {
+		const row = this.db
+			.prepare('SELECT state,generation,object_id,scope,operation FROM media_uploads WHERE id=?')
+			.get(claim.id) as
+			| {
+					state: string;
+					generation: number;
+					object_id: string | null;
+					scope: string;
+					operation: string | null;
+			  }
+			| undefined;
+		requirePackage(
+			row &&
+				row.state === 'verified' &&
+				row.generation === claim.generation &&
+				row.object_id &&
+				row.scope === claim.game &&
+				row.operation === claim.operation,
+			'uploadState'
+		);
+		this.db.prepare("UPDATE media_objects SET state='deleting' WHERE id=?").run(row!.object_id);
+		this.db
+			.prepare("UPDATE media_uploads SET state='consumed',object_id=NULL,expires_at=? WHERE id=?")
+			.run(deadline(60), claim.id);
+		this.lifetime.wake();
 	}
 }

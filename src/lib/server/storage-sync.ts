@@ -1,11 +1,14 @@
 import { createHash } from 'node:crypto';
 
+import { GamePackageError, requirePackage } from '#lib/games/package/limits.js';
 import { parseResources } from '#lib/games/resources.js';
 import { record } from '#lib/games/state/model.js';
+import { documentOperation } from '#lib/storage/media-protocol.js';
 import { playValue } from '#lib/storage/play.js';
 import { type StorageReply } from '#lib/storage/protocol.js';
 import { syncAssets, syncKnown, type SyncRecord, type SyncReply } from '#lib/storage/sync.js';
 
+import type { DocumentClaim } from './media-uploads.js';
 import type { openStorage } from './sqlite.js';
 
 import { RuntimeContent } from './runtime-content.js';
@@ -22,7 +25,41 @@ export async function storageSyncAsync(
 	if (envelope.kind === 'install') {
 		return store.requestAsync(input);
 	}
-	return storageSync(store, input);
+	const { request, claim } = resolveBodyRef(store, input);
+	if (!claim) {
+		return storageSync(store, request);
+	}
+	// Consume the document in the same transaction as the write so a failed save keeps it.
+	return store.connection
+		.transaction(() => {
+			const reply = storageSync(store, request);
+			store.uploads.consumeDocument(claim);
+			return reply;
+		})
+		.immediate();
+}
+/** Replaces a `bodyRef` stub with its uploaded request body, binding operation and game (§3.9). */
+function resolveBodyRef(store: Store, input: unknown): { request: unknown; claim?: DocumentClaim } {
+	const envelope = record(input);
+	const command = envelope.kind === 'sync' ? record(envelope.request) : envelope;
+	if (!('bodyRef' in command)) {
+		return { request: input };
+	}
+	const operation = documentOperation(command.kind, command.action);
+	requirePackage(operation && typeof command.gameId === 'string', 'scopeMismatch');
+	const doc = store.uploads.document(command.gameId, command.bodyRef, operation);
+	let resolved: Record<string, unknown>;
+	try {
+		resolved = record(JSON.parse(doc.text));
+	} catch {
+		throw new GamePackageError('format');
+	}
+	requirePackage(
+		resolved.kind === command.kind && resolved.gameId === command.gameId,
+		'scopeMismatch'
+	);
+	const request = envelope.kind === 'sync' ? { ...envelope, request: resolved } : resolved;
+	return { request, claim: doc.claim };
 }
 
 /** Portable persisted records stay unchanged; only the transport is projected. */

@@ -5,11 +5,13 @@ import type { Game } from './model.js';
 import { loadAuthoringDraft, saveAuthoringDraft } from './editor-draft-storage.js';
 import { createEditorDraft } from './editor.js';
 const platform = vi.hoisted(() => ({ desktop: true }));
+const uploadDocumentBody = vi.hoisted(() => vi.fn());
 vi.mock('#lib/platform/index.js', () => ({
 	get isDesktopBuild() {
 		return platform.desktop;
 	}
 }));
+vi.mock('#lib/storage/media-transfer.js', () => ({ uploadDocumentBody }));
 const game: Game = {
 	schemaVersion: 2,
 	id: 'game',
@@ -35,6 +37,7 @@ beforeEach(() =>
 );
 afterEach(() => {
 	platform.desktop = true;
+	vi.clearAllMocks();
 	vi.unstubAllGlobals();
 });
 it('stores desktop drafts through the main-frame host even when browser storage is full', async () => {
@@ -62,11 +65,12 @@ it('rejects a subframe and an unavailable native bridge', async () => {
 });
 
 it.each([false, true])(
-	'preserves an oversized unfinished draft without contacting a host (desktop=%s)',
+	'splits an oversized unfinished draft into a document upload and preserves it (desktop=%s)',
 	async (desktop) => {
 		platform.desktop = desktop;
-		const host = vi.fn();
-		const fetch = vi.fn();
+		uploadDocumentBody.mockResolvedValue('helia-upload:doc');
+		const host = vi.fn().mockResolvedValue({ version: 1, draft: null });
+		const fetch = vi.fn().mockResolvedValue(Response.json({ version: 1, draft: null }));
 		const view = { __HELIA_STORAGE__: host };
 		Object.assign(view, { top: view });
 		vi.stubGlobal('window', view);
@@ -74,9 +78,38 @@ it.each([false, true])(
 		const draft = createEditorDraft(game);
 		draft.documents.state = '한'.repeat(4 * 1024 * 1024);
 		draft.documents.info = '한'.repeat(4 * 1024 * 1024);
-		await expect(saveAuthoringDraft(game.id, draft, 0)).rejects.toThrow('저장할 내용이 너무 커요');
+		expect(await saveAuthoringDraft(game.id, draft, 0)).toEqual({ version: 1, draft: null });
 		expect(draft.documents.state.length).toBe(4 * 1024 * 1024);
-		expect(host).not.toHaveBeenCalled();
-		expect(fetch).not.toHaveBeenCalled();
+		expect(uploadDocumentBody).toHaveBeenCalledWith(game.id, 'draftSave', expect.any(String));
+		const stub = { kind: 'writeDraft', gameId: game.id, bodyRef: 'helia-upload:doc' };
+		if (desktop) {
+			expect(host).toHaveBeenCalledWith(stub);
+			expect(fetch).not.toHaveBeenCalled();
+		} else {
+			expect(fetch).toHaveBeenCalledWith(
+				'/api/games/' + game.id + '/draft',
+				expect.objectContaining({ method: 'PUT', body: JSON.stringify(stub) })
+			);
+			expect(host).not.toHaveBeenCalled();
+		}
+	}
+);
+it.each([false, true])(
+	'keeps a small draft on the inline path without a document upload (desktop=%s)',
+	async (desktop) => {
+		platform.desktop = desktop;
+		const host = vi.fn().mockResolvedValue({ version: 1, draft: null });
+		const fetch = vi.fn().mockResolvedValue(Response.json({ version: 1, draft: null }));
+		const view = { __HELIA_STORAGE__: host };
+		Object.assign(view, { top: view });
+		vi.stubGlobal('window', view);
+		vi.stubGlobal('fetch', fetch);
+		const draft = createEditorDraft(game);
+		draft.documents.state = '{unfinished';
+		await saveAuthoringDraft(game.id, draft, 0);
+		expect(uploadDocumentBody).not.toHaveBeenCalled();
+		const sent = desktop ? host.mock.calls[0][0] : JSON.parse(fetch.mock.calls[0][1].body);
+		expect(sent.draft.documents.state).toBe('{unfinished');
+		expect(sent.bodyRef).toBeUndefined();
 	}
 );

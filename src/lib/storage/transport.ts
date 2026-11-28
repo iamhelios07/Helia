@@ -1,13 +1,15 @@
 import {
 	checkPackageSize,
-	checkSaveRequestSize,
 	GamePackageError,
-	isGamePackageErrorCode
+	isGamePackageErrorCode,
+	SAVE_BODY_REF_BYTES
 } from '#lib/games/package/limits.js';
 import { ResourceListBudgetError, validateResourceListBudget } from '#lib/games/resources.js';
+import { validateDocumentOperationBytes } from '#lib/games/versioning-validation.js';
 import { isDesktopBuild, isTauri } from '#lib/platform/index.js';
 
 import installRequestLimit from './install-request-limit.json';
+import { uploadDocumentBody } from './media-transfer.js';
 import { synchronizedStorage } from './sync-client.js';
 
 function storageError(error: unknown): Error | undefined {
@@ -58,20 +60,34 @@ function field(value: unknown, key: string): unknown {
 	return value && typeof value === 'object' ? Reflect.get(value, key) : undefined;
 }
 
-function checkWriteRequest(request: unknown): string | undefined {
-	const command = field(request, 'kind') === 'sync' ? field(request, 'request') : request;
-	const kind = field(command, 'kind');
+/** Serializes a write request, splitting an oversized command into a document upload (§3.9). */
+async function prepareWriteRequest(request: unknown): Promise<{ body: string; native: unknown }> {
+	const envelope = field(request, 'kind') === 'sync' ? field(request, 'request') : request;
+	const kind = field(envelope, 'kind');
 	if (kind === 'commit' || kind === 'create') {
-		checkResourceRecords(command);
-		return checkSaveRequestSize(request);
+		checkResourceRecords(envelope);
+		const text = JSON.stringify(envelope);
+		const bytes = BigInt(new TextEncoder().encode(text).length);
+		if (bytes > SAVE_BODY_REF_BYTES) {
+			// Only the operation budget rejects a save; the host revalidates the uploaded body.
+			validateDocumentOperationBytes('commit', bytes);
+			const gameId = field(envelope, 'gameId');
+			const bodyRef = await uploadDocumentBody(String(gameId), 'commit', text);
+			const stub = { kind, gameId, bodyRef };
+			const split =
+				field(request, 'kind') === 'sync' ? { ...record(request), request: stub } : stub;
+			return { body: JSON.stringify(split), native: split };
+		}
 	}
-	// Release creation is assembled from the database; its small command cannot
-	// predict the content size. The host applies the authoritative write budget.
 	if (kind === 'install' || kind === 'installPreview') {
 		validateResourceListBudget(
-			field(field(field(command, 'release'), 'content'), 'resources') ?? {}
+			field(field(field(envelope, 'release'), 'content'), 'resources') ?? {}
 		);
 	}
+	return { body: JSON.stringify(request), native: request };
+}
+function record(value: unknown): Record<string, unknown> {
+	return value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
 }
 
 function checkResourceRecords(command: unknown) {
@@ -93,14 +109,14 @@ function checkResourceRecords(command: unknown) {
 }
 
 async function send(request: unknown): Promise<unknown> {
-	const body = checkWriteRequest(request);
+	const prepared = await prepareWriteRequest(request);
 	if (isDesktopBuild) {
-		return sendNative(request);
+		return sendNative(prepared.native);
 	}
 	const response = await fetch('/api/storage', {
 		method: 'POST',
 		headers: { 'content-type': 'application/json' },
-		body: body ?? JSON.stringify(request)
+		body: prepared.body
 	});
 	const result: unknown = await response.json().catch(() => null);
 	if (!response.ok) {

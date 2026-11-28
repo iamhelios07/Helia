@@ -37,10 +37,16 @@ pub(crate) fn execute(path: &Path, input: Value) -> Result<Value, String> {
         .iter()
         .map(|value| value.as_str().filter(|hash| valid_hash(hash)).ok_or(ERROR))
         .collect::<Result<_, _>>()?;
-    let request = expand(path, input["request"].clone())?;
+    let (request, claim) = storage::take_body_ref(path, input["request"].clone())?;
+    let request = expand(path, request)?;
     let playing = request["kind"] == "read" && request["play"] == true;
     let game_id = request["gameId"].as_str().unwrap_or("").to_owned();
-    let mut reply = storage::execute_request(path, request)?;
+    // A split body is always a stored write; other kinds keep the normal request routing.
+    let mut reply = if claim.is_some() {
+        storage::execute_stored(path, request, claim)?
+    } else {
+        storage::execute_request(path, request)?
+    };
     let connection = storage::open(path)?;
     let rows = reply["records"].as_array().ok_or(ERROR)?;
     let records = rows

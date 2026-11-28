@@ -92,6 +92,7 @@ struct Upload {
     object: Option<String>,
     generation: i64,
     declared: Option<String>,
+    operation: Option<String>,
     expires: String,
     result: Option<String>,
     error: Option<String>,
@@ -124,7 +125,7 @@ fn lookup(db: &Connection, v: &Value, edit_only: bool) -> Result<Option<Upload>>
     let u = db
         .query_row(
             "SELECT scope,purpose,state,mime,size,chunk_count,object_id,generation,declared_sha256,
-                expires_at,result,error,expires_at<=strftime('%Y-%m-%dT%H:%M:%fZ','now')
+                operation,expires_at,result,error,expires_at<=strftime('%Y-%m-%dT%H:%M:%fZ','now')
          FROM media_uploads WHERE id=?",
             [id],
             |r| {
@@ -139,17 +140,18 @@ fn lookup(db: &Connection, v: &Value, edit_only: bool) -> Result<Option<Upload>>
                     object: r.get(6)?,
                     generation: r.get(7)?,
                     declared: r.get(8)?,
-                    expires: r.get(9)?,
-                    result: r.get(10)?,
-                    error: r.get(11)?,
-                    expired: r.get(12)?,
+                    operation: r.get(9)?,
+                    expires: r.get(10)?,
+                    result: r.get(11)?,
+                    error: r.get(12)?,
+                    expired: r.get(13)?,
                 })
             },
         )
         .optional()?;
     if let Some(u) = &u {
         ensure(
-            u.scope == game(v)? && (!edit_only || u.purpose == "edit"),
+            u.scope == game(v)? && (!edit_only || u.purpose == "edit" || u.purpose == "document"),
             "scopeMismatch",
         )?;
         if u.expired {
@@ -171,17 +173,29 @@ fn session(db: &Connection, v: &Value) -> Result<Upload> {
 }
 fn begin(db: &mut Connection, v: &Value) -> Result<Value> {
     let g = game(v)?;
-    ensure(
-        v["purpose"] == "edit" && v.get("operation").is_none(),
-        "scopeMismatch",
-    )?;
-    let mime = v["mime"]
-        .as_str()
-        .filter(|m| super::MEDIA_MIMES.contains(m))
-        .ok_or(Failure("mediaType"))?;
     let size = integer(&v["size"])
         .filter(|n| *n > 0)
         .ok_or(Failure("mediaSize"))?;
+    let purpose = v["purpose"].as_str().ok_or(Failure("scopeMismatch"))?;
+    let operation = v.get("operation").and_then(Value::as_str);
+    let mime = match purpose {
+        "edit" => {
+            ensure(operation.is_none(), "scopeMismatch")?;
+            v["mime"]
+                .as_str()
+                .filter(|m| super::MEDIA_MIMES.contains(m))
+                .ok_or(Failure("mediaType"))?
+        }
+        "document" => {
+            let limit = operation
+                .and_then(super::document_operation_limit)
+                .ok_or(Failure("scopeMismatch"))?;
+            ensure(v["mime"] == "application/json", "mediaType")?;
+            ensure(size as u64 <= limit, "mediaSize")?;
+            v["mime"].as_str().ok_or(Failure("mediaType"))?
+        }
+        _ => return Err(Failure("scopeMismatch")),
+    };
     let declared = optional_hash(v)?;
     let label = v
         .get("label")
@@ -199,11 +213,11 @@ fn begin(db: &mut Connection, v: &Value) -> Result<Value> {
     let count = (size + CHUNK - 1) / CHUNK;
     tx.execute("INSERT INTO media_objects(id,game_id,state,size,chunk_size,created_at) VALUES(?,?,'staging',?,?,strftime('%Y-%m-%dT%H:%M:%fZ','now'))",params![object,g,size,CHUNK])?;
     let expires: String = tx.query_row(
-        "INSERT INTO media_uploads(id,scope,purpose,mime,label,size,chunk_size,chunk_count,object_id,
+        "INSERT INTO media_uploads(id,scope,purpose,mime,label,operation,size,chunk_size,chunk_count,object_id,
             state,declared_sha256,created_at,expires_at)
-         VALUES(?,?,'edit',?,?,?,?,?,?,'receiving',?,strftime('%Y-%m-%dT%H:%M:%fZ','now'),
+         VALUES(?,?,?,?,?,?,?,?,?,?,'receiving',?,strftime('%Y-%m-%dT%H:%M:%fZ','now'),
             strftime('%Y-%m-%dT%H:%M:%fZ','now','+10 minutes')) RETURNING expires_at",
-        params![id,g,mime,label,size,CHUNK,count,object,declared], |r| r.get(0)
+        params![id,g,purpose,mime,label,operation,size,CHUNK,count,object,declared], |r| r.get(0)
     )?;
     tx.commit()?;
     Ok(json!({"uploadId":id,"chunkSize":CHUNK,"chunkCount":count,"expiresAt":expires}))
@@ -308,7 +322,7 @@ fn cancel(db: &mut Connection, v: &Value) -> Result<Value> {
 }
 fn finishable(db: &Connection, v: &Value) -> Result<Upload> {
     let mut u = session(db, v)?;
-    if u.state == "completed" {
+    if u.state == "completed" || (u.state == "verified" && u.result.is_some()) {
         return Ok(u);
     }
     ensure(u.state != "finishing", "inProgress")?;
@@ -435,6 +449,29 @@ fn publish(db: &mut Connection, v: &Value, u: &Upload, hash: MediaIdentityResult
     tx.commit()?;
     Ok(result)
 }
+/// A document upload only confirms verification; its bytes never become a blob (§3.9).
+fn publish_document(
+    db: &mut Connection,
+    v: &Value,
+    u: &Upload,
+    hash: MediaIdentityResult,
+) -> Result<Value> {
+    let tx = immediate(db)?;
+    let current = session(&tx, v)?;
+    ensure(
+        current.state == "finishing" && current.generation == u.generation,
+        "uploadState",
+    )?;
+    tx.execute(
+        "UPDATE media_objects SET state='verified',sha256=?,crc32=? WHERE id=?",
+        params![hash.raw, hash.crc, u.object],
+    )?;
+    let result = json!({"kind":"upload","ref":format!("helia-upload:{}",u.id),"sha256":hash.raw,"size":u.size,"mime":u.mime,"crc32":hash.crc});
+    tx.execute("UPDATE media_uploads SET state='verified',result=?,expires_at=strftime('%Y-%m-%dT%H:%M:%fZ','now','+10 minutes') WHERE id=?",params![result.to_string(),u.id])?;
+    tx.execute("DELETE FROM media_leases WHERE id=?", [&u.id])?;
+    tx.commit()?;
+    Ok(result)
+}
 fn finish(db: &mut Connection, path: &Path, v: &Value) -> Result<Value> {
     {
         let tx = immediate(db)?;
@@ -481,7 +518,13 @@ fn finish_hash(
     hashed: Result<MediaIdentityResult>,
 ) -> Result<Value> {
     let hash_failed = hashed.is_err();
-    let result = hashed.and_then(|hash| publish(db, v, u, hash));
+    let result = hashed.and_then(|hash| {
+        if u.purpose == "document" {
+            publish_document(db, v, u, hash)
+        } else {
+            publish(db, v, u, hash)
+        }
+    });
     if let Err(error) = &result {
         retry_busy(|| {
             let tx = immediate(db)?;
@@ -499,13 +542,7 @@ fn finish_hash(
 }
 pub(super) fn request(path: &Path, request: MediaRequest) -> std::result::Result<Value, String> {
     // Application setup owns migrations. A chunk should never rescan/migrate all games.
-    let mut db = Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE)
-        .and_then(|db| {
-            db.busy_timeout(Duration::from_secs(5))?;
-            db.execute_batch("PRAGMA foreign_keys=ON; PRAGMA synchronous=FULL;")?;
-            Ok(db)
-        })
-        .map_err(|error| Failure::from(error).message())?;
+    let mut db = open_raw(path).map_err(Failure::message)?;
     match request {
         MediaRequest::MediaUploadBegin(v) => begin(&mut db, &v),
         MediaRequest::MediaUploadChunk(v) => chunk(&mut db, &v),
@@ -514,4 +551,128 @@ pub(super) fn request(path: &Path, request: MediaRequest) -> std::result::Result
         MediaRequest::MediaUploadCancel(v) => cancel(&mut db, &v),
     }
     .map_err(Failure::message)
+}
+fn open_raw(path: &Path) -> Result<Connection> {
+    let db = Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE)?;
+    db.busy_timeout(Duration::from_secs(5))?;
+    db.execute_batch("PRAGMA foreign_keys=ON; PRAGMA synchronous=FULL;")?;
+    Ok(db)
+}
+
+/// Identifies a verified document session whose bytes a processing request is about to use.
+pub(crate) struct DocumentClaim {
+    pub id: String,
+    pub game: String,
+    pub operation: String,
+    pub generation: i64,
+}
+fn document_operation(kind: &str, action: Option<&str>) -> Option<&'static str> {
+    match kind {
+        "writeDraft" => Some("draftSave"),
+        "commit" | "create" => Some("commit"),
+        "versioning" if action == Some("release") => Some("releaseCreate"),
+        _ => None,
+    }
+}
+/// Replaces a `bodyRef` stub with its uploaded request body, binding operation and game (§3.9).
+pub(crate) fn resolve_body_ref(
+    path: &Path,
+    command: &Value,
+) -> std::result::Result<Option<(Value, DocumentClaim)>, String> {
+    resolve_body_ref_inner(path, command).map_err(Failure::message)
+}
+fn resolve_body_ref_inner(path: &Path, command: &Value) -> Result<Option<(Value, DocumentClaim)>> {
+    let Some(reference) = command.get("bodyRef").and_then(Value::as_str) else {
+        return Ok(None);
+    };
+    let kind = command["kind"].as_str().ok_or(Failure("scopeMismatch"))?;
+    let action = command.get("action").and_then(Value::as_str);
+    let operation = document_operation(kind, action).ok_or(Failure("scopeMismatch"))?;
+    let game = command["gameId"].as_str().ok_or(Failure("scopeMismatch"))?;
+    let (text, claim) = read_document(path, game, reference, operation)?;
+    let resolved: Value = serde_json::from_str(&text).map_err(|_| Failure("format"))?;
+    ensure(
+        resolved["kind"] == kind && resolved["gameId"] == game,
+        "scopeMismatch",
+    )?;
+    Ok(Some((resolved, claim)))
+}
+/// Reads a verified document body within its operation budget for a processing request.
+fn read_document(
+    path: &Path,
+    game: &str,
+    reference: &str,
+    operation: &str,
+) -> Result<(String, DocumentClaim)> {
+    let id = reference
+        .strip_prefix("helia-upload:")
+        .filter(|s| !s.is_empty())
+        .ok_or(Failure("format"))?;
+    let mut db = open_raw(path)?;
+    let u = {
+        let tx = immediate(&mut db)?;
+        let u = lookup(&tx, &json!({"gameId":game,"uploadId":id}), false)?
+            .ok_or(Failure("uploadMissing"))?;
+        ensure(
+            u.purpose == "document" && u.operation.as_deref() == Some(operation),
+            "scopeMismatch",
+        )?;
+        ensure(u.state == "verified", "uploadState")?;
+        tx.commit()?;
+        u
+    };
+    let mut bytes = Vec::with_capacity(u.size as usize);
+    {
+        let mut statement =
+            db.prepare("SELECT data FROM media_chunks WHERE object_id=? AND idx=?")?;
+        for i in 0..u.count {
+            let part: Vec<u8> = statement
+                .query_row(params![u.object, i], |r| r.get(0))
+                .optional()?
+                .ok_or(Failure("uploadState"))?;
+            bytes.extend_from_slice(&part);
+        }
+    }
+    ensure(bytes.len() as i64 == u.size, "uploadState")?;
+    let text = String::from_utf8(bytes).map_err(|_| Failure("format"))?;
+    Ok((
+        text,
+        DocumentClaim {
+            id: u.id,
+            game: game.to_owned(),
+            operation: operation.to_owned(),
+            generation: u.generation,
+        },
+    ))
+}
+/// Marks the document consumed and its bytes deleting. The caller holds the write transaction.
+pub(crate) fn consume_document(
+    db: &Connection,
+    claim: &DocumentClaim,
+) -> std::result::Result<(), String> {
+    consume_document_inner(db, claim).map_err(Failure::message)
+}
+fn consume_document_inner(db: &Connection, claim: &DocumentClaim) -> Result<()> {
+    let row: Option<(String, i64, Option<String>, String, Option<String>)> = db
+        .query_row(
+            "SELECT state,generation,object_id,scope,operation FROM media_uploads WHERE id=?",
+            [&claim.id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+        )
+        .optional()?;
+    let (state, generation, object, scope, operation) = row.ok_or(Failure("uploadState"))?;
+    ensure(
+        state == "verified"
+            && generation == claim.generation
+            && object.is_some()
+            && scope == claim.game
+            && operation.as_deref() == Some(claim.operation.as_str()),
+        "uploadState",
+    )?;
+    db.execute(
+        "UPDATE media_objects SET state='deleting' WHERE id=?",
+        [&object],
+    )?;
+    db.execute("UPDATE media_uploads SET state='consumed',object_id=NULL,expires_at=strftime('%Y-%m-%dT%H:%M:%fZ','now','+1 hour') WHERE id=?",[&claim.id])?;
+    Ok(())
 }

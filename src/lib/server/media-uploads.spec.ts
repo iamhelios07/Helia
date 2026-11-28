@@ -41,7 +41,13 @@ function fixture(path = ':memory:') {
 		uploads.begin('g', { purpose: 'edit', mime: 'image/png', size, ...extra }).uploadId;
 	const put = (id: string, index: number, bytes: Uint8Array, sha256 = hash(bytes)) =>
 		uploads.chunk('g', id, index, { sha256, read: async () => bytes });
-	const finish = (id: string, sha?: string) => uploads.finish('g', id, sha);
+	const finish = async (id: string, sha?: string) => {
+		const result = await uploads.finish('g', id, sha);
+		if (result.kind !== 'blob') {
+			throw Error('expected an edit blob result');
+		}
+		return result;
+	};
 	const status = (id: string) => uploads.status('g', id);
 	const count = (table: string) => db.prepare(`SELECT count(*) FROM ${table}`).pluck().get();
 	const drain = () => {

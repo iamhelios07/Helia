@@ -8,6 +8,7 @@ import installRequestLimit from './install-request-limit.json';
 
 const flags = vi.hoisted(() => ({ desktop: false, native: false }));
 const nativeInvoke = vi.hoisted(() => vi.fn());
+const uploadDocumentBody = vi.hoisted(() => vi.fn());
 vi.mock('#lib/platform/index.js', () => ({
 	get isDesktopBuild() {
 		return flags.desktop;
@@ -15,6 +16,9 @@ vi.mock('#lib/platform/index.js', () => ({
 	isTauri: () => flags.native
 }));
 vi.mock('@tauri-apps/api/core', () => ({ invoke: nativeInvoke }));
+vi.mock('./media-transfer.js', () => ({ uploadDocumentBody }));
+import { DOCUMENT_OPERATION_LIMITS } from '#lib/games/versioning-validation.js';
+
 import { storageRequest } from './transport.js';
 
 afterEach(() => {
@@ -44,27 +48,110 @@ it('preserves conflict errors so the repository can retry', async () => {
 });
 
 it.each([false, true])(
-	'rejects an oversized save before sending and preserves input (desktop=%s)',
+	'splits an oversized save into a document upload and preserves input (desktop=%s)',
 	async (desktop) => {
 		flags.desktop = desktop;
 		flags.native = desktop;
-		const host = vi.fn().mockResolvedValue({ version: 0, records: [] });
-		const fetch = vi.fn().mockResolvedValue(Response.json({ version: 0, records: [] }));
+		uploadDocumentBody.mockResolvedValue('helia-upload:doc');
+		const host = vi.fn().mockResolvedValue({ version: 1, records: [] });
+		const fetch = vi.fn().mockResolvedValue(Response.json({ version: 1, records: [] }));
 		const view = { __HELIA_STORAGE__: host };
 		Object.assign(view, { top: view });
 		vi.stubGlobal('window', view);
 		vi.stubGlobal('fetch', fetch);
 		const padding = '한\0'.repeat(3 * 1024 * 1024);
+		const gameId = 'large-save-' + desktop;
 		const request = {
 			kind: 'commit' as const,
-			gameId: 'large-save',
+			gameId,
 			version: 0,
 			deleteSessions: [],
 			records: [
 				{
 					table: 'games' as const,
-					id: 'large-save',
-					gameId: 'large-save',
+					id: gameId,
+					gameId,
+					sessionId: null,
+					value: { padding }
+				}
+			]
+		};
+		await storageRequest(request);
+		expect(request.records[0].value.padding).toBe(padding);
+		expect(uploadDocumentBody).toHaveBeenCalledWith(gameId, 'commit', expect.any(String));
+		const stub = {
+			kind: 'sync',
+			request: { kind: 'commit', gameId, bodyRef: 'helia-upload:doc' },
+			known: []
+		};
+		if (desktop) {
+			expect(host).toHaveBeenCalledWith(stub);
+			expect(fetch).not.toHaveBeenCalled();
+		} else {
+			expect(fetch).toHaveBeenCalledWith(
+				'/api/storage',
+				expect.objectContaining({ body: JSON.stringify(stub) })
+			);
+			expect(host).not.toHaveBeenCalled();
+		}
+	}
+);
+it.each([false, true])(
+	'keeps a small save on the inline path without a document upload (desktop=%s)',
+	async (desktop) => {
+		flags.desktop = desktop;
+		flags.native = desktop;
+		const host = vi.fn().mockResolvedValue({ version: 1, records: [] });
+		const fetch = vi.fn().mockResolvedValue(Response.json({ version: 1, records: [] }));
+		const view = { __HELIA_STORAGE__: host };
+		Object.assign(view, { top: view });
+		vi.stubGlobal('window', view);
+		vi.stubGlobal('fetch', fetch);
+		const gameId = 'small-save-' + desktop;
+		const request = {
+			kind: 'commit' as const,
+			gameId,
+			version: 0,
+			deleteSessions: [],
+			records: [
+				{
+					table: 'games' as const,
+					id: gameId,
+					gameId,
+					sessionId: null,
+					value: { padding: 'hello' }
+				}
+			]
+		};
+		await storageRequest(request);
+		expect(uploadDocumentBody).not.toHaveBeenCalled();
+		const sent = desktop ? host.mock.calls[0][0] : JSON.parse(fetch.mock.calls[0][1].body);
+		expect(sent.request.records[0].value.padding).toBe('hello');
+		expect(sent.request.bodyRef).toBeUndefined();
+	}
+);
+it.each([false, true])(
+	'rejects a save only above the commit operation budget (desktop=%s)',
+	async (desktop) => {
+		flags.desktop = desktop;
+		flags.native = desktop;
+		const host = vi.fn();
+		const fetch = vi.fn();
+		const view = { __HELIA_STORAGE__: host };
+		Object.assign(view, { top: view });
+		vi.stubGlobal('window', view);
+		vi.stubGlobal('fetch', fetch);
+		const padding = 'x'.repeat(Number(DOCUMENT_OPERATION_LIMITS.commit));
+		const request = {
+			kind: 'commit' as const,
+			gameId: 'cap-save',
+			version: 0,
+			deleteSessions: [],
+			records: [
+				{
+					table: 'games' as const,
+					id: 'cap-save',
+					gameId: 'cap-save',
 					sessionId: null,
 					value: { padding }
 				}
@@ -72,9 +159,11 @@ it.each([false, true])(
 		};
 		await expect(storageRequest(request)).rejects.toThrow('저장할 내용이 너무 커요');
 		expect(request.records[0].value.padding).toBe(padding);
+		expect(uploadDocumentBody).not.toHaveBeenCalled();
 		expect(host).not.toHaveBeenCalled();
 		expect(fetch).not.toHaveBeenCalled();
-	}
+	},
+	60000
 );
 it.each(errorCodes)(
 	'restores web 400 package error %s with its stable local message',

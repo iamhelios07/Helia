@@ -18,16 +18,20 @@ const DOCUMENT_COMMIT_BYTES: u64 =
 const DOCUMENT_RELEASE_CREATE_BYTES: u64 = DOCUMENT_COMMIT_BYTES;
 
 pub(crate) fn validate_document_operation_bytes(operation: &str, bytes: u64) -> Result<(), String> {
-    let maximum = match operation {
-        "draftSave" => DOCUMENT_DRAFT_SAVE_BYTES,
-        "commit" => DOCUMENT_COMMIT_BYTES,
-        "releaseCreate" => DOCUMENT_RELEASE_CREATE_BYTES,
-        _ => return Err("잘못된 문서 작업".into()),
-    };
+    let maximum = document_operation_limit(operation).ok_or("잘못된 문서 작업")?;
     if bytes > maximum {
         return Err("저장할 내용이 너무 커요".into());
     }
     Ok(())
+}
+
+pub(crate) fn document_operation_limit(operation: &str) -> Option<u64> {
+    match operation {
+        "draftSave" => Some(DOCUMENT_DRAFT_SAVE_BYTES),
+        "commit" => Some(DOCUMENT_COMMIT_BYTES),
+        "releaseCreate" => Some(DOCUMENT_RELEASE_CREATE_BYTES),
+        _ => None,
+    }
 }
 
 fn resource_list_error(count: usize, bytes: u64) -> String {
@@ -1312,6 +1316,24 @@ pub(crate) fn execute_request(path: &Path, input: Value) -> Result<Value, String
     if input["kind"] == "files" {
         return crate::session_files::request(&mut open(path)?, &input);
     }
+    let (input, claim) = take_body_ref(path, input)?;
+    execute_stored(path, input, claim)
+}
+/// Resolves a split request body (§3.9) before the stored command is parsed.
+pub(crate) fn take_body_ref(
+    path: &Path,
+    input: Value,
+) -> Result<(Value, Option<media_uploads::DocumentClaim>), String> {
+    if let Some((resolved, claim)) = media_uploads::resolve_body_ref(path, &input)? {
+        return Ok((resolved, Some(claim)));
+    }
+    Ok((input, None))
+}
+pub(crate) fn execute_stored(
+    path: &Path,
+    input: Value,
+    claim: Option<media_uploads::DocumentClaim>,
+) -> Result<Value, String> {
     let _lease_guard = crate::generation::guard_storage(&input)?;
     let mut input = input;
     if let Some(object) = input.as_object_mut() {
@@ -1457,8 +1479,11 @@ pub(crate) fn execute_request(path: &Path, input: Value) -> Result<Value, String
             )?
         }
     };
+    if let Some(claim) = &claim {
+        media_uploads::consume_document(&transaction, claim)?;
+    }
     transaction.commit().map_err(db_error)?;
-    if purging {
+    if purging || claim.is_some() {
         media_uploads::wake();
     }
     Ok(result)
@@ -2566,6 +2591,239 @@ mod tests {
         for operation in ["commit", "releaseCreate"] {
             assert!(validate_document_operation_bytes(operation, bytes).is_ok());
         }
+    }
+    fn doc_sha256(data: &[u8]) -> String {
+        ring::digest::digest(&ring::digest::SHA256, data)
+            .as_ref()
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect()
+    }
+    fn count(db: &Connection, table: &str) -> i64 {
+        db.query_row(&format!("SELECT count(*) FROM {table}"), [], |r| r.get(0))
+            .unwrap()
+    }
+    /// Uploads a serialized request body as a `document` session through the real IPC dispatch.
+    fn upload_document(fixture: &Fixture, operation: &str, text: &str) -> (String, Value) {
+        use base64::{Engine, engine::general_purpose::STANDARD};
+        let bytes = text.as_bytes();
+        let begun = fixture
+            .request(json!({"kind":"mediaUploadBegin","gameId":"game","purpose":"document","operation":operation,"mime":"application/json","size":bytes.len()}))
+            .unwrap();
+        let upload_id = begun["uploadId"].as_str().unwrap().to_owned();
+        for (index, part) in bytes.chunks(1048576).enumerate() {
+            fixture
+                .request(json!({"kind":"mediaUploadChunk","gameId":"game","uploadId":upload_id,"index":index,"sha256":doc_sha256(part),"data":STANDARD.encode(part)}))
+                .unwrap();
+        }
+        let result = fixture
+            .request(json!({"kind":"mediaUploadFinish","gameId":"game","uploadId":upload_id}))
+            .unwrap();
+        (format!("helia-upload:{upload_id}"), result)
+    }
+    fn document_session(fixture: &Fixture, reference: &str) -> (String, Option<String>) {
+        let id = reference.strip_prefix("helia-upload:").unwrap();
+        let db = open(&fixture.0).unwrap();
+        let row: (String, Option<String>) = db
+            .query_row(
+                "SELECT state,object_id FROM media_uploads WHERE id=?1",
+                [id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        row
+    }
+    #[test]
+    fn document_upload_bounds_and_verification() {
+        let fixture = Fixture::new();
+        fixture.create();
+        for operation in ["draftSave", "commit", "releaseCreate"] {
+            let limit = document_operation_limit(operation).unwrap();
+            for (size, ok) in [(limit, true), (limit + 1, false)] {
+                let result = fixture.request(json!({"kind":"mediaUploadBegin","gameId":"game","purpose":"document","operation":operation,"mime":"application/json","size":size}));
+                assert_eq!(result.is_ok(), ok, "{operation} {size}");
+                if !ok {
+                    assert!(result.unwrap_err().contains("mediaSize"));
+                }
+            }
+        }
+        assert!(fixture
+            .request(json!({"kind":"mediaUploadBegin","gameId":"game","purpose":"document","operation":"draftSave","mime":"image/png","size":1}))
+            .unwrap_err()
+            .contains("mediaType"));
+        assert!(fixture
+            .request(json!({"kind":"mediaUploadBegin","gameId":"game","purpose":"document","mime":"application/json","size":1}))
+            .unwrap_err()
+            .contains("scopeMismatch"));
+        let text = json!({"kind":"writeDraft","gameId":"game","version":0,"draft":Value::Null})
+            .to_string();
+        let (reference, result) = upload_document(&fixture, "draftSave", &text);
+        assert_eq!(result["kind"], "upload");
+        assert_eq!(result["ref"], reference);
+        assert_eq!(result["mime"], "application/json");
+        assert_eq!(result["size"], text.len());
+        assert_eq!(result["sha256"], doc_sha256(text.as_bytes()));
+        assert!(result.get("blobId").is_none());
+        assert!(result["crc32"].is_u64());
+        let db = open(&fixture.0).unwrap();
+        assert_eq!(count(&db, "blobs"), 0);
+        let (state, object) = document_session(&fixture, &reference);
+        assert_eq!(state, "verified");
+        assert!(object.is_some());
+        let id = reference.strip_prefix("helia-upload:").unwrap();
+        let again = fixture
+            .request(json!({"kind":"mediaUploadFinish","gameId":"game","uploadId":id}))
+            .unwrap();
+        assert_eq!(again, result);
+    }
+    #[test]
+    fn document_draft_save_consumes_and_preserves_unfinished() {
+        let fixture = Fixture::new();
+        fixture.create();
+        let draft = json!({"version":3,"gameId":"game","baseContent":game("Draft"),"documents":{"info":"{}","instructions":"{}","state":"{unfinished","code":"{}","lorebook":"{}","regex":"[]","assets":"{unfinished"}});
+        let body =
+            json!({"kind":"writeDraft","gameId":"game","version":0,"draft":draft}).to_string();
+        let (reference, _) = upload_document(&fixture, "draftSave", &body);
+        let saved = fixture
+            .request(json!({"kind":"writeDraft","gameId":"game","bodyRef":reference}))
+            .unwrap();
+        assert_eq!(saved["version"], 1);
+        let read = fixture
+            .request(json!({"kind":"readDraft","gameId":"game"}))
+            .unwrap();
+        assert_eq!(read["draft"]["documents"]["assets"], "{unfinished");
+        assert_eq!(read["draft"]["documents"]["state"], "{unfinished");
+        let (state, object) = document_session(&fixture, &reference);
+        assert_eq!(state, "consumed");
+        assert!(object.is_none());
+        let db = open(&fixture.0).unwrap();
+        let object_state: String = db
+            .query_row(
+                "SELECT state FROM media_objects WHERE game_id='game'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(object_state, "deleting");
+    }
+    #[test]
+    fn document_commit_sync_consumes_and_mismatch_rejects() {
+        use base64::{Engine, engine::general_purpose::STANDARD};
+        let fixture = Fixture::new();
+        fixture.create();
+        let mut updated = fixture.read()["records"][0]["value"].clone();
+        updated["title"] = json!("Applied");
+        let body = commit(0, &[row("games", "game", None, &updated)]).to_string();
+        let (reference, _) = upload_document(&fixture, "commit", &body);
+        let reply = fixture
+            .request(json!({"kind":"sync","known":[],"request":{"kind":"commit","gameId":"game","bodyRef":reference}}))
+            .unwrap();
+        assert_eq!(reply["version"], 1);
+        assert_eq!(fixture.read()["records"][0]["value"]["title"], "Applied");
+        let (state, object) = document_session(&fixture, &reference);
+        assert_eq!(state, "consumed");
+        assert!(object.is_none());
+        // Operation mismatch: a draftSave session cannot serve a commit.
+        let (wrong_operation, _) = upload_document(&fixture, "draftSave", &body);
+        let err = fixture
+            .request(json!({"kind":"sync","known":[],"request":{"kind":"commit","gameId":"game","bodyRef":wrong_operation}}))
+            .unwrap_err();
+        assert!(err.contains("scopeMismatch"), "{err}");
+        assert_eq!(document_session(&fixture, &wrong_operation).0, "verified");
+        // Game mismatch: a session scoped to another game cannot serve this game.
+        let db = open(&fixture.0).unwrap();
+        db.execute("INSERT INTO games(id,value) VALUES('other','{}')", [])
+            .unwrap();
+        drop(db);
+        let other_body =
+            json!({"kind":"commit","gameId":"other","version":0,"records":[],"deleteSessions":[]})
+                .to_string();
+        let begun = fixture
+            .request(json!({"kind":"mediaUploadBegin","gameId":"other","purpose":"document","operation":"commit","mime":"application/json","size":other_body.len()}))
+            .unwrap();
+        let other_id = begun["uploadId"].as_str().unwrap();
+        fixture
+            .request(json!({"kind":"mediaUploadChunk","gameId":"other","uploadId":other_id,"index":0,"sha256":doc_sha256(other_body.as_bytes()),"data":STANDARD.encode(other_body.as_bytes())}))
+            .unwrap();
+        fixture
+            .request(json!({"kind":"mediaUploadFinish","gameId":"other","uploadId":other_id}))
+            .unwrap();
+        let wrong_game = format!("helia-upload:{other_id}");
+        let err = fixture
+            .request(json!({"kind":"sync","known":[],"request":{"kind":"commit","gameId":"game","bodyRef":wrong_game}}))
+            .unwrap_err();
+        assert!(err.contains("scopeMismatch"), "{err}");
+        assert_eq!(document_session(&fixture, &wrong_game).0, "verified");
+    }
+    #[test]
+    fn document_small_request_stays_inline() {
+        let fixture = Fixture::new();
+        fixture.create();
+        let mut updated = fixture.read()["records"][0]["value"].clone();
+        updated["title"] = json!("Inline");
+        let reply = fixture
+            .request(json!({"kind":"sync","known":[],"request":commit(0,&[row("games","game",None,&updated)])}))
+            .unwrap();
+        assert_eq!(reply["version"], 1);
+        let db = open(&fixture.0).unwrap();
+        assert_eq!(count(&db, "media_uploads"), 0);
+    }
+    #[test]
+    fn document_large_resource_game_draft_apply_release() {
+        let fixture = Fixture::new();
+        fixture.create();
+        let resources = resource_budget_map();
+        let mut updated = fixture.read()["records"][0]["value"].clone();
+        updated["resources"] = resources.clone();
+        let body = commit(0, &[row("games", "game", None, &updated)]).to_string();
+        assert!(body.len() > 8 * 1024 * 1024);
+        let (reference, _) = upload_document(&fixture, "commit", &body);
+        let reply = fixture
+            .request(json!({"kind":"sync","known":[],"request":{"kind":"commit","gameId":"game","bodyRef":reference}}))
+            .unwrap();
+        assert_eq!(reply["version"], 1);
+        let saved = fixture.read()["records"][0]["value"].clone();
+        assert_eq!(
+            resource_list_bytes(saved.get("resources")).unwrap(),
+            RESOURCE_LIST_BYTES
+        );
+        let draft = json!({"version":3,"gameId":"game","baseContent":updated,"documents":{"info":"{}","instructions":"{}","state":"{}","code":"{}","lorebook":"{}","regex":"[]","assets":resources.to_string()}});
+        let draft_body =
+            json!({"kind":"writeDraft","gameId":"game","version":0,"draft":draft}).to_string();
+        assert!(draft_body.len() > 8 * 1024 * 1024);
+        let (draft_ref, _) = upload_document(&fixture, "draftSave", &draft_body);
+        let saved_draft = fixture
+            .request(json!({"kind":"writeDraft","gameId":"game","bodyRef":draft_ref}))
+            .unwrap();
+        assert_eq!(saved_draft["version"], 1);
+        let released = fixture
+            .request(json!({"kind":"versioning","action":"release","gameId":"game","contentVersion":"1.0.0"}))
+            .unwrap();
+        assert_eq!(released["releaseResult"]["kind"], "released");
+    }
+    #[test]
+    fn document_large_remainder_draft_preserves_unfinished() {
+        let fixture = Fixture::new();
+        fixture.create();
+        let state = "한".repeat(7_864_320);
+        let draft = json!({"version":3,"gameId":"game","baseContent":game("Large"),"documents":{"info":"{}","instructions":"{}","state":state,"code":"{}","lorebook":"{}","regex":"[]","assets":"{unfinished"}});
+        let body =
+            json!({"kind":"writeDraft","gameId":"game","version":0,"draft":draft}).to_string();
+        let bytes = body.len();
+        assert!(
+            bytes > 22 * 1024 * 1024 && bytes < 23 * 1024 * 1024,
+            "{bytes}"
+        );
+        let (reference, _) = upload_document(&fixture, "draftSave", &body);
+        let saved = fixture
+            .request(json!({"kind":"writeDraft","gameId":"game","bodyRef":reference}))
+            .unwrap();
+        assert_eq!(saved["version"], 1);
+        let read = fixture
+            .request(json!({"kind":"readDraft","gameId":"game"}))
+            .unwrap();
+        assert_eq!(read["draft"]["documents"]["state"], state);
+        assert_eq!(read["draft"]["documents"]["assets"], "{unfinished");
     }
     #[test]
     fn accepts_hundreds_of_small_resources_across_save_draft_and_release() {

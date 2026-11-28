@@ -80,6 +80,8 @@ export function serializedRequestSize(request: unknown): number {
 }
 
 export const SAVE_REQUEST_BYTES = 20n * 1024n * 1024n;
+/** Serialized requests above this UTF-8 size travel as a `document` upload (§3.9). */
+export const SAVE_BODY_REF_BYTES = 8n * 1024n * 1024n;
 export function checkSaveRequestSize(request: unknown): string {
 	const text = JSON.stringify(request);
 	if (text.length > Number(SAVE_REQUEST_BYTES) || jsonUtf8BytesOfText(text) > SAVE_REQUEST_BYTES) {

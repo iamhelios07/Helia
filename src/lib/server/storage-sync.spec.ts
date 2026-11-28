@@ -52,7 +52,11 @@ it.each([1, 2])(
 				sha256: identity.raw,
 				read: async () => bytes
 			});
-			expect((await store.uploads.finish(game.id, uploadId)).blobId).toBe(saved.id);
+			const uploaded = await store.uploads.finish(game.id, uploadId);
+			if (uploaded.kind !== 'blob') {
+				throw Error('expected an edit blob result');
+			}
+			expect(uploaded.blobId).toBe(saved.id);
 			const current = (await direct.getGameWorkspace(game.id))!.game;
 			current.resources!.portrait.data = reference;
 			db.prepare('UPDATE games SET value=? WHERE id=?').run(JSON.stringify(current), game.id);

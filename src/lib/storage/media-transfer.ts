@@ -7,7 +7,15 @@ import { Sha256 } from '#lib/games/state/sha256.js';
 import { isDesktopBuild } from '#lib/platform/index.js';
 
 import { Base64Stream } from './media-identity.js';
-import { isMediaHash, MEDIA_CHUNK_SIZE, type EditBlobResult } from './media-protocol.js';
+import {
+	isMediaHash,
+	MEDIA_CHUNK_SIZE,
+	DOCUMENT_MIME,
+	BODY_REF_PREFIX,
+	type DocumentOperation,
+	type DocumentUploadResult,
+	type EditBlobResult
+} from './media-protocol.js';
 import { sendNative } from './transport.js';
 
 class Busy extends GamePackageError {
@@ -44,6 +52,8 @@ interface Options {
 	label?: string;
 	sha256?: string;
 	signal?: AbortSignal;
+	purpose?: 'edit' | 'document';
+	operation?: DocumentOperation;
 }
 async function chunkHash(buffer: ArrayBuffer) {
 	if (!globalThis.crypto?.subtle) {
@@ -67,13 +77,17 @@ class Transfer {
 	get sessionUrl() {
 		return `${this.url}/${encodeURIComponent(this.id!)}`;
 	}
+	get purpose() {
+		return this.options.purpose ?? 'edit';
+	}
 	async begin() {
 		const payload = {
-			purpose: 'edit',
+			purpose: this.purpose,
 			mime: this.options.mime ?? this.file.type,
 			size: this.file.size,
 			label: this.options.label,
-			sha256: this.options.sha256
+			sha256: this.options.sha256,
+			...(this.options.operation === undefined ? {} : { operation: this.options.operation })
 		};
 		const result = isDesktopBuild
 			? await sendNative({ kind: 'mediaUploadBegin', gameId: this.gameId, ...payload })
@@ -125,7 +139,7 @@ class Transfer {
 			requirePackage(fields(reply).received === index);
 		}, signal);
 	}
-	async finish(): Promise<EditBlobResult> {
+	async finish(): Promise<EditBlobResult | DocumentUploadResult> {
 		const signal = this.controller.signal;
 		const result = await retry(
 			() =>
@@ -141,13 +155,23 @@ class Transfer {
 			Date.now() + 3600000
 		);
 		const r = fields(result);
-		requirePackage(
-			r.kind === 'blob' &&
-				isMediaHash(r.assetHash) &&
-				isMediaHash(r.blobId) &&
-				isMediaHash(r.sha256)
-		);
 		requirePackage(r.size === this.file.size && r.mime === (this.options.mime ?? this.file.type));
+		requirePackage(isMediaHash(r.sha256));
+		if (this.purpose === 'document') {
+			requirePackage(
+				r.kind === 'upload' && r.ref === `${BODY_REF_PREFIX}${this.id}` && r.mime === DOCUMENT_MIME
+			);
+			requirePackage(typeof r.crc32 === 'number' && Number.isSafeInteger(r.crc32) && r.crc32 >= 0);
+			return {
+				kind: 'upload',
+				ref: r.ref,
+				sha256: r.sha256,
+				size: r.size,
+				mime: r.mime,
+				crc32: r.crc32
+			};
+		}
+		requirePackage(r.kind === 'blob' && isMediaHash(r.assetHash) && isMediaHash(r.blobId));
 		return {
 			kind: 'blob',
 			assetHash: r.assetHash,
@@ -257,11 +281,11 @@ async function sendFile(t: Transfer) {
 	return t.finish();
 }
 /** No resume token is persisted. A new call always begins a fresh upload. */
-export async function uploadEditMedia(
+async function runUpload(
 	gameId: string,
 	file: Blob,
-	options: Options = {}
-): Promise<EditBlobResult> {
+	options: Options
+): Promise<EditBlobResult | DocumentUploadResult> {
 	options.signal?.throwIfAborted();
 	const t = new Transfer(gameId, file, options);
 	const abort = () => t.controller.abort(options.signal?.reason);
@@ -293,4 +317,30 @@ export async function uploadEditMedia(
 		options.signal?.removeEventListener('abort', abort);
 		globalThis.removeEventListener?.('pagehide', abort);
 	}
+}
+export async function uploadEditMedia(
+	gameId: string,
+	file: Blob,
+	options: Options = {}
+): Promise<EditBlobResult> {
+	return (await runUpload(gameId, file, { ...options, purpose: 'edit' })) as EditBlobResult;
+}
+/** Uploads a serialized request body as a `document` session and returns its `helia-upload:` ref. */
+export async function uploadDocumentBody(
+	gameId: string,
+	operation: DocumentOperation,
+	text: string,
+	signal?: AbortSignal
+): Promise<string> {
+	const file = new Blob([text], { type: DOCUMENT_MIME });
+	const result = await runUpload(gameId, file, {
+		purpose: 'document',
+		operation,
+		mime: DOCUMENT_MIME,
+		signal
+	});
+	if (result.kind !== 'upload') {
+		throw new GamePackageError('format');
+	}
+	return result.ref;
 }
