@@ -47,14 +47,14 @@ async function http(url: string, init: RequestInit): Promise<unknown> {
 	}
 	throw new Error('업로드 요청에 실패했어요.');
 }
-interface Options {
+interface UploadOptions {
 	mime?: string;
 	label?: string;
 	sha256?: string;
 	signal?: AbortSignal;
-	purpose?: 'edit' | 'document';
-	operation?: DocumentOperation;
 }
+type Options = UploadOptions &
+	({ purpose: 'edit' } | { purpose: 'document'; operation: DocumentOperation });
 async function chunkHash(buffer: ArrayBuffer) {
 	if (!globalThis.crypto?.subtle) {
 		// WebCrypto is unavailable on non-local HTTP origins. Still hash just one chunk.
@@ -78,7 +78,7 @@ class Transfer {
 		return `${this.url}/${encodeURIComponent(this.id!)}`;
 	}
 	get purpose() {
-		return this.options.purpose ?? 'edit';
+		return this.options.purpose;
 	}
 	async begin() {
 		const payload = {
@@ -87,7 +87,7 @@ class Transfer {
 			size: this.file.size,
 			label: this.options.label,
 			sha256: this.options.sha256,
-			...(this.options.operation === undefined ? {} : { operation: this.options.operation })
+			...(this.options.purpose === 'document' ? { operation: this.options.operation } : {})
 		};
 		const result = isDesktopBuild
 			? await sendNative({ kind: 'mediaUploadBegin', gameId: this.gameId, ...payload })
@@ -321,9 +321,11 @@ async function runUpload(
 export async function uploadEditMedia(
 	gameId: string,
 	file: Blob,
-	options: Options = {}
+	options: UploadOptions = {}
 ): Promise<EditBlobResult> {
-	return (await runUpload(gameId, file, { ...options, purpose: 'edit' })) as EditBlobResult;
+	const result = await runUpload(gameId, file, { ...options, purpose: 'edit' });
+	requirePackage(result.kind === 'blob');
+	return result;
 }
 /** Uploads a serialized request body as a `document` session and returns its `helia-upload:` ref. */
 export async function uploadDocumentBody(

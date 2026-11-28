@@ -66,6 +66,9 @@ async function prepareWriteRequest(request: unknown): Promise<{ body: string; na
 	const kind = field(envelope, 'kind');
 	if (kind === 'commit' || kind === 'create') {
 		checkResourceRecords(envelope);
+	}
+	// A new game has no writable upload scope yet; create keeps the host's inline checks.
+	if (kind === 'commit') {
 		const text = JSON.stringify(envelope);
 		const bytes = BigInt(new TextEncoder().encode(text).length);
 		if (bytes > SAVE_BODY_REF_BYTES) {

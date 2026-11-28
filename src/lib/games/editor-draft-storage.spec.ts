@@ -113,3 +113,35 @@ it.each([false, true])(
 		expect(sent.bodyRef).toBeUndefined();
 	}
 );
+it.each([false, true])(
+	'uses the exact UTF-8 8 MiB draft boundary (desktop=%s)',
+	async (desktop) => {
+		platform.desktop = desktop;
+		uploadDocumentBody.mockResolvedValue('helia-upload:doc');
+		const host = vi.fn().mockResolvedValue({ version: 1, draft: null });
+		const fetch = vi
+			.fn()
+			.mockImplementation(async () => Response.json({ version: 1, draft: null }));
+		const view = { __HELIA_STORAGE__: host };
+		Object.assign(view, { top: view });
+		vi.stubGlobal('window', view);
+		vi.stubGlobal('fetch', fetch);
+		for (const size of [8 * 1024 * 1024, 8 * 1024 * 1024 + 1]) {
+			const draft = createEditorDraft(game);
+			draft.documents.state = '한\0';
+			const body = () => JSON.stringify({ kind: 'writeDraft', gameId: game.id, version: 0, draft });
+			draft.documents.state += 'x'.repeat(size - new TextEncoder().encode(body()).length);
+			expect(new TextEncoder().encode(body()).length).toBe(size);
+			uploadDocumentBody.mockClear();
+			await saveAuthoringDraft(game.id, draft, 0);
+			const sent = desktop ? host.mock.lastCall![0] : JSON.parse(fetch.mock.lastCall![1].body);
+			if (size === 8 * 1024 * 1024) {
+				expect(uploadDocumentBody).not.toHaveBeenCalled();
+				expect(sent.draft).toEqual(draft);
+			} else {
+				expect(uploadDocumentBody).toHaveBeenCalledWith(game.id, 'draftSave', body());
+				expect(sent).toEqual({ kind: 'writeDraft', gameId: game.id, bodyRef: 'helia-upload:doc' });
+			}
+		}
+	}
+);

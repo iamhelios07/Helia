@@ -23,7 +23,7 @@ export const GET: RequestHandler = ({ params }) => {
 	}
 };
 function parseBody(text: string): Record<string, unknown> {
-	if (text.length > DRAFT_SAVE_BYTES) {
+	if (new TextEncoder().encode(text).length > DRAFT_SAVE_BYTES) {
 		throw Error('저장할 내용이 너무 커요');
 	}
 	const value: unknown = JSON.parse(text);

@@ -126,9 +126,10 @@ export class MediaUploads {
 		this.writable(u.scope);
 	}
 	private activity(game: string) {
+		// Documents keep a fixed deadline, including the ten minutes granted by Finish.
 		this.db
 			.prepare(
-				'UPDATE media_uploads SET expires_at=? WHERE scope=? AND object_id IS NOT NULL AND expires_at>?'
+				"UPDATE media_uploads SET expires_at=? WHERE scope=? AND purpose!='document' AND object_id IS NOT NULL AND expires_at>?"
 			)
 			.run(deadline(10), game, deadline(0));
 	}
@@ -397,7 +398,7 @@ export class MediaUploads {
 			mime: u.mime,
 			crc32: digest.crc
 		};
-		// Verified document sessions stay active (scope activity extends them) until consumed.
+		// Finish grants ten fixed minutes for processing or retrying this document.
 		this.db
 			.prepare("UPDATE media_uploads SET state='verified',result=?,expires_at=? WHERE id=?")
 			.run(JSON.stringify(result), deadline(10), u.id);

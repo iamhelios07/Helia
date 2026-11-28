@@ -40,6 +40,69 @@ fn count(db: &Connection, table: &str) -> i64 {
 fn drain(db: &mut Connection) {
     while lifetime::step(db).unwrap() {}
 }
+
+#[test]
+fn document_finish_deadline_is_fixed_and_expired_bytes_are_reclaimed() {
+    let file = Db::new();
+    let mut db = file.connect();
+    let begun = begin(&mut db, &json!({"gameId":"g","purpose":"document","operation":"draftSave","mime":"application/json","size":2})).unwrap();
+    let command = json!({"gameId":"g","uploadId":begun["uploadId"]});
+    chunk(&mut db, &packet(&command, 0, b"{}")).unwrap();
+    finish(&mut db, &file.0, &command).unwrap();
+    let id = begun["uploadId"].as_str().unwrap();
+    let remaining: f64 = db
+        .query_row(
+            "SELECT (julianday(expires_at)-julianday('now'))*86400 FROM media_uploads WHERE id=?",
+            [id],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert!((590.0..=601.0).contains(&remaining));
+    db.execute("UPDATE media_uploads SET expires_at=strftime('%Y-%m-%dT%H:%M:%fZ','now','+1 minute') WHERE id=?", [id]).unwrap();
+    let (fixed, object): (String, String) = db
+        .query_row(
+            "SELECT expires_at,object_id FROM media_uploads WHERE id=?",
+            [id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    let other = new_upload(&mut db, 1);
+    chunk(&mut db, &packet(&other, 0, &[1])).unwrap();
+    finish(&mut db, &file.0, &other).unwrap();
+    finish(&mut db, &file.0, &command).unwrap();
+    let after: String = db
+        .query_row(
+            "SELECT expires_at FROM media_uploads WHERE id=?",
+            [id],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(after, fixed);
+    db.execute(
+        "UPDATE media_uploads SET expires_at='2000-01-01T00:00:00.000Z' WHERE id=?",
+        [id],
+    )
+    .unwrap();
+    lifetime::expire(&mut db, false).unwrap();
+    let (state, detached): (String, bool) = db
+        .query_row(
+            "SELECT state,object_id IS NULL FROM media_uploads WHERE id=?",
+            [id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(state, "cancelled");
+    assert!(detached);
+    drain(&mut db);
+    let remaining: i64 = db
+        .query_row(
+            "SELECT count(*) FROM media_objects WHERE id=?",
+            [&object],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(remaining, 0);
+}
 fn reason<T>(result: Result<T>) -> &'static str {
     result.err().expect("expected rejection").0
 }

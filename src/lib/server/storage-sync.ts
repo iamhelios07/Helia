@@ -45,7 +45,7 @@ function resolveBodyRef(store: Store, input: unknown): { request: unknown; claim
 	if (!('bodyRef' in command)) {
 		return { request: input };
 	}
-	const operation = documentOperation(command.kind, command.action);
+	const operation = documentOperation(command.kind);
 	requirePackage(operation && typeof command.gameId === 'string', 'scopeMismatch');
 	const doc = store.uploads.document(command.gameId, command.bodyRef, operation);
 	let resolved: Record<string, unknown>;

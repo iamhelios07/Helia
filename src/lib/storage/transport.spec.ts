@@ -165,6 +165,53 @@ it.each([false, true])(
 	},
 	60000
 );
+it.each([false, true])(
+	'uses the exact UTF-8 8 MiB split boundary and keeps 8–20 MiB create inline (desktop=%s)',
+	async (desktop) => {
+		flags.desktop = desktop;
+		flags.native = desktop;
+		uploadDocumentBody.mockResolvedValue('helia-upload:doc');
+		const host = vi.fn().mockResolvedValue({ version: 1, records: [] });
+		const fetch = vi
+			.fn()
+			.mockImplementation(async () => Response.json({ version: 1, records: [] }));
+		const view = { __HELIA_STORAGE__: host };
+		Object.assign(view, { top: view });
+		vi.stubGlobal('window', view);
+		vi.stubGlobal('fetch', fetch);
+		for (const [kind, size, split] of [
+			['commit', 8 * 1024 * 1024, false],
+			['commit', 8 * 1024 * 1024 + 1, true],
+			['create', 12 * 1024 * 1024, false]
+		] as const) {
+			const request = {
+				kind,
+				gameId: `boundary-${desktop}-${size}`,
+				version: 0,
+				records: [],
+				deleteSessions: [],
+				padding: '한\0'
+			};
+			const byteLength = () => new TextEncoder().encode(JSON.stringify(request)).length;
+			request.padding += 'x'.repeat(size - byteLength());
+			expect(byteLength()).toBe(size);
+			uploadDocumentBody.mockClear();
+			await storageRequest(request);
+			const sent = desktop ? host.mock.lastCall![0] : JSON.parse(fetch.mock.lastCall![1].body);
+			if (split) {
+				expect(uploadDocumentBody).toHaveBeenCalledWith(
+					request.gameId,
+					'commit',
+					JSON.stringify(request)
+				);
+				expect(sent.request).toEqual({ kind, gameId: request.gameId, bodyRef: 'helia-upload:doc' });
+			} else {
+				expect(uploadDocumentBody).not.toHaveBeenCalled();
+				expect(sent.request).toEqual(request);
+			}
+		}
+	}
+);
 it.each(errorCodes)(
 	'restores web 400 package error %s with its stable local message',
 	async (code) => {

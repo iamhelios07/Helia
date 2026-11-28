@@ -74,29 +74,36 @@ it('rejects malformed, foreign-owner and cross-origin draft mutations without lo
 	expect((await current.json()).version).toBe(1);
 });
 
-it('rejects a body above the draftSave budget before JSON parsing and keeps the saved revision', async () => {
-	await PUT(event({ version: 0, draft: createEditorDraft(game) }));
-	const oversized = 'x'.repeat(Number(DOCUMENT_OPERATION_LIMITS.draftSave) + 1);
-	const request = {
-		params: { id: game.id },
-		url: new URL('http://localhost/api/games/' + game.id + '/draft'),
-		request: {
-			headers: new Headers({ origin: 'http://localhost', 'content-type': 'application/json' }),
-			text: async () => oversized
+it.each(['x', '한'])(
+	'rejects a UTF-8 body above the draftSave budget before parsing (%s)',
+	async (character) => {
+		await PUT(event({ version: 0, draft: createEditorDraft(game) }));
+		const limit = Number(DOCUMENT_OPERATION_LIMITS.draftSave);
+		const oversized = character.repeat(
+			Math.floor(limit / new TextEncoder().encode(character).length) + 1
+		);
+		const request = {
+			params: { id: game.id },
+			url: new URL('http://localhost/api/games/' + game.id + '/draft'),
+			request: {
+				headers: new Headers({ origin: 'http://localhost', 'content-type': 'application/json' }),
+				text: async () => oversized
+			}
+		} as unknown as Parameters<typeof PUT>[0];
+		const parse = vi.spyOn(JSON, 'parse');
+		let response: Response;
+		try {
+			response = await PUT(request);
+			expect(parse).not.toHaveBeenCalled();
+		} finally {
+			parse.mockRestore();
 		}
-	} as unknown as Parameters<typeof PUT>[0];
-	const parse = vi.spyOn(JSON, 'parse');
-	let response: Response;
-	try {
-		response = await PUT(request);
-		expect(parse).not.toHaveBeenCalled();
-	} finally {
-		parse.mockRestore();
-	}
-	expect(response.status).toBe(400);
-	expect(await response.json()).toEqual({ error: '저장할 내용이 너무 커요' });
-	expect((await (await GET(event(null))).json()).version).toBe(1);
-}, 60000);
+		expect(response.status).toBe(400);
+		expect(await response.json()).toEqual({ error: '저장할 내용이 너무 커요' });
+		expect((await (await GET(event(null))).json()).version).toBe(1);
+	},
+	60000
+);
 
 const sha256 = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest('hex');
 async function uploadDocument(gameId: string, operation: string, text: string) {
@@ -156,4 +163,19 @@ it('rejects a document upload whose operation or game differs from the draft req
 	expect(foreign.status).toBe(400);
 	expect(await foreign.json()).toMatchObject({ errorCode: 'scopeMismatch' });
 	expect((await (await GET(event(null))).json()).version).toBe(0);
+});
+
+it('keeps a conflicted document for retry, then consumes it exactly once', async () => {
+	const body = JSON.stringify({ kind: 'writeDraft', gameId: game.id, version: 1, draft: null });
+	const { ref, uploadId } = await uploadDocument(game.id, 'draftSave', body);
+	expect((await PUT(event({ bodyRef: ref }))).status).toBe(409);
+	expect(state.storage!.uploads.status(game.id, uploadId).state).toBe('verified');
+	expect((await PUT(event({ version: 0, draft: null }))).status).toBe(200);
+	const retried = await PUT(event({ bodyRef: ref }));
+	expect(retried.status).toBe(200);
+	expect((await retried.json()).version).toBe(2);
+	expect(state.storage!.uploads.status(game.id, uploadId).state).toBe('consumed');
+	const repeated = await PUT(event({ bodyRef: ref }));
+	expect(repeated.status).toBe(400);
+	expect(await repeated.json()).toMatchObject({ errorCode: 'uploadState' });
 });

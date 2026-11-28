@@ -78,7 +78,8 @@ fn writable(db: &Connection, game: &str) -> Result<()> {
     ensure(db.query_row("SELECT EXISTS(SELECT 1 FROM games WHERE id=? AND json_extract(value,'$.trashedAt') IS NULL AND coalesce(json_type(value,'$.editLock'),'false')='false')",[game],|r|r.get(0))?,"gameNotWritable")
 }
 fn activity(db: &Connection, game: &str) -> Result<()> {
-    db.execute("UPDATE media_uploads SET expires_at=strftime('%Y-%m-%dT%H:%M:%fZ','now','+10 minutes') WHERE scope=? AND object_id IS NOT NULL AND expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now')",[game])?;
+    // Documents keep a fixed deadline, including the ten minutes granted by Finish.
+    db.execute("UPDATE media_uploads SET expires_at=strftime('%Y-%m-%dT%H:%M:%fZ','now','+10 minutes') WHERE scope=? AND purpose!='document' AND object_id IS NOT NULL AND expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now')",[game])?;
     Ok(())
 }
 struct Upload {
@@ -187,6 +188,7 @@ fn begin(db: &mut Connection, v: &Value) -> Result<Value> {
                 .ok_or(Failure("mediaType"))?
         }
         "document" => {
+            // releaseCreate is reserved; the client does not use it yet.
             let limit = operation
                 .and_then(super::document_operation_limit)
                 .ok_or(Failure("scopeMismatch"))?;
@@ -337,7 +339,7 @@ fn finishable(db: &Connection, v: &Value) -> Result<Upload> {
 fn start_hash(db: &mut Connection, v: &Value) -> Result<Upload> {
     let tx = immediate(db)?;
     let u = finishable(&tx, v)?;
-    if u.state != "completed" {
+    if u.result.is_none() {
         tx.execute(
             "UPDATE media_uploads SET state='finishing',declared_sha256=? WHERE id=?",
             params![u.declared, u.id],
@@ -478,13 +480,13 @@ fn finish(db: &mut Connection, path: &Path, v: &Value) -> Result<Value> {
         let before = finishable(&tx, v)?;
         activity(&tx, &before.scope)?;
         tx.commit()?;
-        if before.state == "completed" {
+        if before.result.is_some() {
             return before.result();
         }
     }
     let _permit = queue::HASHES.acquire(game(v)?, WAIT)?;
     let u = start_hash(db, v)?;
-    if u.state == "completed" {
+    if u.result.is_some() {
         return u.result();
     }
     let hashed = retry_busy(|| hash_reader(path))
@@ -566,11 +568,11 @@ pub(crate) struct DocumentClaim {
     pub operation: String,
     pub generation: i64,
 }
-fn document_operation(kind: &str, action: Option<&str>) -> Option<&'static str> {
+// Keep this mapping paired with storage/media-protocol.ts::documentOperation.
+fn document_operation(kind: &str) -> Option<&'static str> {
     match kind {
         "writeDraft" => Some("draftSave"),
-        "commit" | "create" => Some("commit"),
-        "versioning" if action == Some("release") => Some("releaseCreate"),
+        "commit" => Some("commit"),
         _ => None,
     }
 }
@@ -586,8 +588,7 @@ fn resolve_body_ref_inner(path: &Path, command: &Value) -> Result<Option<(Value,
         return Ok(None);
     };
     let kind = command["kind"].as_str().ok_or(Failure("scopeMismatch"))?;
-    let action = command.get("action").and_then(Value::as_str);
-    let operation = document_operation(kind, action).ok_or(Failure("scopeMismatch"))?;
+    let operation = document_operation(kind).ok_or(Failure("scopeMismatch"))?;
     let game = command["gameId"].as_str().ok_or(Failure("scopeMismatch"))?;
     let (text, claim) = read_document(path, game, reference, operation)?;
     let resolved: Value = serde_json::from_str(&text).map_err(|_| Failure("format"))?;

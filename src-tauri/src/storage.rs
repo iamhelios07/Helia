@@ -1305,6 +1305,9 @@ pub(crate) fn execute_request(path: &Path, input: Value) -> Result<Value, String
         return releases::packages::request(&mut open(path)?, input);
     }
     if input["kind"] == "versioning" {
+        if input.get("bodyRef").is_some() {
+            return Err(releases::packages::error("scopeMismatch"));
+        }
         return releases::request(&mut open(path)?, input);
     }
     if input["kind"] == "artifact" {
@@ -2767,6 +2770,188 @@ mod tests {
         assert_eq!(reply["version"], 1);
         let db = open(&fixture.0).unwrap();
         assert_eq!(count(&db, "media_uploads"), 0);
+    }
+    #[test]
+    fn document_create_8_to_20_mib_stays_inline() {
+        let fixture = Fixture::new();
+        let mut request = create();
+        let description = "한".repeat(4 * 1024 * 1024);
+        request["records"][0]["value"]["settings"]["description"] = json!(description);
+        let bytes = request.to_string().len();
+        assert!(bytes > 8 * 1024 * 1024 && bytes < 20 * 1024 * 1024);
+        fixture
+            .request(json!({"kind":"sync","known":[],"request":request}))
+            .unwrap();
+        assert_eq!(
+            fixture.read()["records"][0]["value"]["settings"]["description"],
+            description
+        );
+        assert_eq!(count(&open(&fixture.0).unwrap(), "media_uploads"), 0);
+    }
+    fn document_commit_stub(reference: &str) -> Value {
+        json!({"kind":"sync","known":[],"request":{"kind":"commit","gameId":"game","bodyRef":reference}})
+    }
+    #[test]
+    fn document_consumed_and_expired_reject_with_upload_state() {
+        let fixture = Fixture::new();
+        fixture.create();
+        let body = commit(0, &[]).to_string();
+        let (reference, _) = upload_document(&fixture, "commit", &body);
+        let command = document_commit_stub(&reference);
+        assert_eq!(fixture.request(command.clone()).unwrap()["version"], 1);
+        assert!(
+            fixture
+                .request(command)
+                .unwrap_err()
+                .contains("uploadState")
+        );
+        assert_eq!(document_session(&fixture, &reference).0, "consumed");
+        let (expired, _) = upload_document(&fixture, "commit", &body);
+        open(&fixture.0)
+            .unwrap()
+            .execute(
+                "UPDATE media_uploads SET expires_at='2000-01-01T00:00:00.000Z' WHERE id=?",
+                [expired.strip_prefix("helia-upload:").unwrap()],
+            )
+            .unwrap();
+        assert!(
+            fixture
+                .request(document_commit_stub(&expired))
+                .unwrap_err()
+                .contains("uploadState")
+        );
+        assert_eq!(fixture.request(json!({"kind":"mediaUploadStatus","gameId":"game","uploadId":expired.strip_prefix("helia-upload:").unwrap()})).unwrap()["state"], "cancelled");
+    }
+    #[test]
+    fn document_body_json_game_id_must_match_scope_and_stub() {
+        let fixture = Fixture::new();
+        fixture.create();
+        let mut body = commit(0, &[]);
+        body["gameId"] = json!("other");
+        let (reference, _) = upload_document(&fixture, "commit", &body.to_string());
+        assert!(
+            fixture
+                .request(document_commit_stub(&reference))
+                .unwrap_err()
+                .contains("scopeMismatch")
+        );
+        assert_eq!(document_session(&fixture, &reference).0, "verified");
+    }
+    #[test]
+    fn document_versioning_body_ref_rejects_direct_and_sync() {
+        let fixture = Fixture::new();
+        fixture.create();
+        let mut command = json!({"kind":"versioning","action":"release","gameId":"game","contentVersion":"1.0.0"});
+        let (reference, _) = upload_document(&fixture, "releaseCreate", &command.to_string());
+        command["bodyRef"] = json!(reference);
+        for input in [
+            command.clone(),
+            json!({"kind":"sync","known":[],"request":command}),
+        ] {
+            assert!(
+                fixture
+                    .request(input)
+                    .unwrap_err()
+                    .contains("scopeMismatch")
+            );
+        }
+        assert_eq!(document_session(&fixture, &reference).0, "verified");
+    }
+    // Keep this input table paired with media-document.spec.ts's failed-write retries.
+    #[test]
+    fn document_failed_write_retries_same_body_ref() {
+        for operation in ["commit", "draftSave"] {
+            for failure in ["conflict", "lock"] {
+                let fixture = Fixture::new();
+                fixture.create();
+                let version = u64::from(failure == "conflict");
+                let body = if operation == "commit" {
+                    commit(version, &[])
+                } else {
+                    json!({"kind":"writeDraft","gameId":"game","version":version,"draft":null})
+                };
+                let (reference, _) = upload_document(&fixture, operation, &body.to_string());
+                let command = if operation == "commit" {
+                    document_commit_stub(&reference)
+                } else {
+                    json!({"kind":"writeDraft","gameId":"game","bodyRef":reference})
+                };
+                let db = open(&fixture.0).unwrap();
+                if failure == "lock" {
+                    db.execute("UPDATE games SET value=json_set(value,'$.editLock',json('true')) WHERE id='game'", []).unwrap();
+                    assert!(
+                        fixture
+                            .request(command.clone())
+                            .unwrap_err()
+                            .contains("gameNotWritable")
+                    );
+                    db.execute(
+                        "UPDATE games SET value=json_remove(value,'$.editLock') WHERE id='game'",
+                        [],
+                    )
+                    .unwrap();
+                } else {
+                    let expected = if operation == "commit" {
+                        CONFLICT
+                    } else {
+                        "다른 편집기에서 초안이 변경되었어요."
+                    };
+                    assert_eq!(fixture.request(command.clone()).unwrap_err(), expected);
+                    let advance = if operation == "commit" {
+                        commit(0, &[])
+                    } else {
+                        json!({"kind":"writeDraft","gameId":"game","version":0,"draft":null})
+                    };
+                    fixture.request(advance).unwrap();
+                }
+                assert_eq!(document_session(&fixture, &reference).0, "verified");
+                assert_eq!(fixture.request(command).unwrap()["version"], version + 1);
+                assert_eq!(document_session(&fixture, &reference).0, "consumed");
+            }
+        }
+    }
+    #[test]
+    fn document_exact_boundary_host_inputs() {
+        // The TS client tests select the path; replay its same byte-sized inputs on this host.
+        for operation in ["commit", "draftSave"] {
+            for size in [8 * 1024 * 1024, 8 * 1024 * 1024 + 1] {
+                let fixture = Fixture::new();
+                fixture.create();
+                let mut body = if operation == "commit" {
+                    commit(0, &[row("games", "game", None, &game("Boundary"))])
+                } else {
+                    json!({"kind":"writeDraft","gameId":"game","version":0,"draft":{"version":3,"gameId":"game","baseContent":game("Boundary"),"documents":{"info":"{}","instructions":"{}","state":"{}","code":"{}","lorebook":"{}","regex":"[]","assets":"{}"}}})
+                };
+                let path = if operation == "commit" {
+                    "/records/0/value/settings/description"
+                } else {
+                    "/draft/documents/state"
+                };
+                *body.pointer_mut(path).unwrap() = json!("한\0");
+                let remaining = size - body.to_string().len();
+                *body.pointer_mut(path).unwrap() = json!(format!("한\0{}", "x".repeat(remaining)));
+                let text = body.to_string();
+                assert_eq!(text.len(), size);
+                let split = size > 8 * 1024 * 1024;
+                let command = if split {
+                    let (reference, _) = upload_document(&fixture, operation, &text);
+                    if operation == "commit" {
+                        document_commit_stub(&reference)
+                    } else {
+                        json!({"kind":"writeDraft","gameId":"game","bodyRef":reference})
+                    }
+                } else if operation == "commit" {
+                    json!({"kind":"sync","known":[],"request":body})
+                } else {
+                    body
+                };
+                assert_eq!(fixture.request(command).unwrap()["version"], 1);
+                assert_eq!(
+                    count(&open(&fixture.0).unwrap(), "media_uploads"),
+                    i64::from(split)
+                );
+            }
+        }
     }
     #[test]
     fn document_large_resource_game_draft_apply_release() {
