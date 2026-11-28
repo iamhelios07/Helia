@@ -5,14 +5,34 @@ import { isDesktopBuild, isTauri } from '#lib/platform/index.js';
 import type { Game } from './model.js';
 
 const artifacts = new Map<string, Promise<unknown>>();
+const DESKTOP_MEDIA_BASE = /^http:\/\/127\.0\.0\.1:(\d{1,5})\/([a-f0-9]{64,})$/;
+
+export function desktopMediaBase(): string | null {
+	if (typeof window === 'undefined' || window !== window.top) {
+		return null;
+	}
+	const value: unknown = Reflect.get(window, '__HELIA_MEDIA_BASE__');
+	if (typeof value !== 'string') {
+		return null;
+	}
+	const match = DESKTOP_MEDIA_BASE.exec(value);
+	if (!match) {
+		return null;
+	}
+	const port = Number(match[1]);
+	return port >= 1 && port <= 65_535 ? value : null;
+}
+
 export function assetURL(gameId: string, reference: string): string {
 	if (!/^helia-asset:[a-f0-9]{64}$/.test(reference)) {
 		return reference;
 	}
 	const path = encodeURIComponent(gameId) + '/' + reference.slice(12);
-	return isDesktopBuild
-		? convertFileSrc(path, 'helia-media')
-		: new URL('/api/games/' + path.replace('/', '/assets/'), globalThis.location.origin).href;
+	if (isDesktopBuild) {
+		const base = desktopMediaBase();
+		return base ? `${base}/${path}` : convertFileSrc(path, 'helia-media');
+	}
+	return new URL('/api/games/' + path.replace('/', '/assets/'), globalThis.location.origin).href;
 }
 export function loadArtifact(gameId: string, hash: string): Promise<unknown> {
 	if (!/^[a-f0-9]{64}$/.test(hash)) {

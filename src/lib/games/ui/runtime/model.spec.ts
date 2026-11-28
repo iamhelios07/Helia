@@ -28,9 +28,33 @@ it('mounts a prepared UI with scoped media URLs and no source modules', async ()
 		() => url
 	);
 	expect(html).toContain('img-src data: blob: https://helia.example/api/games/one/assets/');
+	expect(html).toContain('media-src data: blob: https://helia.example/api/games/one/assets/');
 	expect(html).toContain("connect-src 'none'");
 	expect(html).toContain(url);
 	expect(html).not.toContain(';base64,');
+});
+
+it('allows the desktop loopback media origin in img-src and media-src while keeping connect-src none', async () => {
+	const compiled = await buildGameUI(ui);
+	const hash = 'a'.repeat(64);
+	const token = 'b'.repeat(64);
+	const prefix = `http://127.0.0.1:54321/${token}/one/`;
+	const url = prefix + hash;
+	const html = await compileGameUI(
+		{ ...ui, modules: {}, compiled },
+		'frame-token',
+		{
+			clip: { name: 'clip.mp4', mime: 'video/mp4', data: 'helia-asset:' + hash },
+			inline: { name: 'icon.png', mime: 'image/png', data: 'data:image/png;base64,AA==' }
+		},
+		(value) => (value.startsWith('helia-asset:') ? url : value)
+	);
+	const csp = html.match(/content="([^"]+)"/)![1];
+	expect(csp).toContain(`img-src data: blob: ${prefix};`);
+	expect(csp).toContain(`media-src data: blob: ${prefix};`);
+	expect(csp).toContain("connect-src 'none';");
+	expect(csp).not.toContain(`connect-src 'none' ${prefix}`);
+	expect(html).toContain(url);
 });
 describe('game UI contracts and compilation', () => {
 	it('validates packaged multi-module UI and optional creator defaults', () => {

@@ -7,7 +7,8 @@ import { isDesktopBuild } from '#lib/platform/index.js';
 
 import AssetEditor from './AssetEditor.svelte';
 
-const reference = 'helia-asset:' + 'a'.repeat(64);
+const hash = 'a'.repeat(64);
+const reference = 'helia-asset:' + hash;
 const source = JSON.stringify({
 	portrait: { name: 'portrait.png', mime: 'image/png', data: reference }
 });
@@ -26,7 +27,7 @@ it('opens uploaded references with accessible metadata and host previews without
 	} else {
 		await expect
 			.element(page.getByRole('img', { name: 'portrait.png' }))
-			.toHaveAttribute('src', `${location.origin}/api/games/game/assets/${'a'.repeat(64)}`);
+			.toHaveAttribute('src', `${location.origin}/api/games/game/assets/${hash}`);
 	}
 	await screen.rerender({ selectedId: 'missing' });
 	await screen.rerender({ selectedId: 'portrait' });

@@ -2,7 +2,7 @@
 	import { isDesktopBuild } from '#lib/platform/index.js';
 
 	import { parseResources } from '../../resources.js';
-	import { assetURL } from '../../runtime-content.js';
+	import { assetURL, desktopMediaBase } from '../../runtime-content.js';
 	import AssetExplorer from './AssetExplorer.svelte';
 	let {
 		source,
@@ -31,9 +31,9 @@
 	let id = $derived(selectedId ?? localSelected);
 	let asset = $derived(id ? parsed.resources?.[id] : undefined);
 	let uploaded = $derived(asset?.data.startsWith('helia-asset:') ?? false);
-	// The desktop v2 media scheme is decided in S1. Never hydrate it through asset IPC.
+	// Uploaded references preview through the web asset route or desktop loopback media server.
 	let preview = $derived.by(() => {
-		if (!asset || (uploaded && (!gameId || isDesktopBuild))) {
+		if (!asset || (uploaded && (!gameId || (isDesktopBuild && !desktopMediaBase())))) {
 			return undefined;
 		}
 		return uploaded ? assetURL(gameId!, asset.data) : asset.data;

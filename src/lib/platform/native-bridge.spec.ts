@@ -4,12 +4,22 @@ import { expect, it, vi } from 'vitest';
 
 const builder = readFileSync(new URL('../../../src-tauri/src/lib.rs', import.meta.url), 'utf8');
 const storage = readFileSync(new URL('../../../src-tauri/src/storage.rs', import.meta.url), 'utf8');
+const mediaServer = readFileSync(
+	new URL('../../../src-tauri/src/media_server.rs', import.meta.url),
+	'utf8'
+);
 const token = 'test-process-token';
+const mediaBase = `http://127.0.0.1:43210/${'a'.repeat(64)}`;
 const template = storage.match(/r#"(;\(\(\) => \{\{[\s\S]*?)"#,/)!;
 const script = template[1]
 	.replaceAll('{{', '{')
 	.replaceAll('}}', '}')
 	.replace('"{}"', JSON.stringify(token));
+const mediaTemplate = mediaServer.match(/r#"(;\(\(\) => \{\{[\s\S]*?)"#,/)!;
+const mediaScript = mediaTemplate[1]
+	.replaceAll('{{', '{')
+	.replaceAll('}}', '}')
+	.replace('"{}"', JSON.stringify(mediaBase));
 
 function boot(child = false) {
 	const invoke = vi.fn(async () => ({ ok: true }));
@@ -24,6 +34,9 @@ function boot(child = false) {
 	internals.invoke = invoke;
 	if (builder.includes('.js_init_script(initialization)')) {
 		runInNewContext(script, { window });
+	}
+	if (builder.includes('.js_init_script(media_initialization)')) {
+		runInNewContext(mediaScript, { window });
 	}
 	return { window, internals, invoke };
 }
@@ -56,6 +69,11 @@ it('captures the ready native invoker for storage, settings, credentials and AI 
 		writable: false,
 		configurable: false
 	});
+	expect(window.__HELIA_MEDIA_BASE__).toBe(mediaBase);
+	expect(Object.getOwnPropertyDescriptor(window, '__HELIA_MEDIA_BASE__')).toMatchObject({
+		writable: false,
+		configurable: false
+	});
 });
 
 it('never installs native bridges in a child frame', () => {
@@ -65,4 +83,5 @@ it('never installs native bridges in a child frame', () => {
 	expect(window.__HELIA_CREDENTIALS__).toBeUndefined();
 	expect(window.__HELIA_AI__).toBeUndefined();
 	expect(window.__HELIA_NETWORK__).toBeUndefined();
+	expect(window.__HELIA_MEDIA_BASE__).toBeUndefined();
 });

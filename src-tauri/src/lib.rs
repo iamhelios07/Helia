@@ -3,6 +3,9 @@
 pub fn run() {
     let access = storage::StorageAccess::new().expect("Could not initialize storage access");
     let initialization = access.initialization_script();
+    let media_server =
+        media_server::MediaServer::bind().expect("Could not initialize media server");
+    let media_initialization = media_server.initialization_script();
     tauri::Builder::default()
         .manage(access)
         .register_asynchronous_uri_scheme_protocol("helia-media", |context, request, responder| {
@@ -22,11 +25,18 @@ pub fn run() {
                 .js_init_script(initialization)
                 .build(),
         )
-        .setup(|app| {
+        .plugin(
+            tauri::plugin::Builder::<tauri::Wry, ()>::new("helia-media-host")
+                .js_init_script(media_initialization)
+                .build(),
+        )
+        .setup(move |app| {
             let directory = app.path().app_data_dir()?;
             std::fs::create_dir_all(&directory)?;
             let path = directory.join("helia.sqlite");
             storage::media_uploads::start(&path).map_err(std::io::Error::other)?;
+            let media_handle = media_server.start(path.clone());
+            app.manage(media_handle);
             app.manage(storage::StoragePath(path));
             Ok(())
         })
@@ -53,6 +63,8 @@ mod game_secrets;
 mod generation;
 #[cfg(any(feature = "desktop", test))]
 mod media_identity;
+#[cfg(any(feature = "desktop", test))]
+mod media_server;
 #[cfg(any(feature = "desktop", test))]
 mod network;
 #[cfg(any(feature = "desktop", test))]
